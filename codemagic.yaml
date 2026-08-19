@@ -38,7 +38,9 @@ workflows:
       - name: Add & sync the iOS native project
         script: |
           npm install @capacitor/ios
-          [ -d ios ] || npx cap add ios
+          # Capacitor 8 defaults new iOS projects to Swift Package Manager, but our
+          # biometric-auth plugin ships only a CocoaPods podspec — so force CocoaPods.
+          [ -d ios ] || npx cap add ios --packagemanager Cocoapods
           npx cap sync ios
       - name: Set the iOS bundle id
         script: |
