@@ -26,7 +26,7 @@ workflows:
         BUNDLE_ID: "zw.co.damotors.fuel"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
-        APP_STORE_APP_ID: 0000000000   # <-- replace with the app's numeric Apple ID
+        APP_STORE_APP_ID: 6803099237   # DA OPS app record (App Store Connect)
       node: 20
       xcode: latest
       cocoapods: default
