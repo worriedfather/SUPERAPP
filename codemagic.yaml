@@ -27,7 +27,7 @@ workflows:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_STORE_APP_ID: 6803099237   # DA OPS app record (App Store Connect)
-      node: 20
+      node: 22
       xcode: latest
       cocoapods: default
     scripts:
