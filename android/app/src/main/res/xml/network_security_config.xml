@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Production talks to the backend over HTTPS (Cloudflare tunnel
+  fuel.dasuperapp.com). Cleartext HTTP is DENIED by default, and permitted ONLY
+  for local development addresses (emulator loopback + localhost), so a MITM on
+  office/public WiFi cannot read the PIN, JWT or photos.
+-->
+<network-security-config>
+    <!-- default: no cleartext anywhere -->
+    <base-config cleartextTrafficPermitted="false"/>
+
+    <!-- dev only: emulator host + loopback -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>

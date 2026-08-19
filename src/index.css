@@ -1,0 +1,14 @@
+html,body,#root{height:100%;margin:0}
+/* nothing should pan the whole screen sideways — the page never scrolls
+   horizontally; wide content (tables) scrolls inside its own container. */
+html,body{max-width:100%;overflow-x:hidden}
+#root{max-width:100%;overflow-x:hidden}
+main{max-width:100%}
+/* tables are the usual offender — let them scroll inside, not widen the page */
+.tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+.tscroll::-webkit-scrollbar{height:0}
+/* paper behind the status bar, DA green behind it up top, so edge-to-edge looks intentional */
+body{-webkit-tap-highlight-color:transparent;background:#F2F0E9;overscroll-behavior:none}
+/* horizontally-scrolling strips (tab bars) hide their scrollbar */
+.noscrollbar{scrollbar-width:none;-ms-overflow-style:none}
+.noscrollbar::-webkit-scrollbar{display:none;height:0}

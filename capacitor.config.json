@@ -1,0 +1,10 @@
+{
+  "appId": "zw.co.damotors.fuel",
+  "appName": "DA OPS",
+  "webDir": "dist",
+  "android": { "allowMixedContent": true },
+  "plugins": {
+    "Geolocation": { "androidPermissionRequest": true },
+    "Camera": { "androidScaleFactor": 1 }
+  }
+}
