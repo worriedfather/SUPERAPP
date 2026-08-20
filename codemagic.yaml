@@ -56,6 +56,9 @@ workflows:
           PL="App/Info.plist"
           put() { /usr/libexec/PlistBuddy -c "Add :$1 $2 $3" "$PL" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :$1 $3" "$PL"; }
           put CFBundleDisplayName string "DA OPS"
+          # Every TestFlight upload needs a unique, increasing build number. Codemagic's
+          # $BUILD_NUMBER auto-increments per build, so uploads never collide (fallback 1).
+          put CFBundleVersion string "${BUILD_NUMBER:-1}"
           put NSCameraUsageDescription string "DA OPS uses the camera to photograph the fuel tank and odometer for each request."
           put NSPhotoLibraryUsageDescription string "DA OPS attaches a photo of the fuel tank or odometer to a request."
           put NSPhotoLibraryAddUsageDescription string "DA OPS can save a captured fuel or odometer photo to your library."
