@@ -44,11 +44,24 @@ workflows:
           # biometric-auth plugin ships only a CocoaPods podspec — so force CocoaPods.
           [ -d ios ] || npx cap add ios --packagemanager Cocoapods
           npx cap sync ios
-      - name: Set the iOS bundle id
+      - name: Configure Info.plist (display name, permission strings, encryption)
+        # The default Capacitor Info.plist has no usage-description strings. The app links
+        # Camera, Location, Face ID and Notifications through its plugins, and Apple REJECTS
+        # (during App Store processing, ITMS-90683) any binary that uses those frameworks
+        # without a purpose string. Inject them here (ios/ is regenerated fresh each build).
+        # ITSAppUsesNonExemptEncryption=false = standard HTTPS only, skips the TestFlight
+        # export-compliance prompt.
         script: |
-          # keep the native project's bundle id in step with BUNDLE_ID
           cd ios/App
-          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName DA OPS" App/Info.plist || true
+          PL="App/Info.plist"
+          put() { /usr/libexec/PlistBuddy -c "Add :$1 $2 $3" "$PL" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :$1 $3" "$PL"; }
+          put CFBundleDisplayName string "DA OPS"
+          put NSCameraUsageDescription string "DA OPS uses the camera to photograph the fuel tank and odometer for each request."
+          put NSPhotoLibraryUsageDescription string "DA OPS attaches a photo of the fuel tank or odometer to a request."
+          put NSPhotoLibraryAddUsageDescription string "DA OPS can save a captured fuel or odometer photo to your library."
+          put NSLocationWhenInUseUsageDescription string "DA OPS confirms you are at the fuelling station when you raise a request."
+          put NSFaceIDUsageDescription string "DA OPS uses Face ID to sign you in securely."
+          put ITSAppUsesNonExemptEncryption bool false
       - name: Install CocoaPods
         script: cd ios/App && pod install
       - name: Set up code signing (certificate + profile)
