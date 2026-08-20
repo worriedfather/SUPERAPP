@@ -47,15 +47,17 @@ workflows:
           # keep the native project's bundle id in step with BUNDLE_ID
           cd ios/App
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName DA OPS" App/Info.plist || true
+      - name: Install CocoaPods
+        script: cd ios/App && pod install
       - name: Fetch signing files (auto-managed by App Store Connect)
+        # Runs AFTER pod install: CocoaPods rewrites the Xcode project's build
+        # settings, so signing must be applied last or the profile assignment is lost.
         script: |
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE --create
           keychain add-certificates
           xcode-project use-profiles
-      - name: Install CocoaPods
-        script: cd ios/App && pod install
       - name: Build signed IPA
         script: |
           xcode-project build-ipa \
