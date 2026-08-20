@@ -49,11 +49,16 @@ workflows:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName DA OPS" App/Info.plist || true
       - name: Install CocoaPods
         script: cd ios/App && pod install
-      - name: Fetch signing files (auto-managed by App Store Connect)
-        # Runs AFTER pod install: CocoaPods rewrites the Xcode project's build
-        # settings, so signing must be applied last or the profile assignment is lost.
+      - name: Set up code signing (certificate + profile)
+        # Runs AFTER pod install (CocoaPods rewrites the project's build settings, so
+        # signing must be applied last). A brand-new Apple account has NO iOS Distribution
+        # certificate — fetch-signing-files can create the provisioning PROFILE but not the
+        # CERTIFICATE, so create the certificate first. Apple allows 2 distribution certs;
+        # if a re-run ever hits that limit, switch to a persisted CERTIFICATE_PRIVATE_KEY.
         script: |
           keychain initialize
+          app-store-connect create-certificate \
+            --type IOS_DISTRIBUTION --save
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE --create
           keychain add-certificates
