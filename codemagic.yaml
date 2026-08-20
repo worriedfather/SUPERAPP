@@ -60,6 +60,7 @@ workflows:
           put NSPhotoLibraryUsageDescription string "DA OPS attaches a photo of the fuel tank or odometer to a request."
           put NSPhotoLibraryAddUsageDescription string "DA OPS can save a captured fuel or odometer photo to your library."
           put NSLocationWhenInUseUsageDescription string "DA OPS confirms you are at the fuelling station when you raise a request."
+          put NSLocationAlwaysAndWhenInUseUsageDescription string "DA OPS confirms you are at the fuelling station when you raise a request."
           put NSFaceIDUsageDescription string "DA OPS uses Face ID to sign you in securely."
           put ITSAppUsesNonExemptEncryption bool false
       - name: Install CocoaPods
