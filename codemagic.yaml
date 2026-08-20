@@ -50,17 +50,17 @@ workflows:
       - name: Install CocoaPods
         script: cd ios/App && pod install
       - name: Set up code signing (certificate + profile)
-        # Runs AFTER pod install (CocoaPods rewrites the project's build settings, so
-        # signing must be applied last). A brand-new Apple account has NO iOS Distribution
-        # certificate — fetch-signing-files can create the provisioning PROFILE but not the
-        # CERTIFICATE, so create the certificate first. Apple allows 2 distribution certs;
-        # if a re-run ever hits that limit, switch to a persisted CERTIFICATE_PRIVATE_KEY.
+        # Runs AFTER pod install (CocoaPods rewrites the project's build settings, so signing
+        # must be applied last). A brand-new Apple account has no iOS Distribution certificate.
+        # Handed a private key (CERTIFICATE_PRIVATE_KEY env var, set in Codemagic), this one
+        # call creates the certificate AND the provisioning profile — and is idempotent, so
+        # later builds reuse the same certificate (no Apple 2-cert-limit problem).
         script: |
           keychain initialize
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION --save
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE --create
+            --type IOS_APP_STORE \
+            --certificate-key @env:CERTIFICATE_PRIVATE_KEY \
+            --create
           keychain add-certificates
           xcode-project use-profiles
       - name: Build signed IPA
