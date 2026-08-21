@@ -44,6 +44,9 @@ workflows:
           # biometric-auth plugin ships only a CocoaPods podspec — so force CocoaPods.
           [ -d ios ] || npx cap add ios --packagemanager Cocoapods
           npx cap sync ios
+          # Apply the DA app icon. Capacitor 8's default iconset is a single 1024px image
+          # (AppIcon-512@2x.png); replacing it puts the DA cheetah on the home screen.
+          cp assets/icon.png "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
       - name: Configure Info.plist (display name, permission strings, encryption)
         # The default Capacitor Info.plist has no usage-description strings. The app links
         # Camera, Location, Face ID and Notifications through its plugins, and Apple REJECTS
