@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getCashRecon, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
@@ -2115,6 +2115,363 @@ export function CashView() {
         </>
       )}
       {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
+    </Wrap>
+  );
+}
+
+/* ============================================================ *
+ *  MODULE A — BANKING RECONCILIATION & DAY-CLOSE
+ *  SiteDeposit  : a site records each deposit it banked (+ slip photo)
+ *  CashOffice   : the cash office confirms deposits, enters the cash it
+ *                 actually received, and closes each day (open → closed)
+ * ============================================================ */
+const cashBtn = (color) => ({ border: `1px solid ${color || "var(--line)"}`, color: color || "var(--navy)", background: "#fff", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
+
+// A site logs a deposit it made to the bank. Slip photo is required so the cash
+// office has evidence to confirm against. Every missing field is advised (no dead
+// button, no silent failure).
+export function SiteDeposit({ me }) {
+  const fixed = me?.kind === "site_manager" || me?.kind === "retail_supervisor";
+  const [sites, setSites] = useState([]);
+  const [site, setSite] = useState("");
+  const [f, setF] = useState({ tradingDate: todayISO(), depositDate: todayISO(), bank: "", amount: "", reference: "" });
+  const [photo, setPhoto] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  useEffect(() => { if (!fixed) getSites().then((r) => setSites(r.sites)).catch(() => {}); }, [fixed]);
+
+  const capture = async () => {
+    try { const p = await takeOdometerPhoto(); if (p?.dataUrl) setPhoto(p.dataUrl); }
+    catch { setMsg({ tone: "amber", title: "Camera unavailable", body: "Attach the deposit slip when you can — the cash office needs it to confirm." }); }
+  };
+  const send = async (e) => {
+    e.preventDefault(); setMsg(null);
+    if (!fixed && !site) { setMsg({ tone: "amber", title: "Pick a site", body: "Choose which site this deposit is for." }); return; }
+    if (!f.bank.trim()) { setMsg({ tone: "amber", title: "Which bank?", body: "Enter the bank the deposit went to." }); return; }
+    if (!(Number(f.amount) > 0)) { setMsg({ tone: "amber", title: "Enter the amount", body: "The deposit amount must be greater than zero." }); return; }
+    if (!f.reference.trim()) { setMsg({ tone: "amber", title: "Slip reference", body: "Enter the deposit-slip reference number." }); return; }
+    if (!photo) { setMsg({ tone: "amber", title: "Photograph the slip", body: "Attach a photo of the deposit slip so the cash office can confirm it." }); return; }
+    setBusy(true);
+    try {
+      await postCashDeposit({ site: fixed ? undefined : site, tradingDate: f.tradingDate, depositDate: f.depositDate,
+        bank: f.bank.trim(), amount: Number(f.amount), reference: f.reference.trim(), photo, deviceTime: new Date().toISOString() });
+      setMsg({ tone: "ok", title: "Deposit recorded", body: `$${L(Number(f.amount))} to ${f.bank.trim()} — sent to the cash office to confirm.` });
+      setF({ tradingDate: f.tradingDate, depositDate: todayISO(), bank: "", amount: "", reference: "" });
+      setPhoto(null);
+    } catch (err) { setMsg({ tone: "red", title: "Not recorded", body: err.message }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Wrap>
+      <SectionHead title="Record a deposit" sub="Log each cash deposit you bank — the cash office confirms it against the day" />
+      <Panel>
+        <form onSubmit={send}>
+          {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+          {!fixed
+            ? <Field label="Site"><select value={site} onChange={(e) => setSite(e.target.value)}><option value="">Choose a site…</option>{sites.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}</select></Field>
+            : <div style={{ marginBottom: 11, fontSize: 13, color: "var(--steel)" }}>Site: <strong style={{ color: "var(--navy)" }}>{me?.site}</strong></div>}
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}><Field label="Trading day (cash from)"><input type="date" value={f.tradingDate} onChange={(e) => set("tradingDate", e.target.value)} /></Field></div>
+            <div style={{ flex: 1 }}><Field label="Deposit date"><input type="date" value={f.depositDate} onChange={(e) => set("depositDate", e.target.value)} /></Field></div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1.3 }}><Field label="Bank"><input value={f.bank} onChange={(e) => set("bank", e.target.value)} placeholder="e.g. CBZ" /></Field></div>
+            <div style={{ flex: 1 }}><Field label="Amount (US$)"><Num value={f.amount} onChange={(v) => set("amount", v)} /></Field></div>
+          </div>
+          <Field label="Deposit-slip reference"><input value={f.reference} onChange={(e) => set("reference", e.target.value)} placeholder="slip / receipt no." /></Field>
+          <button type="button" onClick={capture} className="disp" style={{ width: "100%", padding: 13, fontSize: 14, fontWeight: 700, borderRadius: 100, marginBottom: 10, background: photo ? "#fff" : "var(--ink)", color: photo ? "var(--ink)" : "#fff", border: photo ? "1.5px solid var(--line)" : "none" }}>{photo ? "Retake slip photo" : "Photograph the deposit slip"}</button>
+          {photo && <img src={photo} alt="Deposit slip" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 14, border: "1.5px solid var(--line)", marginBottom: 10, display: "block" }} />}
+          <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Sending…" : "Record deposit"}</button>
+        </form>
+      </Panel>
+    </Wrap>
+  );
+}
+
+// The cash office view: open days, deposits to confirm, cash unbanked/short.
+export function CashOffice() {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [drill, setDrill] = useState(null);
+  const [onlyOpen, setOnlyOpen] = useState(true);
+  useEffect(() => { setD(null); setErr(null); getCashRecon(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
+  const reload = () => setReloadKey((k) => k + 1);
+  const $ = (v) => "$" + compact(v);
+  const rows = d ? (onlyOpen ? d.openItems : d.rows) : [];
+  return (
+    <Wrap>
+      <SectionHead title="Cash office — banking reconciliation" sub="Confirm site deposits, record the cash received, and close each day" />
+      <RefreshBar data={d} busy={!d && !err} onRefresh={reload} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && (
+        <>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"} />
+            <CountPill n={d.summary.pendingDeposits} label="Deposits to confirm" tone={d.summary.pendingDeposits ? "amber" : "ok"} />
+            <CountPill n={$(d.summary.unbanked)} label="Cash unbanked" tone={d.summary.unbanked > 0 ? "amber" : "ok"} />
+            <CountPill n={$(d.summary.shortfall)} label="Cash short" tone={d.summary.shortfall > 0 ? "red" : "ok"} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
+            <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ padding: "5px 8px" }}>{[7, 14, 30, 60, 90].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
+          </div>
+          {rows.length === 0 && <Note tone="ok" title={onlyOpen ? "Nothing open" : "No days in window"}>{onlyOpen ? "Every day in this window is closed." : "No cash days found for this window."}</Note>}
+          {rows.length > 0 && (
+            <Panel style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Day</Th><Th right>Expected</Th><Th right>Received</Th><Th right>Banked</Th><Th right>Unbanked</Th><Th>Status</Th></tr></thead>
+                  <tbody>{rows.map((r) => (
+                    <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.status === "open" ? "#FFF7E6" : "#fff" }}>
+                      <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                      <Td style={{ color: "var(--steel)" }}>{r.date}</Td>
+                      <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
+                      <Td right>{r.received == null ? "—" : $(r.received)}</Td>
+                      <Td right style={{ color: "var(--steel)" }}>{$(r.depConfirmed)}{r.pendingCount ? ` +${r.pendingCount}?` : ""}</Td>
+                      <Td right style={{ color: r.unbanked > 0 ? "var(--amber)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
+                      <Td>{r.status === "open" ? <span style={{ color: "var(--amber)", fontWeight: 700 }}>OPEN</span> : <span style={{ color: "var(--ok)" }}>closed</span>}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+        </>
+      )}
+      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} onDone={() => { setDrill(null); reload(); }} /></DetailSheet>}
+    </Wrap>
+  );
+}
+
+// The per-day drill: confirm/reject each deposit (view its slip), enter the cash
+// received, and close the day.
+function CashOfficeDay({ row, onDone }) {
+  const [deposits, setDeposits] = useState(row.deposits);
+  const [cashReceived, setCashReceived] = useState(row.received != null ? String(row.received) : "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [slip, setSlip] = useState(null);   // {seq, url|null}
+  const $ = (v) => "$" + compact(v);
+
+  const review = async (seq, outcome) => {
+    setMsg(null);
+    try { await reviewDeposit(seq, outcome); setDeposits((ds) => ds.map((x) => x.seq === seq ? { ...x, status: outcome } : x)); }
+    catch (e) { setMsg({ tone: "red", title: "Could not update", body: e.message }); }
+  };
+  const viewSlip = async (seq) => {
+    setSlip({ seq, url: null });
+    const url = await depositSlipUrl(seq);
+    if (url) setSlip({ seq, url }); else { setSlip(null); setMsg({ tone: "amber", title: "No slip photo", body: "This deposit was recorded without a slip photo." }); }
+  };
+  const close = async () => {
+    setMsg(null);
+    if (!(Number(cashReceived) >= 0) || cashReceived === "") { setMsg({ tone: "amber", title: "Enter cash received", body: "Type the actual cash received from the site (0 or more)." }); return; }
+    setBusy(true);
+    try {
+      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), closed: true });
+      setMsg({ tone: "ok", title: "Day closed", body: `${row.site} · ${row.date} reconciled and closed.` });
+      setTimeout(onDone, 800);
+    } catch (e) { setMsg({ tone: "red", title: "Not closed", body: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  const confirmedBanked = deposits.filter((d) => d.status === "confirmed").reduce((a, d) => a + d.amount, 0);
+  const received = Number(cashReceived);
+  const shortfall = (Number.isFinite(received) && cashReceived !== "") ? row.expected - received : null;
+  const unbanked = (Number.isFinite(received) && cashReceived !== "") ? received - confirmedBanked : null;
+  return (
+    <div>
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <CountPill n={$(row.expected)} label="Expected cash" tone="ok" />
+        <CountPill n={$(confirmedBanked)} label="Confirmed banked" tone="ok" />
+        {unbanked != null && <CountPill n={$(unbanked)} label="Unbanked" tone={unbanked > 0 ? "amber" : "ok"} />}
+      </div>
+      <div className="lbl" style={{ marginBottom: 6 }}>Deposits declared by the site</div>
+      {deposits.length === 0 && <Note tone="amber" title="No deposits yet">The site hasn't recorded a deposit for this day.</Note>}
+      {deposits.map((dp) => (
+        <div key={dp.seq} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div><strong className="mono">${L(dp.amount)}</strong> · {dp.bank}<div style={{ fontSize: 11, color: "var(--steel)" }}>ref {dp.reference} · {dp.depositDate}</div></div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: dp.status === "confirmed" ? "var(--ok)" : dp.status === "rejected" ? "var(--red)" : "var(--amber)" }}>{dp.status.toUpperCase()}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            {dp.hasSlip && <button className="disp" onClick={() => viewSlip(dp.seq)} style={cashBtn()}>View slip</button>}
+            {dp.status !== "confirmed" && <button className="disp" onClick={() => review(dp.seq, "confirmed")} style={cashBtn("var(--ok)")}>Confirm</button>}
+            {dp.status !== "rejected" && <button className="disp" onClick={() => review(dp.seq, "rejected")} style={cashBtn("var(--red)")}>Reject</button>}
+          </div>
+          {slip && slip.seq === dp.seq && (slip.url ? <img src={slip.url} alt="deposit slip" style={{ maxWidth: "100%", borderRadius: 10, marginTop: 8, border: "1px solid var(--line)" }} /> : <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 8 }}>Loading slip…</div>)}
+        </div>
+      ))}
+      <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
+        <Field label="Actual cash received from the site (US$)"><Num value={cashReceived} onChange={setCashReceived} /></Field>
+        {shortfall != null && (
+          <div style={{ fontSize: 12, color: shortfall > 0 ? "var(--red)" : shortfall < 0 ? "var(--amber)" : "var(--steel)", marginBottom: 10 }}>
+            {shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}
+          </div>
+        )}
+        <button className="pill" disabled={busy} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : "Close day"}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================ *
+ *  MODULE B — FUEL CASH BRIDGE (direct method, honest & partial)
+ *  Cash in (tenders, sourced) vs cash out (fuel purchases — only when fed).
+ *  No net figure is shown until the outflow side has a real data feed.
+ * ============================================================ */
+export function CashflowView() {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setD(null); setErr(null); getCashflow(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
+  const $ = (v) => "$" + compact(v);
+  const Row = ({ label, value, sub, tone, strong }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: "1px solid var(--line)" }}>
+      <div style={{ paddingRight: 10 }}><div style={{ fontWeight: strong ? 700 : 500, color: tone === "amber" ? "var(--amber)" : "var(--navy)" }}>{label}</div>{sub && <div style={{ fontSize: 11, color: "var(--steel)" }}>{sub}</div>}</div>
+      <div className="mono" style={{ fontWeight: strong ? 700 : 500, fontSize: strong ? 18 : 15, color: tone === "amber" ? "var(--amber)" : "var(--navy)", whiteSpace: "nowrap" }}>{value}</div>
+    </div>
+  );
+  return (
+    <Wrap>
+      <SectionHead title="Fuel cash bridge" sub="Cash the fuel operation generated — every line sourced, gaps flagged" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ padding: "5px 8px" }}>{[30, 60, 90, 180].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
+        <button className="disp" onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: "auto", border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+      </div>
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && (
+        <>
+          <Panel>
+            <div className="lbl" style={{ marginBottom: 4 }}>Cash in — from fuel sales · {d.days} days to {d.asOf}</div>
+            <div className="mono" style={{ fontSize: 30, fontWeight: 600, color: "var(--navy)" }}>{$(d.collected)}</div>
+            <Row label="Already cash (notes + card swipe)" value={$(d.immediateCash)} />
+            <Row label="Still a receivable (DA card + coupons)" value={$(d.receivable)} sub="Settles on a lag — not yet in the bank" tone="amber" />
+          </Panel>
+          <Panel style={{ marginTop: 12 }}>
+            <div className="lbl" style={{ marginBottom: 8 }}>Cash out — fuel purchases</div>
+            {d.purchase
+              ? <Row label="Fuel purchases (imports, duty-paid)" value={"−" + $(d.purchase.cost)} sub={`${L(d.purchase.litres)} L · ${d.purchase.loads} loads`} strong />
+              : <Note tone="amber" title="Fuel purchases — not fed">No import-cost feed yet (the import log is empty). Feed supplier invoices to complete the outflow side.</Note>}
+          </Panel>
+          <Panel style={{ marginTop: 12 }}>
+            {d.netFuelCash != null
+              ? <Row label="Net fuel operating cash (before overheads)" value={$(d.netFuelCash)} strong />
+              : <Note tone="blue" title="No net cash figure — yet">The inflow side is ready. A real net figure needs the outflow feeds below — we don't show a number we can't stand behind.</Note>}
+          </Panel>
+          {d.unfed?.length > 0 && (
+            <Panel style={{ marginTop: 12 }}>
+              <div className="lbl" style={{ marginBottom: 6 }}>Not yet fed (needed for a full cash statement)</div>
+              {d.unfed.map((u, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, padding: "7px 0", fontSize: 13, borderTop: i ? "1px solid var(--line)" : "none" }}>
+                  <span style={{ color: "var(--amber)" }}>○</span>
+                  <div><strong>{u.line}</strong><div style={{ fontSize: 11, color: "var(--steel)" }}>{u.why}</div></div>
+                </div>
+              ))}
+            </Panel>
+          )}
+          {d.note && <div style={{ fontSize: 12, color: "var(--steel)", margin: "10px 2px" }}>{d.note}</div>}
+        </>
+      )}
+    </Wrap>
+  );
+}
+
+/* ============================================================ *
+ *  MODULE C — OWNER DIGEST  (curated: the few things worth the
+ *  owner's attention, framed as protecting cash & liquid fuel)
+ *  MODULE D — RADAR  (every tripwire, worst first — your early warning)
+ *  Both read the one signal engine (/api/signals).
+ * ============================================================ */
+const SIGNAL_TONE = { red: "var(--red)", amber: "var(--amber)", blue: "var(--blue)", ok: "var(--ok)" };
+const SIGNAL_BG = { red: "#FDECEA", amber: "#FEF4E6", blue: "#EAEEFB", ok: "#EBF6E7" };
+
+export function OwnerDigest() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setD(null); setErr(null); getSignals(30).then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const cash = d?.signals.filter((s) => s.domain === "cash") || [];
+  const fuel = d?.signals.filter((s) => s.domain === "fuel") || [];
+  const top = (arr) => arr.slice(0, 3);
+  const SignalCard = ({ s }) => (
+    <div style={{ border: `1px solid ${SIGNAL_TONE[s.tone]}`, background: SIGNAL_BG[s.tone], borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+        <div className="disp" style={{ fontWeight: 700, color: SIGNAL_TONE[s.tone] }}>{s.title}</div>
+        <div className="mono" style={{ fontWeight: 700, color: SIGNAL_TONE[s.tone], whiteSpace: "nowrap" }}>{s.metric}</div>
+      </div>
+      <div style={{ fontSize: 12.5, marginTop: 3, color: "var(--navy)" }}>{s.detail}</div>
+    </div>
+  );
+  const copyText = () => {
+    if (!d) return;
+    const lines = [`DA OPS — cash & fuel digest (to ${d.asOf})`, ""];
+    if (cash.length) { lines.push("PROTECTING THE CASH:"); top(cash).forEach((s) => lines.push(`• ${s.title}: ${s.metric} — ${s.detail}`)); lines.push(""); }
+    if (fuel.length) { lines.push("PROTECTING THE LIQUID FUEL:"); top(fuel).forEach((s) => lines.push(`• ${s.title}: ${s.metric} — ${s.detail}`)); }
+    if (!cash.length && !fuel.length) lines.push("All quiet — nothing worth flagging in the last 30 days.");
+    navigator.clipboard?.writeText(lines.join("\n"));
+  };
+  return (
+    <Wrap>
+      <SectionHead title="Cash & fuel digest" sub="The few things worth the owner's attention — protecting cash and liquid fuel" />
+      <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && (
+        <>
+          {d.signals.length === 0 && <Note tone="ok" title="All quiet">No cash or fuel signals worth flagging in the last 30 days.</Note>}
+          {cash.length > 0 && <><div className="lbl" style={{ margin: "6px 2px 8px" }}>Protecting the cash</div>{top(cash).map((s, i) => <SignalCard key={i} s={s} />)}</>}
+          {fuel.length > 0 && <><div className="lbl" style={{ margin: "14px 2px 8px" }}>Protecting the liquid fuel</div>{top(fuel).map((s, i) => <SignalCard key={i} s={s} />)}</>}
+          <button className="disp" onClick={copyText} style={{ marginTop: 12, border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Copy digest to share</button>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>As of {d.asOf}. Every figure traces to a sourced screen — open the module to drill in.</div>
+        </>
+      )}
+    </Wrap>
+  );
+}
+
+export function RadarView() {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setD(null); setErr(null); getSignals(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
+  return (
+    <Wrap>
+      <SectionHead title="Radar" sub="Every cash & fuel tripwire, worst first — your early-warning layer" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))}>{[7, 14, 30, 60, 90].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
+        <button className="disp" onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: "auto", border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+      </div>
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && (
+        <>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <CountPill n={d.signals.filter((s) => s.tone === "red").length} label="Critical" tone={d.signals.some((s) => s.tone === "red") ? "red" : "ok"} />
+            <CountPill n={d.signals.filter((s) => s.tone === "amber").length} label="Watch" tone="amber" />
+            <CountPill n={d.signals.length} label="Signals" tone="ok" />
+          </div>
+          {d.signals.length === 0 && <Note tone="ok" title="Radar clear">Nothing tripped in this window.</Note>}
+          {d.signals.map((s, i) => (
+            <div key={i} style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${SIGNAL_TONE[s.tone]}`, borderRadius: 10, padding: "11px 13px", marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <span className="disp" style={{ fontWeight: 700 }}>{s.title} <span style={{ fontSize: 10, color: "var(--steel)", textTransform: "uppercase" }}>· {s.domain}</span></span>
+                <span className="mono" style={{ fontWeight: 700, color: SIGNAL_TONE[s.tone], whiteSpace: "nowrap" }}>{s.metric}</span>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{s.detail}</div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Thresholds are network-relative — a site is flagged against the network's own rate, not a fixed cutoff, so half the sites are never "exceptions" by construction. As of {d.asOf}.</div>
+        </>
+      )}
     </Wrap>
   );
 }

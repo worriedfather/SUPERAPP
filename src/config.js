@@ -12,6 +12,6 @@ export const GOOGLE_MAPS_KEY =
 /* This build's Android versionCode. Keep it in step with android/app/build.gradle
    `versionCode` on every release — the server compares its MIN_BUILD to this to
    force old apps to update. */
-export const APP_BUILD = 97;
-export const APP_VERSION = "1.5.75";
+export const APP_BUILD = 98;
+export const APP_VERSION = "1.5.76";
 export const PLAY_URL = "https://play.google.com/store/apps/details?id=zw.co.damotors.fuel";

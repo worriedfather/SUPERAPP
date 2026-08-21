@@ -192,6 +192,20 @@ export const getHaulage = (days = 14) => call(`/api/haulage?days=${days}`);
 export const getWetstock = (days = 30) => call(`/api/wetstock?days=${days}`);
 export const getCash = (days = 30) => call(`/api/cash?days=${days}`);
 export const postCash = (b) => call("/api/cash", { method: "POST", body: b });
+// Banking reconciliation & day-close (module A)
+export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
+export const getCashRecon = (days = 30) => call(`/api/cash/recon?days=${days}`);
+export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
+export const getSignals = (days = 30) => call(`/api/signals?days=${days}`);
+export const reviewDeposit = (seq, outcome, note) => call(`/api/cash/deposit/${seq}/review`, { method: "POST", body: { outcome, note } });
+export const closeDay = (b) => call("/api/cash/dayclose", { method: "POST", body: b });
+// Deposit-slip image needs the auth header, so fetch it as a blob → object URL
+// (revoke it when done). Returns null if the deposit has no slip.
+export const depositSlipUrl = async (seq) => {
+  const res = await fetch(getServer() + `/api/cash/deposit/${seq}/photo`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+};
 export const getSiteDayend = (site, days = 14) => call(`/api/site-dayend?site=${encodeURIComponent(site)}&days=${days}`);
 export const getWatchSnoozes = () => call("/api/watchlist/snoozes");
 export const postWatchSnooze = (b) => call("/api/watchlist/snooze", { method: "POST", body: b });

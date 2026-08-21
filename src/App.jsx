@@ -5,7 +5,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp } from 
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView } from "./superapp.jsx";
 import { syncReminders, checkAlerts } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL } from "./config.js";
@@ -514,10 +514,12 @@ const ROLE_TABS = {
   driver: [["dhome", "Home"], ["drequest", "Request"], ["deliver", "Delivery"], ["dapprove", "Approve"]],
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
-  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]],
-  site_manager: [["hub", "Home"], ["submit", "Site submit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]], // legacy alias
+  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]],
+  site_manager: [["hub", "Home"], ["submit", "Site submit"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]], // legacy alias
+  // Cash office: confirms site deposits, records cash received, closes each day.
+  cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"]],
+  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["digest", "Digest"], ["logistics", "Logistics"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
   fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
@@ -529,16 +531,16 @@ const ROLE_TABS = {
   logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"]],
   depot: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"]],
   // Executive: full access to everything EXCEPT raising fuel requests.
-  executive: [["hub", "Home"], ["exec", "Summary"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
+  executive: [["hub", "Home"], ["exec", "Summary"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
               ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"],
-              ["wetstock", "Losses"], ["cash", "Cash"], ["yardwork", "Yard"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"]],
+              ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["yardwork", "Yard"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["exec", "Day-end"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"]],
+  manager: [["hub", "Home"], ["exec", "Day-end"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["intel", "Intelligence"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
   // admin: full access (superuser).
-  admin: [["exec", "Summary"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
-          ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
+  admin: [["exec", "Summary"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
+          ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
           ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"]],
 };
 
@@ -547,6 +549,11 @@ const MODULE_META = {
   cockpit:   { label: "Watchlist", group: "Insights", desc: "Your watchlist" },
   wetstock:  { label: "Losses", group: "Retail sites", desc: "Delivery + site losses" },
   cash:      { label: "Cash", group: "Retail sites", desc: "Banked vs expected" },
+  deposit:   { label: "Record a deposit", group: "Retail sites", desc: "Log a bank deposit + slip" },
+  cashoffice:{ label: "Cash office", group: "Retail sites", desc: "Confirm deposits · close days" },
+  cashflow:  { label: "Cash bridge", group: "Insights", desc: "Fuel cash in vs out" },
+  digest:    { label: "Cash & fuel digest", group: "Insights", desc: "The few things worth flagging" },
+  radar:     { label: "Radar", group: "Insights", desc: "Cash & fuel tripwires" },
   exec:      { label: "Executive summary", group: "Insights", desc: "KPIs at a glance" },
   dhome:     { label: "My balance", group: "Fuel", desc: "Card & requests" },
   dcard:     { label: "My card", group: "Fuel", desc: "Balance & history" },
@@ -935,6 +942,11 @@ function App() {
         {tab === "cockpit" && <Cockpit me={me} tabs={tabs.map(([k]) => k)} />}
         {tab === "wetstock" && <WetstockView />}
         {tab === "cash" && <CashView />}
+        {tab === "deposit" && <SiteDeposit me={me} />}
+        {tab === "cashoffice" && <CashOffice />}
+        {tab === "cashflow" && <CashflowView />}
+        {tab === "digest" && <OwnerDigest />}
+        {tab === "radar" && <RadarView />}
         {tab === "exec" && <ExecutiveDashboard />}
         {tab === "hub" && <Hub me={me} modules={tabs.filter(([k]) => k !== "hub")} onOpen={setTab} />}
         {tab === "inbox" && <Inbox items={alerts?.items || []} onOpen={setTab} />}
