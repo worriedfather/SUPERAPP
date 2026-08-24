@@ -585,11 +585,15 @@ const CASH_LEGS = [
 function CashForm({ choice, site, date, shift, isManager }) {
   const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", daCard: "", cashOnHand: "" };
   const [f, setF] = useState(empty);
+  const [hqDenoms, setHqDenoms] = useState({});   // { "100": count, ... } for cash sent to HQ
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
   const [exp, setExp] = useState(null); const [expLoading, setExpLoading] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
   const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const HQ_DENOMS = [100, 20, 10, 5, 2, 1];   // US$ note denominations counted for HQ
+  const hqTotal = HQ_DENOMS.reduce((a, d) => a + d * n(hqDenoms[String(d)]), 0);
+  const hqCount = HQ_DENOMS.reduce((a, d) => a + n(hqDenoms[String(d)]), 0);
 
   // Pull the expected cash the moment the site / date / shift settles.
   useEffect(() => {
@@ -604,7 +608,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
   }, [site, date, shift, choice.fixed]);
 
   const expected = exp && exp.expected != null && (exp.hasSplit || (exp.hasSales && exp.hasPrice)) ? n(exp.expected) : null;
-  const accounted = CASH_LEGS.reduce((a, l) => a + n(f[l.key]), 0);
+  const accounted = CASH_LEGS.reduce((a, l) => a + (l.key === "sentToHq" ? hqTotal : n(f[l.key])), 0);
   const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted
 
   const send = async (e) => {
@@ -615,7 +619,8 @@ function CashForm({ choice, site, date, shift, isManager }) {
     try {
       const r = await postCash({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
-        banked: n(f.banked), bankRef: f.bankRef || null, sentToHq: n(f.sentToHq),
+        banked: n(f.banked), bankRef: f.bankRef || null, sentToHq: hqTotal,
+        hqDenoms: HQ_DENOMS.reduce((o, d) => { const c = n(hqDenoms[String(d)]); if (c > 0) o[String(d)] = c; return o; }, {}),
         swipe: n(f.swipe), ecocash: n(f.ecocash), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
         expected, deviceTime: new Date().toISOString(),
       });
@@ -660,10 +665,34 @@ function CashForm({ choice, site, date, shift, isManager }) {
         <span className="lbl">How the cash was handled (US$)</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
           {CASH_LEGS.map((l) => (
-            <div key={l.key} style={{ flex: "1 1 44%", minWidth: 130 }}>
-              <Field label={l.label}>
-                <Num value={f[l.key]} onChange={(v) => set(l.key, v)} placeholder={l.hint} />
-              </Field>
+            <div key={l.key} style={{ flex: l.key === "sentToHq" ? "1 1 100%" : "1 1 44%", minWidth: 130 }}>
+              {l.key === "sentToHq" ? (
+                <Field label="Sent to HQ — count the notes (US$)">
+                  <div style={{ background: "var(--surface-2,#F7F8F6)", border: "1px solid var(--line)", borderRadius: 12, padding: "10px 12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
+                      {HQ_DENOMS.map((d) => {
+                        const cnt = n(hqDenoms[String(d)]);
+                        return (
+                          <div key={d} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span className="mono" style={{ width: 38, textAlign: "right", fontWeight: 700, color: "var(--navy)" }}>${d}</span>
+                            <span style={{ color: "var(--steel)" }}>×</span>
+                            <input inputMode="numeric" value={hqDenoms[String(d)] || ""} onChange={(e) => setHqDenoms((s) => ({ ...s, [String(d)]: e.target.value.replace(/[^\d]/g, "") }))} placeholder="0" style={{ width: 58, textAlign: "center" }} />
+                            <span className="mono" style={{ marginLeft: "auto", fontSize: 12, color: cnt ? "var(--navy)" : "#C7CDD6" }}>{dollars(d * cnt)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
+                      <span style={{ fontSize: 12, color: "var(--steel)" }}>{hqCount} note{hqCount === 1 ? "" : "s"} to HQ</span>
+                      <span className="mono" style={{ fontWeight: 800, color: "var(--navy)" }}>{dollars(hqTotal)}</span>
+                    </div>
+                  </div>
+                </Field>
+              ) : (
+                <Field label={l.label}>
+                  <Num value={f[l.key]} onChange={(v) => set(l.key, v)} placeholder={l.hint} />
+                </Field>
+              )}
             </div>
           ))}
         </div>
