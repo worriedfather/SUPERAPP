@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp } from 
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL } from "./config.js";
@@ -111,7 +111,7 @@ async function googleDist(pts) {
   // forecourt. Returns null so triangulation falls back to OSM/table on failure.
   try {
     const r = await routeGoogle(pts.map((p) => ({ name: p.name, lat: p.lat, lon: p.lon, address: p.address })));
-    if (r && r.ok && r.km > 0) return { source: "Google Maps", km: r.km, legs: r.legs };
+    if (r && r.ok && r.km > 0) return { source: "Google Maps", km: r.km, legs: r.legs, poly: r.poly || null };
   } catch { /* fall through */ }
   return null;
 }
@@ -189,21 +189,12 @@ const gmapsUrl = (names) => {
 };
 
 function RouteMap({ names, route, height = 300 }) {
-  const [failed, setFailed] = useState(false);
   const pts = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
   if (pts.length < 2) return null;
-  const url = embedUrl(names), link = gmapsUrl(names);
+  const link = gmapsUrl(names);
   return (
     <div style={{ border: "1.5px solid var(--line)", borderRadius: 11, overflow: "hidden", background: "#E7E4D8" }}>
-      {!failed ? (
-        <iframe title="Route on Google Maps" src={url} width="100%" height={height}
-          style={{ border: 0, display: "block" }} loading="lazy" referrerPolicy="no-referrer-when-downgrade"
-          onError={() => setFailed(true)} />
-      ) : (
-        <div style={{ padding: 16, fontSize: 13, color: "var(--steel)" }}>
-          Google Maps could not be shown here. Use the link below to open the route.
-        </div>
-      )}
+      <TripMap points={pts} poly={route && route.poly} height={height} />
       <div style={{ padding: "7px 10px", background: "#FBFAF6" }}>
         {route && !route.loading ? (
           route.sources && route.sources.length ? (

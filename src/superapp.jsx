@@ -18,6 +18,23 @@ import {
 import { takeOdometerPhoto } from "./device.js";
 import { startTracking } from "./tripTracker.js";
 import { Picker } from "./Picker.jsx";
+import { EFF, LOCAL_KM } from "./data";
+import Leaflet from "leaflet";
+import "leaflet/dist/leaflet.css";
+// Decode a Google-encoded overview polyline into [lat,lng] (for the road line).
+function decodePolyline(str) {
+  let index = 0, lat = 0, lng = 0; const coords = [];
+  while (index < str.length) {
+    let b, shift = 0, result = 0;
+    do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lat / 1e5, lng / 1e5]);
+  }
+  return coords;
+}
 import { remindersOn, setRemindersOn, syncReminders, cancelReminders, sendTestNotification } from "./notify.js";
 
 // Accounting format used app-wide: 0 decimals, thousands separators, and
@@ -4517,9 +4534,62 @@ export function InventoryView() {
 // the journey on a Google map, and estimates distance / fuel / efficiency / ETA per
 // stop so logistics can sanity-check the drop order before committing the trip.
 // Figures are ESTIMATES — town-centre coordinates + a loaded-tanker road rate.
-const TANKER_KMPL = 2.5;      // loaded-tanker road estimate (fleet road median ~2.52)
+// Shared inline route map — OpenStreetMap via Leaflet (no Google API/key). Draws
+// the road route from an encoded polyline when given, else straight legs. Used by
+// both the schedule route planner and the driver fuel-request screen.
+export function TripMap({ points, poly, height = 240 }) {
+  const mapRef = useRef(null);
+  const pts = (points || []).filter((p) => p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon)))
+    .map((p) => ({ name: p.name, lat: Number(p.lat), lon: Number(p.lon) }));
+  const key = pts.map((p) => `${p.lat},${p.lon}`).join("|") + "|" + (poly || "");
+  useEffect(() => {
+    if (pts.length < 2 || !mapRef.current) return;
+    let map;
+    try {
+      map = Leaflet.map(mapRef.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+      Leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
+      const line = poly ? decodePolyline(poly) : pts.map((p) => [p.lat, p.lon]);
+      const pl = Leaflet.polyline(line, { color: "#2B3990", weight: 5, opacity: 0.85 }).addTo(map);
+      pts.forEach((p, i) => {
+        const color = i === 0 ? "#14213D" : i === pts.length - 1 ? "#5E6E88" : "#C07A00";
+        Leaflet.marker([p.lat, p.lon], { icon: Leaflet.divIcon({ className: "", html: `<div style="background:${color};color:#fff;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:700 11px/1 sans-serif;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(map).bindTooltip(p.name || `Stop ${i + 1}`, { direction: "top" });
+      });
+      map.fitBounds(pl.getBounds().pad(0.15));
+      setTimeout(() => { try { map.invalidateSize(); } catch { /* map removed */ } }, 120);
+    } catch { /* leaflet init failed — leave the placeholder */ }
+    return () => { if (map) map.remove(); };
+  }, [key, height]);   // eslint-disable-line
+  if (pts.length < 2) return null;
+  return <div ref={mapRef} style={{ width: "100%", height, background: "#EAEEF5", borderRadius: 11, border: "1px solid var(--line)", zIndex: 0 }} />;
+}
+
 const AVG_SPEED_KMH = 55;     // open-road average for ETA
-function RouteSummary({ warehouse, drops, endPoint, product }) {
+// Zone map for the town/road leg split — the SAME classification the driver
+// fuel-request estimate uses, extended with the warehouse names the schedule uses.
+const SCHED_ZONES = {
+  HRE: ["DA Yard", "NOIC Msasa", "Msasa", "Aspindale", "Glenara", "Gletwyn", "Graniteside", "Speedscene", "Waterfalls", "Willowvale", "Avondale", "Greencroft", "Kuwadzana", "Dzivarasekwa", "Mabvuku", "Epworth", "Chiremba", "Kambuzuma", "Southlea Park", "Kirkman", "Ardbennie", "Kenneth Kaunda", "Chitungwiza Chikwanha", "Chitungwiza Zengeza", "Chitungwiza Makoni"],
+  BYO: ["Bulawayo", "Bulawayo Fairbridge", "Bulawayo North End", "Bulawayo Fife Street", "Bulawayo Khami", "Bulawayo Luveve", "Bulawayo Goderich", "Bulawayo Ashys", "Bulawayo Main Street", "Bulawayo Cowdray Park", "Cowdray Park", "Bulawayo Fort Street", "Bulawayo Matopos", "Bulawayo Pumula"],
+  MUT: ["Mutare 4th Street", "Feruka Mutare", "Feruka"],
+};
+const schedZoneOf = (nm) => Object.keys(SCHED_ZONES).find((z) => SCHED_ZONES[z].includes(nm)) || "OTHER";
+const schedEff = (horse) => { const h = EFF.horse[horse]; return { loc: h ? h.loc : EFF.local, hwy: h ? h.hwy : EFF.hwy, own: !!h, n: h ? h.nl + h.nh : 0 }; };
+// EXACT same method as the driver fuel request (estimate() in App.jsx): each leg is
+// town (short + same city zone) or road; cost at the truck's own measured km/L (or
+// fleet fallback); litres rounded UP to the nearest 10.
+function schedEstimate(names, legs, horse) {
+  const e = schedEff(horse);
+  if (!legs || legs.length !== names.length - 1) return null;
+  let locKm = 0, hwyKm = 0; const per = [];
+  for (let i = 0; i < legs.length; i++) {
+    const a = names[i], b = names[i + 1], km = legs[i];
+    const town = km < LOCAL_KM && schedZoneOf(a) === schedZoneOf(b) && schedZoneOf(a) !== "OTHER";
+    if (town) locKm += km; else hwyKm += km;
+    per.push({ km, town, litres: town ? km / e.loc : km / e.hwy });
+  }
+  const litres = locKm / e.loc + hwyKm / e.hwy;
+  return { locKm, hwyKm, litres, rounded: Math.ceil(litres / 10) * 10, e, per, blended: (locKm + hwyKm) / litres };
+}
+function RouteSummary({ warehouse, drops, endPoint, product, truck }) {
   const [coords, setCoords] = useState(null);
   const [route, setRoute] = useState(null);
   useEffect(() => { getStationCoords().then((r) => { const m = {}; for (const s of (r.stations || [])) m[s.name.toLowerCase()] = s; setCoords(m); }).catch(() => setCoords({})); }, []);
@@ -4539,25 +4609,31 @@ function RouteSummary({ warehouse, drops, endPoint, product }) {
     return () => { live = false; };
   }, [key, ready]);   // eslint-disable-line
 
+  const polyStr = route && route.poly ? route.poly : null;
+
   if (!coords) return <Panel style={{ marginBottom: 14 }}><div style={{ color: "var(--steel)", fontSize: 13 }}>Loading map…</div></Panel>;
   if (stopNames.length < 2) return null;
 
   const ll = (p) => `${p.lat},${p.lon}`;
-  const mid = pts.slice(1, -1).map((p) => "+to:" + ll(p)).join("");
-  const embed = ready ? `https://maps.google.com/maps?saddr=${ll(pts[0])}&daddr=${mid ? mid.slice(4) + "+to:" : ""}${ll(pts[pts.length - 1])}&output=embed` : null;
+  // Deep-link that opens the full journey in Google Maps (no API key / enablement
+  // needed — works everywhere). An inline embedded map needs the Maps Embed API
+  // enabled in Google Cloud; until then this button is the reliable route view.
+  const gmapsUrl = ready ? `https://www.google.com/maps/dir/?api=1&origin=${ll(pts[0])}&destination=${ll(pts[pts.length - 1])}${pts.length > 2 ? `&waypoints=${encodeURIComponent(pts.slice(1, -1).map(ll).join("|"))}` : ""}&travelmode=driving` : null;
 
   const legs = route && route.legs ? route.legs : null;        // per-leg km (road)
+  const est = (legs && legs.length === stopNames.length - 1) ? schedEstimate(stopNames, legs, truck) : null;
   const hm = (mins) => { const h = Math.floor(mins / 60), m = Math.round(mins % 60); return h ? `${h}h ${m}m` : `${m}m`; };
   let cumKm = 0, cumMin = 0, cumFuel = 0;
   const rows = stopNames.map((name, i) => {
     const legKm = i === 0 ? 0 : (legs ? legs[i - 1] : null);
-    if (i > 0 && legKm != null) { cumKm += legKm; cumMin += (legKm / AVG_SPEED_KMH) * 60; cumFuel += legKm / TANKER_KMPL; }
+    const legFuel = i === 0 ? 0 : (est ? est.per[i - 1].litres : null);
+    if (i > 0 && legKm != null) { cumKm += legKm; cumMin += (legKm / AVG_SPEED_KMH) * 60; if (legFuel != null) cumFuel += legFuel; }
     return { name, kind: i === 0 ? "Depot" : i === stopNames.length - 1 ? "Return" : "Drop",
       legKm, cumKm: legKm != null ? cumKm : null, eta: i === 0 ? "departs" : (legKm != null ? "+" + hm(cumMin) : null),
-      fuel: legKm != null ? Math.round(cumFuel) : null };
+      fuel: est && legKm != null ? Math.round(cumFuel) : null };
   });
   const totalKm = legs ? legs.reduce((a, b) => a + b, 0) : null;
-  const totalFuel = totalKm != null ? Math.round(totalKm / TANKER_KMPL) : null;
+  const totalFuel = est ? est.rounded : null;
 
   return (
     <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
@@ -4566,7 +4642,7 @@ function RouteSummary({ warehouse, drops, endPoint, product }) {
         <span style={{ fontSize: 11, color: "var(--steel)" }}>{stopNames.length} stops · estimates</span>
       </div>
       {missing.length > 0 && <div style={{ margin: "0 13px 8px", fontSize: 12, color: "var(--amber)" }}>No coordinates yet for: <b>{missing.join(", ")}</b> — map &amp; distance skip these until surveyed.</div>}
-      {embed && <iframe title="Trip route" src={embed} width="100%" height="230" style={{ border: 0, display: "block", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />}
+      {ready && <div style={{ padding: "0 13px 12px" }}><TripMap points={pts.map((p) => ({ name: p.name, lat: p.lat, lon: p.lon }))} poly={polyStr} height={240} /></div>}
       <div style={{ overflowX: "auto" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>#</Th><Th>Stop</Th><Th right>Leg km</Th><Th right>Total km</Th><Th right>ETA</Th><Th right>Fuel L</Th></tr></thead>
@@ -4581,13 +4657,13 @@ function RouteSummary({ warehouse, drops, endPoint, product }) {
             </tr>))}</tbody>
           {totalKm != null && (
             <tfoot><tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA", fontWeight: 700 }}>
-              <td></td><Td>TOTAL · {product} · {full(TANKER_KMPL)} km/L est.</Td><Td right>{full(totalKm)}</Td><Td right>{full(totalKm)}</Td><Td right>{hm((totalKm / AVG_SPEED_KMH) * 60)}</Td><Td right>{full(totalFuel)}</Td>
+              <td></td><Td>TOTAL · {product}{est ? ` · ${truck || "fleet"} ${est.blended.toFixed(2)} km/L ${est.e.own ? "(measured)" : "(fleet est.)"}` : ""}</Td><Td right>{full(totalKm)}</Td><Td right>{full(totalKm)}</Td><Td right>{hm((totalKm / AVG_SPEED_KMH) * 60)}</Td><Td right>{totalFuel == null ? "—" : full(totalFuel)}</Td>
             </tr></tfoot>
           )}
         </table>
       </div>
-      {route && route.error && <div style={{ padding: "8px 13px", fontSize: 12, color: "var(--steel)" }}>Road distance unavailable right now — the map still shows the journey.</div>}
-      <div style={{ padding: "8px 13px", fontSize: 11, color: "var(--steel)" }}>Estimates: town-centre coordinates, loaded-tanker road rate ({full(TANKER_KMPL)} km/L), {full(AVG_SPEED_KMH)} km/h average. ETA is drive time from departure. Reorder the drops above if the sequence doesn&rsquo;t make sense.</div>
+      {route && route.error && <div style={{ padding: "8px 13px", fontSize: 12, color: "var(--steel)" }}>Road distance unavailable right now — the map link still shows the journey.</div>}
+      <div style={{ padding: "8px 13px", fontSize: 11, color: "var(--steel)" }}>Fuel uses <b>{truck || "the truck"}&rsquo;s</b> own measured consumption{est ? ` (town ${est.e.loc.toFixed(2)} / road ${est.e.hwy.toFixed(2)} km/L${est.e.own ? `, ${est.e.n} legs on record` : " — fleet figures, too few of its own"})` : ""}, rounded up to the nearest 10 L. ETA at {full(AVG_SPEED_KMH)} km/h. Reorder the drops above if the sequence doesn&rsquo;t make sense.</div>
     </Panel>
   );
 }
@@ -4671,7 +4747,15 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           </div>
           {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b>{overStock ? " — drops exceed this" : ""}</div>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 160px" }}><Field label="Driver"><Picker value={f.driverCard} onChange={set("driverCard")} placeholder="Select driver…" title="Driver" options={drivers.map((d) => ({ value: d.card, label: d.name }))} /></Field></div>
+            <div style={{ flex: "1 1 160px" }}><Field label="Driver"><Picker value={f.driverCard} placeholder="Select driver…" title="Driver"
+              onChange={(card) => {
+                // Prepopulate the driver's CURRENT truck (their most recent trip's
+                // truck); logistics can change it if the allocation has changed.
+                const last = trips.filter((t) => t.driverCard === card).sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0];
+                const h = last && horses.find((x) => x.code === last.truck);
+                setF((s) => ({ ...s, driverCard: card, ...(last ? { truckName: last.truck || s.truckName, truckReg: last.truckReg || s.truckReg, trailer: (h && h.trailer) || last.trailer || s.trailer } : {}) }));
+              }}
+              options={drivers.map((d) => ({ value: d.card, label: d.name }))} /></Field></div>
             <div style={{ flex: "1 1 120px" }}><Field label="Truck"><Picker value={f.truckName} title="Truck" placeholder="Truck…"
               onChange={(v) => { const h = horses.find((x) => x.code === v); setF((s) => ({ ...s, truckName: v, trailer: h?.trailer || s.trailer })); }}
               options={horses.map((h) => h.code)} /></Field></div>
@@ -4695,7 +4779,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
               options={["DA Yard", "Msasa", "Feruka", ...sites.map((s) => s.name)]} />
           </Field>
           <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>Map the full trip — the driver just collects and delivers; drops and the return point are set here.</div>
-          <RouteSummary warehouse={f.warehouse} drops={drops} endPoint={f.endPoint} product={f.product} />
+          <RouteSummary warehouse={f.warehouse} drops={drops} endPoint={f.endPoint} product={f.product} truck={f.truckName} />
           <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? (editing ? "Saving…" : "Scheduling…") : (editing ? "Save changes" : "Schedule trip")}</button>
         </form>
       </Panel>
