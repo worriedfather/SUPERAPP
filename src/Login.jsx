@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { signIn } from "./api";
+import { signIn, signInGoogle } from "./api";
 import { bioStatus, bioEnabled, bioUser, bioEnable, bioGet } from "./biometric";
 import { isNative } from "./device";
-import { APP_VERSION } from "./config";
+import { APP_VERSION, GOOGLE_CLIENT_ID } from "./config";
 
 /* PIN sign-in — branded to the DA fuel-card palette (navy + lime).
    Optional biometric (fingerprint/face) sign-in: after a PIN login the app offers
@@ -14,8 +14,34 @@ export default function Login({ onSignedIn }) {
   const [err, setErr] = useState(null);
   const [bio, setBio] = useState({ native: isNative(), available: false, reason: "" });
   const [offer, setOffer] = useState(null);   // { me, username, pin } → offer to enable biometrics
+  const [hp, setHp] = useState("");           // honeypot — real users never fill this (it's hidden)
+  const renderedAt = useRef(Date.now());      // form-render time → the human-check timing
 
   useEffect(() => { bioStatus().then(setBio).catch(() => {}); }, []);
+
+  // Google Sign-In (only when a client ID is configured). Loads the GIS script,
+  // renders Google's button, and exchanges the credential for our session.
+  const gBtnRef = useRef(null);
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    const handle = async (resp) => {
+      setBusy(true); setErr(null);
+      try { const me = await signInGoogle(resp.credential); onSignedIn(me); }
+      catch (x) { setErr(x.message); setBusy(false); }
+    };
+    const init = () => {
+      if (!window.google?.accounts?.id || !gBtnRef.current) return;
+      window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handle });
+      window.google.accounts.id.renderButton(gBtnRef.current, { theme: "outline", size: "large", width: 336, text: "signin_with", shape: "pill" });
+    };
+    if (window.google?.accounts?.id) { init(); return; }
+    let s = document.getElementById("gsi-script");
+    if (s) { s.addEventListener("load", init); return; }
+    s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client"; s.async = true; s.defer = true; s.id = "gsi-script";
+    s.onload = init; document.head.appendChild(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const bioAvail = bio.available;
   const canBio = bioAvail && bioEnabled();
 
@@ -38,7 +64,7 @@ export default function Login({ onSignedIn }) {
 
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr(null);
-    try { const me = await signIn(login.trim(), pin); await finish(me, login.trim(), pin); }
+    try { const me = await signIn(login.trim(), pin, { hp, ts: renderedAt.current }); await finish(me, login.trim(), pin); }
     catch (x) { setErr(x.message); }
     finally { setBusy(false); }
   };
@@ -92,7 +118,17 @@ export default function Login({ onSignedIn }) {
         </div>
 
         <form onSubmit={submit} style={{ background: "#fff", color: C.ink, borderRadius: 18, padding: 22, boxShadow: "0 24px 60px rgba(0,0,0,.40)" }}>
+          {/* honeypot — off-screen, hidden from real users; a bot that autofills it is blocked */}
+          <input type="text" name="company" tabIndex={-1} autoComplete="off" aria-hidden="true" value={hp} onChange={(e) => setHp(e.target.value)}
+            style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }} />
           <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 16, fontWeight: 700, letterSpacing: ".04em", marginBottom: 16 }}>Sign in</div>
+
+          {GOOGLE_CLIENT_ID && (
+            <>
+              <div ref={gBtnRef} style={{ display: "flex", justifyContent: "center", marginBottom: 14 }} />
+              <div style={{ textAlign: "center", fontSize: 11, color: C.steel, marginBottom: 14 }}>or use your username &amp; PIN</div>
+            </>
+          )}
 
           {canBio && (
             <>

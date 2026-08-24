@@ -6,6 +6,19 @@
 
 import { APP_BUILD } from "./config.js";
 
+// Is this the native/app shell (vs a plain web browser)? The server uses the
+// X-DA-App header to exempt the app from the web-only bot checks — the app is
+// protected by device attestation instead.
+const IS_APP = (() => {
+  try {
+    if (typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return true;
+    if (typeof window !== "undefined" && window.__DAOPS_SHELL) return true;
+    if (typeof navigator !== "undefined" && /DAOPSMobile/i.test(navigator.userAgent || "")) return true;
+  } catch { /* ignore */ }
+  return false;
+})();
+const APP_HEADERS = IS_APP ? { "X-DA-App": "1", "X-DA-Build": String(APP_BUILD) } : {};
+
 // The server address. Defaults to the value baked in at build time, but can be
 // overridden in-app (Login → server settings) and is remembered — so changing
 // WiFi/laptop IP no longer needs a rebuild.
@@ -77,7 +90,7 @@ async function call(path, { method = "GET", body, timeoutMs = 12000, _replay = f
   try {
     res = await fetch(getServer() + path, {
       method,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { "Content-Type": "application/json", ...APP_HEADERS, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
@@ -126,10 +139,68 @@ export async function flushOutbox() {
 // Drain automatically when the device regains connectivity.
 if (typeof window !== "undefined") window.addEventListener("online", () => flushOutbox());
 
-export async function signIn(loginId, pin) {
-  const r = await call("/api/login", { method: "POST", body: { login: loginId, pin } });
-  token = r.token;
-  me = r.actor;
+// ---- Offline sign-in --------------------------------------------------------
+// After a successful ONLINE login we cache, per login, a salted SHA-256 of the PIN
+// plus the actor + token, so the same person can sign back in with NO signal (the
+// device is the gate, same trust model as biometric unlock). The cached token is
+// reused to queue writes offline; they replay — and any expired token re-auths —
+// once back online.
+const AUTH_CACHE = "da_offline_auth";
+const normLogin = (s) => String(s || "").trim().toLowerCase();
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+async function cacheOfflineAuth(login, pin, actor, tok) {
+  try {
+    const salt = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, "0")).join("");
+    const hash = await sha256Hex(salt + ":" + pin);
+    const map = JSON.parse(localStorage.getItem(AUTH_CACHE) || "{}");
+    map[normLogin(login)] = { salt, hash, actor, token: tok, at: Date.now() };
+    localStorage.setItem(AUTH_CACHE, JSON.stringify(map));
+  } catch { /* ignore (no subtle crypto / quota) */ }
+}
+async function offlineLogin(login, pin) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(AUTH_CACHE) || "{}")[normLogin(login)];
+    if (!rec) return null;
+    if ((await sha256Hex(rec.salt + ":" + pin)) !== rec.hash) return null;
+    return { actor: rec.actor, token: rec.token };
+  } catch { return null; }
+}
+
+export async function signIn(loginId, pin, meta = {}) {
+  // meta carries the web human-check (hp honeypot + ts form-render time); the app is exempt server-side
+  try {
+    const r = await call("/api/login", { method: "POST", body: { login: loginId, pin, hp: meta.hp || "", ts: meta.ts || 0 } });
+    token = r.token;
+    me = r.actor;
+    localStorage.setItem("da_token", token);
+    localStorage.setItem("da_me", JSON.stringify(me));
+    cacheOfflineAuth(loginId, pin, r.actor, r.token);   // enable offline sign-in next time
+    return me;
+  } catch (e) {
+    // No signal? fall back to a previously-cached sign-in for this person.
+    if (e && e.offline) {
+      const off = await offlineLogin(loginId, pin);
+      if (off) {
+        token = off.token; me = { ...off.actor, __offline: true };
+        localStorage.setItem("da_token", token);
+        localStorage.setItem("da_me", JSON.stringify(off.actor));
+        return me;
+      }
+      const err = new Error("You're offline, and this device hasn't signed in as this user before. Connect once, then you can sign in offline.");
+      err.offline = true;
+      throw err;
+    }
+    throw e;
+  }
+}
+
+// Google Sign-In: exchange the Google credential (ID token) for our session.
+export async function signInGoogle(credential) {
+  const r = await call("/api/auth/google", { method: "POST", body: { credential } });
+  token = r.token; me = r.actor;
   localStorage.setItem("da_token", token);
   localStorage.setItem("da_me", JSON.stringify(me));
   return me;
@@ -155,6 +226,7 @@ export const registerPush = (token, platform) => call("/api/push/register", { me
 export const getSites = () => call("/api/sites");
 export const getSiteConfig = (site) => call(`/api/site-config${site ? `?site=${encodeURIComponent(site)}` : ""}`);
 export const postSiteSubmit = (b) => call("/api/site-submit", { method: "POST", body: b });
+export const postSiteDip = (b) => call("/api/site-dip", { method: "POST", body: b });
 export const addSiteTank = (b) => call("/api/site-tank", { method: "POST", body: b });
 export const addSiteCompetitor = (b) => call("/api/site-competitor", { method: "POST", body: b });
 export const postStock = (b) => call("/api/stock", { method: "POST", body: b });
@@ -167,7 +239,12 @@ export const getPendingDeliveries = () => call("/api/deliveries/pending");
 export const getAppDelivery = (dn) => call(`/api/delivery/${encodeURIComponent(dn)}`);
 export const getAppDeliveries = () => call("/api/deliveries/app");
 export const postRecon = (b) => call("/api/recon", { method: "POST", body: b });
-export const getExecutive = (period, from, to) => call(`/api/executive?period=${encodeURIComponent(period)}${from && to ? `&from=${from}&to=${to}` : ""}`);
+export const getExecutive = (period, from, to, scope) => {
+  let q = `/api/executive?period=${encodeURIComponent(period)}${from && to ? `&from=${from}&to=${to}` : ""}`;
+  if (scope?.type === "site" && scope.value) q += `&site=${encodeURIComponent(scope.value)}`;
+  else if (scope?.type === "region" && scope.value) q += `&region=${encodeURIComponent(scope.value)}`;
+  return call(q);
+};
 export const getInventory = () => call("/api/inventory");
 export const postWarehouseImport = (b) => call("/api/warehouse/import", { method: "POST", body: b });
 export const getWarehouseBalances = () => call("/api/warehouse/balances");
@@ -177,7 +254,17 @@ export const cancelTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripN
 export const closeTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/close`, { method: "POST" });
 export const getTrips = () => call("/api/trips");
 export const getMyTrips = () => call("/api/trips/mine");
+export const getDeliveriesInProgress = () => call("/api/deliveries/in-progress");
+export const getDeliveriesDue = () => call("/api/deliveries/due");
+export const collectTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/collect`, { method: "POST" });
+// GPS breadcrumb streaming (driver) + the trip's track/ETA (managers). Pings post
+// with a short timeout and are allowed to queue offline through the outbox.
+export const postTripPing = (tripNo, pings) => call(`/api/trip/${encodeURIComponent(tripNo)}/ping`, { method: "POST", body: { pings }, timeoutMs: 8000 });
+export const getTripTrack = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/track`);
+export const getDriverPerformance = (from, to, driver) => call(`/api/driver/performance?from=${from}&to=${to}${driver ? `&driver=${encodeURIComponent(driver)}` : ""}`);
+export const getDriverLeague = (from, to) => call(`/api/drivers/league?from=${from}&to=${to}`);
 export const routeGoogle = (points) => call("/api/route/google", { method: "POST", body: { points } });
+export const getStationCoords = () => call("/api/geo/stations");
 export const getYard = () => call("/api/yard");
 export const getYardVehicles = () => call("/api/yard/vehicles");
 export const yardOpen = (b) => call("/api/yard/open", { method: "POST", body: b });
@@ -188,15 +275,24 @@ export const postLubeSale = (b) => call("/api/lube/sale", { method: "POST", body
 export const getLubeSales = (days = 7) => call(`/api/lube/sales?days=${days}`);
 export const getWarehouseConfig = (warehouse) => call(`/api/warehouse-config?warehouse=${encodeURIComponent(warehouse)}`);
 export const getRetail = (date) => call(`/api/retail?date=${encodeURIComponent(date)}`);
-export const getHaulage = (days = 14) => call(`/api/haulage?days=${days}`);
-export const getWetstock = (days = 30) => call(`/api/wetstock?days=${days}`);
+const rangeQS = (days, from, to) => (from && to ? `from=${from}&to=${to}` : `days=${days}`);
+export const getHaulage = (days = 14, from = null, to = null) => call(`/api/haulage?${rangeQS(days, from, to)}`);
+export const getWetstock = (days = 30, from = null, to = null) => call(`/api/wetstock?${rangeQS(days, from, to)}`);
 export const getCash = (days = 30) => call(`/api/cash?days=${days}`);
 export const postCash = (b) => call("/api/cash", { method: "POST", body: b });
+// Expected cash for a shift, derived from the site's sales submission (litres × DA price)
+export const getExpectedCash = ({ site, date, shift } = {}) => {
+  const q = new URLSearchParams();
+  if (site) q.set("site", site);
+  if (date) q.set("date", date);
+  if (shift) q.set("shift", shift);
+  return call(`/api/cash/expected?${q.toString()}`);
+};
 // Banking reconciliation & day-close (module A)
 export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
-export const getCashRecon = (days = 30) => call(`/api/cash/recon?days=${days}`);
+export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
-export const getSignals = (days = 30) => call(`/api/signals?days=${days}`);
+export const getSignals = (days = 30, from = null, to = null) => call(`/api/signals?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const reviewDeposit = (seq, outcome, note) => call(`/api/cash/deposit/${seq}/review`, { method: "POST", body: { outcome, note } });
 export const closeDay = (b) => call("/api/cash/dayclose", { method: "POST", body: b });
 // Deposit-slip image needs the auth header, so fetch it as a blob → object URL
@@ -207,11 +303,51 @@ export const depositSlipUrl = async (seq) => {
   return URL.createObjectURL(await res.blob());
 };
 export const getSiteDayend = (site, days = 14) => call(`/api/site-dayend?site=${encodeURIComponent(site)}&days=${days}`);
+// Indicative shift report (day/night) from supervisor submissions — mirrors the DA Finance Bot PDFs
+export const getShiftReport = (shift = "night", date) => call(`/api/executive/shift?shift=${shift}${date ? `&date=${date}` : ""}`);
+// Manager birds-eye analytics sections (scorecard | dayend | tanktrends | statustrends)
+export const getSiteAnalytics = (section, from, to) => call(`/api/manager/analytics?section=${section}&from=${from}&to=${to}`);
 export const getWatchSnoozes = () => call("/api/watchlist/snoozes");
 export const postWatchSnooze = (b) => call("/api/watchlist/snooze", { method: "POST", body: b });
 export const addSiteManager = (b) => call("/api/site-managers", { method: "POST", body: b });
 export const postDecision = (ref, body) =>
   call(`/api/requests/${encodeURIComponent(ref)}/decision`, { method: "POST", body });
+// ---- approver history: search, drill-down, Excel export ----
+const apprQS = (f = {}) => {
+  const p = new URLSearchParams();
+  for (const k of ["driver", "truck", "from", "to", "q"]) if (f[k]) p.set(k, f[k]);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+// Outflows are sourced from the cash-office WHITESLIPS (the daily cash-breakdown
+// sheets), reconciled to each sheet's printed total. (`currency` is accepted for
+// signature compatibility but whiteslips are USD.)
+export const getBankOutflows = (from, to /* , currency */) => {
+  const p = new URLSearchParams();
+  if (from) p.set("from", from); if (to) p.set("to", to);
+  const s = p.toString();
+  return call(`/api/whiteslip/outflows${s ? `?${s}` : ""}`);
+};
+export const getOutflowTxns = (f = {}) => {
+  const p = new URLSearchParams();
+  for (const k of ["payee", "category", "from", "to"]) if (f[k]) p.set(k, f[k]);
+  const s = p.toString();
+  return call(`/api/whiteslip/outflows/txns${s ? `?${s}` : ""}`);
+};
+export const getApprovalHistory = (f) => call(`/api/approvals/history${apprQS(f)}`);
+export const getApprovalDetail = (ref) => call(`/api/approvals/${encodeURIComponent(ref)}`);
+// Excel/CSV export — needs the auth header, so pull it as a blob and save it.
+export const downloadApprovalsCsv = async (f) => {
+  const sep = apprQS(f) ? "&" : "?";
+  const res = await fetch(getServer() + `/api/approvals/history${apprQS(f)}${sep}format=csv`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) throw new Error("export failed");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url; a.download = `approvals-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
 export const postRedeem = (ref, body) =>
   call(`/api/requests/${encodeURIComponent(ref)}/redeem`, { method: "POST", body });
 export const addDriver = (body) => call("/api/drivers", { method: "POST", body });

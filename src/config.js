@@ -12,6 +12,17 @@ export const GOOGLE_MAPS_KEY =
 /* This build's Android versionCode. Keep it in step with android/app/build.gradle
    `versionCode` on every release — the server compares its MIN_BUILD to this to
    force old apps to update. */
-export const APP_BUILD = 98;
-export const APP_VERSION = "1.5.76";
+export const APP_BUILD = 105;
+export const APP_VERSION = "1.5.83";
 export const PLAY_URL = "https://play.google.com/store/apps/details?id=zw.co.damotors.fuel";
+/* Direct APK download — DA OPS is sideloaded, not on Play, so the force-update
+   screen points here (the server hosts the latest signed APK at this path). */
+export const APK_URL = "https://fuel.dasuperapp.com/download/latest.apk";
+
+/* Google Sign-In client ID (public — it only names the OAuth audience). Create a
+   "Web application" OAuth client in Google Cloud Console with authorized origin
+   https://fuel.dasuperapp.com, then set VITE_GOOGLE_CLIENT_ID at build time. When
+   empty the "Sign in with Google" button is hidden. */
+export const GOOGLE_CLIENT_ID =
+  (import.meta.env && import.meta.env.VITE_GOOGLE_CLIENT_ID) ||
+  "72185703543-4b785sstvqcgi8vqb6640ddsi2c13iin.apps.googleusercontent.com";

@@ -24,3 +24,9 @@
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
 # keep line numbers for readable crash reports
 -keepattributes SourceFile,LineNumberTable
+
+# @capgo/background-geolocation — keep its classes + package names so its static
+# initializer (Package.getName()) survives if minify is re-enabled.
+-keep class com.capgo.** { *; }
+-keeppackagenames com.capgo.**
+-keepattributes RuntimeVisibleAnnotations,Signature,InnerClasses,EnclosingMethod

@@ -97,7 +97,7 @@ All in the repo folder (so they travel when you copy it) **except the tunnel cre
 - `server/.env` — **real secrets**: `DATABASE_URL` (da_app password), `JWT_SECRET`,
   `ANTHROPIC_API_KEY`, `SEED_DATABASE_URL` (postgres superuser password). Rotated for the
   pilot. If the new box's Postgres password differs, update `SEED_DATABASE_URL` and the
-  scripts in `server/import/*` (they hardcode `Canice@1234` for the postgres user).
+  scripts in `server/import/*` (they read the superuser DSN from `PG_ADMIN_URL` in `server/.env`).
 - `PILOT_PINS.csv` — every driver/staff login + their PIN (plaintext; the DB stores only
   hashes). **Sensitive** — hand out, then delete. Regenerate anytime with
   `node server/import/reset-pins.mjs`.

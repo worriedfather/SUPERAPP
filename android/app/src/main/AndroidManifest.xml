@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="false"
@@ -39,14 +40,25 @@
 
     <!-- Permissions -->
 
-    <!-- Location: read once, at the moment a fuel request is raised. No background tracking. -->
+    <!-- Location: read once when a fuel request is raised, AND continuous background
+         tracking while a delivery trip is active (anti-pilferage evidence). Background
+         tracking runs under a foreground service with a persistent notification. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+    <!-- GPS is FOREGROUND-ONLY now (no persistent service / wake lock) so the app can
+         deep-sleep when closed and stops draining/crashing the phone. Background-location
+         + foreground-service + wake-lock permissions removed with it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:node="remove" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.location" android:required="false" tools:replace="android:required" />
 
     <!-- Camera: photograph of the odometer attached to every request. -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" tools:replace="android:required" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

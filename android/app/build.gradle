@@ -14,8 +14,8 @@ android {
         applicationId "zw.co.damotors.fuel"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 98
-        versionName "1.5.76"
+        versionCode 105
+        versionName "1.5.83"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -35,7 +35,11 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled true
+            // R8/minify strips package metadata that @capgo/background-geolocation's
+            // static initializer reads (Package.getName() NPE → crash on every launch).
+            // Disabled so the GPS plugin loads; proguard-rules.pro keeps the rules to
+            // re-enable later if APK size matters.
+            minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug

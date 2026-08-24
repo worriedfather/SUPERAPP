@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
 import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM } from "./data";
+import { resumeTracking, startTracking } from "./tripTracker.js";
 import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts } from "./notify.js";
 import { initPush } from "./push.js";
-import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL } from "./config.js";
+import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL } from "./config.js";
 import { internalKm } from "./mileage.js";
 import { Picker } from "./Picker.jsx";
 
@@ -275,7 +276,12 @@ const routeKm = (names) => {
 };
 // Format a litre/km figure. Guards against missing data so nothing ever renders
 // as "NaN" — a blank value shows an em-dash instead.
-const L = (n) => (Number.isFinite(Number(n)) ? Math.round(n).toLocaleString() : "—");
+// Accounting format: 0 dp, thousands separators, negatives in parentheses.
+const L = (n) => {
+  if (!Number.isFinite(Number(n))) return "—";
+  const x = Math.round(Number(n));
+  return x < 0 ? "(" + Math.abs(x).toLocaleString() + ")" : x.toLocaleString();
+};
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
@@ -393,7 +399,8 @@ const NAV_PATHS = {
   intel: <><path d="M12 3l1.5 3.6L17 8l-3.5 1.4L12 13l-1.5-3.6L7 8l3.5-1.4z" /><path d="M18 14l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9z" /></>,
   master: <><ellipse cx="12" cy="5.5" rx="7.5" ry="3" /><path d="M4.5 5.5v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-6" /><path d="M4.5 11.5v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-6" /></>,
   // super-app modules
-  exec: <><path d="M4 19V5" /><path d="M4 19h16" /><path d="M8 16l3.5-4 3 2.5L20 8" /><circle cx="20" cy="8" r="1.3" fill="currentColor" /></>,
+  exec: <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>,
+  birdseye: <><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" /><rect x="12" y="7" width="3" height="10" /><rect x="17" y="9" width="3" height="8" /></>,
   hub: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
   submit: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
   retail: <><path d="M3 9l1.5-5h15L21 9" /><path d="M4 9h16v11H4z" /><path d="M9 20v-6h6v6" /></>,
@@ -407,6 +414,15 @@ const NAV_PATHS = {
   lube: <><path d="M9 3h6v3l-2 2v3H11V8L9 6z" /><path d="M11 11h2a4 4 0 0 1 4 4v5a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-5a4 4 0 0 1 4-4z" /></>,
   lubesales: <><rect x="4" y="3" width="16" height="18" rx="1.6" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   logistics: <><path d="M4 20V11" /><path d="M10 20V5" /><path d="M16 20v-6" /><path d="M2.5 20h19" /></>,
+  cockpit: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3.5" /><path d="M12 1v3M12 20v3M1 12h3M20 12h3" /></>,
+  radar: <><path d="M12 21a9 9 0 1 0-9-9" /><path d="M12 16a4 4 0 1 0-4-4" /><path d="M12 12l6-6" /></>,
+  cashflow: <><path d="M2 19h20" /><path d="M4 19v-6" /><path d="M20 19v-6" /><path d="M4 13a8 8 0 0 1 16 0" /></>,
+  wetstock: <><path d="M5 5l11 11" /><path d="M16 8v8h-8" /></>,
+  cash: <><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2.6" /><path d="M6 9.5v5M18 9.5v5" /></>,
+  deposit: <><path d="M3 10l9-6 9 6" /><path d="M5 10v9M12 10v9M19 10v9" /><path d="M3 20h18" /></>,
+  cashoffice: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="12" cy="12" r="3.6" /><path d="M12 8.4v1.2M12 14.4v1.2" /></>,
+  approvals: <><circle cx="12" cy="12" r="9" /><path d="M12 7.5v4.7l3 1.8" /></>,
+  outflows: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M12 8.5v5M9.6 11.4l2.4 2.4 2.4-2.4" /></>,
 };
 const NavIcon = ({ k, on }) => (
   <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={on ? 2.4 : 2} strokeLinecap="round" strokeLinejoin="round">
@@ -514,55 +530,70 @@ const ROLE_TABS = {
   driver: [["dhome", "Home"], ["drequest", "Request"], ["deliver", "Delivery"], ["dapprove", "Approve"]],
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
-  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]],
-  site_manager: [["hub", "Home"], ["submit", "Site submit"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]], // legacy alias
+  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]],
+  site_manager: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"]], // legacy alias
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["digest", "Digest"], ["logistics", "Logistics"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"]],
+  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
-  fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
+  fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
                   ["cardsys", "Fuel drawn"], ["intel", "Intelligence"]],
-  approver: [["hub", "Home"], ["approver", "Approve"], ["fleet", "Efficiency"], ["logistics", "Deliveries"],
+  approver: [["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["logistics", "Deliveries"],
              ["cardsys", "Fuel drawn"], ["intel", "Intelligence"]],
   // Logistics: runs the warehouses. Submits warehouse + in-transit stock, logs
   // deliveries, and sees the full inventory plus what the sites hold.
   logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"]],
   depot: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"]],
+  // Logistics lead (Dave): the full logistics role PLUS driver management —
+  // approves fuel requests and sees truck/driver efficiency.
+  logistics_lead: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"]],
   // Executive: full access to everything EXCEPT raising fuel requests.
-  executive: [["hub", "Home"], ["exec", "Summary"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
-              ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"],
-              ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["yardwork", "Yard"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"]],
+  // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
+  // and no master data (master data is the admin role's alone).
+  executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"],
+              ["inventory", "Inventory"], ["logistics", "Deliveries"],
+              ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["exec", "Day-end"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["intel", "Intelligence"]],
+  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"]],
+  // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
+  manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"]],
+  // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
+  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
+  // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
+  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
+  // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
+  // requests and sees truck/driver efficiency.
+  yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // admin: full access (superuser).
-  admin: [["exec", "Summary"], ["digest", "Digest"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["submit", "Site submit"], ["retail", "Retail"],
-          ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["cashflow", "Cash bridge"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
+  admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"],
+          ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
           ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"]],
 };
 
 /* Module cards on the Home hub, grouped. Keyed by tab key. */
 const MODULE_META = {
-  cockpit:   { label: "Watchlist", group: "Insights", desc: "Your watchlist" },
+  cockpit:   { label: "Watchlist", group: "Executive", desc: "Your watchlist" },
   wetstock:  { label: "Losses", group: "Retail sites", desc: "Delivery + site losses" },
   cash:      { label: "Cash", group: "Retail sites", desc: "Banked vs expected" },
   deposit:   { label: "Record a deposit", group: "Retail sites", desc: "Log a bank deposit + slip" },
   cashoffice:{ label: "Cash office", group: "Retail sites", desc: "Confirm deposits · close days" },
-  cashflow:  { label: "Cash bridge", group: "Insights", desc: "Fuel cash in vs out" },
-  digest:    { label: "Cash & fuel digest", group: "Insights", desc: "The few things worth flagging" },
-  radar:     { label: "Radar", group: "Insights", desc: "Cash & fuel tripwires" },
-  exec:      { label: "Executive summary", group: "Insights", desc: "KPIs at a glance" },
+  digest:    { label: "Cash & fuel digest", group: "Executive", desc: "The few things worth flagging" },
+  radar:     { label: "Radar", group: "Executive", desc: "Cash & fuel tripwires" },
+  exec:      { label: "Bird's-eye view", group: "Executive", desc: "" },
+  birdseye:  { label: "Birds-eye", group: "Executive", desc: "Site analytics — scorecard, day-end, trends, deliveries" },
   dhome:     { label: "My balance", group: "Fuel", desc: "Card & requests" },
   dcard:     { label: "My card", group: "Fuel", desc: "Balance & history" },
-  fleet:     { label: "Efficiency", group: "Insights", desc: "km/L analytics" },
-  intel:     { label: "Intelligence", group: "Insights", desc: "Ask the data" },
+  fleet:     { label: "Efficiency", group: "Executive", desc: "km/L analytics" },
+  intel:     { label: "Intelligence", group: "Executive", desc: "Ask the data" },
   driver:    { label: "Raise request", group: "Fuel", desc: "New fuel request" },
   drequest:  { label: "Raise request", group: "Fuel", desc: "New fuel request" },
   rrequest:  { label: "Fuel request", group: "Fuel", desc: "For your site cars" },
   approver:  { label: "Approve fuel", group: "Fuel", desc: "Review & approve" },
+  approvals: { label: "My approvals", group: "Fuel", desc: "History · search · export" },
   cardsys:   { label: "Fuel drawn", group: "Fuel", desc: "Drawn by driver · truck · site" },
   submit:    { label: "Site submit", group: "Retail sites", desc: "Stock · Price · Sales" },
   retail:    { label: "Retail board", group: "Retail sites", desc: "Live site status" },
@@ -571,15 +602,16 @@ const MODULE_META = {
   recon:     { label: "Warehouse", group: "Logistics", desc: "Imports & running balance" },
   schedule:  { label: "Schedule", group: "Logistics", desc: "Plan a delivery trip" },
   logistics: { label: "Deliveries", group: "Logistics", desc: "Delivery performance" },
+  league: { label: "Driver league", group: "Logistics", desc: "Driver performance, ranked" },
   inventory: { label: "Inventory", group: "Logistics", desc: "Warehouse · trucks · sites" },
   yardwork:  { label: "Yard workshop", group: "Yard", desc: "Log repairs & updates" },
   fleetstatus:{ label: "Fleet status", group: "Yard", desc: "Active / in workshop" },
   master:    { label: "Master data", group: "Admin", desc: "Drivers · sites · managers" },
 };
-const MODULE_GROUPS = ["Insights", "Fuel", "Retail sites", "Logistics", "Yard", "Admin"];
+const MODULE_GROUPS = ["Executive", "Fuel", "Retail sites", "Logistics", "Yard", "Admin"];
 // Colour-coded module groups (Tiimo-style: distinct, warm, legible).
 const GROUP_COLOR = {
-  "Insights":     { a: "#7A5AF0", b: "#9B7BFF" },
+  "Executive":    { a: "#7A5AF0", b: "#9B7BFF" },
   "Fuel":         { a: "#2B3990", b: "#4453B8" },
   "Retail sites": { a: "#2E9E5B", b: "#57C57E" },
   "Logistics":    { a: "#E0860E", b: "#F5A62E" },
@@ -693,13 +725,13 @@ function UpdateGate() {
           </div>
           <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Update required</div>
           <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
-            A newer version of DA OPS is out. Please update to keep going — it only takes a moment.
+            A newer version of DA OPS is out. Tap below to download it, then open the file to install.
           </div>
-          <a href={PLAY_URL} target="_blank" rel="noreferrer"
+          <a href={APK_URL} target="_blank" rel="noreferrer"
             style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, textDecoration: "none",
               fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em",
               background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>
-            Update now
+            Download update
           </a>
         </div>
         <div style={{ fontSize: 11, color: "#5E6F94", marginTop: 20 }}>This device: DA OPS v{APP_VERSION} (build {APP_BUILD})</div>
@@ -851,6 +883,9 @@ function App() {
     if (me && REMIND.includes(me.kind)) syncReminders(me.kind, me.site).catch(() => {});
   }, [me]);
 
+  // Resume GPS trip tracking if a trip was left active (app reopened mid-trip).
+  useEffect(() => { if (me && me.kind === "driver") resumeTracking().catch(() => {}); }, [me]);
+
   // Register for FCM push (closed-app "needs your action" alerts). No-op on web
   // and until Firebase is configured; a tapped push deep-links to its tab.
   useEffect(() => {
@@ -875,8 +910,10 @@ function App() {
   // back flow: the Home hub (icon grid) is the menu, each module opens over it,
   // and a Back control returns to the hub. Master data is web/desktop-only.
   const hideOnNative = ([k]) => !(k === "master" && isMobileApp());
-  const tabs = me ? (ROLE_TABS[me.kind] || []).filter(hideOnNative) : [];
-  const homeTab = tabs.some(([k]) => k === "hub") ? "hub" : (tabs[0]?.[0] || null);
+  const rawTabs = me ? (ROLE_TABS[me.kind] || []).filter(hideOnNative) : [];
+  const homeTab = rawTabs.some(([k]) => k === "hub") ? "hub" : (rawTabs.some(([k]) => k === "dhome") ? "dhome" : (rawTabs[0]?.[0] || null));
+  // Home always sits at the very top of the side nav.
+  const tabs = homeTab ? [...rawTabs].sort((a, b) => (a[0] === homeTab ? -1 : b[0] === homeTab ? 1 : 0)) : rawTabs;
   useEffect(() => {
     // "inbox" is a role-agnostic pseudo-tab (the bell) — always reachable.
     if (me && tabs.length && tab !== "inbox" && !tabs.some(([k]) => k === tab)) setTab(homeTab);
@@ -899,7 +936,9 @@ function App() {
   const { drivers, horses, requests, cards } = state;
 
   // Every mutation calls the API, then reloads the projection from the log.
-  const submit = async (r) => { await postRequest(r); await load(); };
+  // a fuel request that names a scheduled trip STARTS the journey → GPS on now,
+  // and stays on until every drop is offloaded (the trip auto-completes).
+  const submit = async (r) => { await postRequest(r); if (r.tripNo) { try { await startTracking(r.tripNo); } catch { /* ignore */ } } await load(); };
   const approve = async (id, litres, note) => { await postDecision(id, { outcome: "approved", litres, note }); await load(); };
   const decline = async (id, note) => { await postDecision(id, { outcome: "declined", note }); await load(); };
   const onAddDriver = async (d) => { await apiAddDriver(d); await load(); };
@@ -932,23 +971,23 @@ function App() {
         </div>
       )}
       <div key={tab} className="rise">
-        {tab === "dhome" && <DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => setTab("deliver")} />}
+        {tab === "dhome" && <><DeliveriesDue onGo={setTab} /><DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => setTab("deliver")} onApprove={() => setTab("dapprove")} /></>}
         {tab === "dcard" && <DriverCard me={me} cards={cards} requests={requests} />}
         {(tab === "driver" || tab === "drequest") && <DriverMode key={prefill ? prefill.id : "new"} initial={prefill} me={me} drivers={drivers} horses={horses} onSubmit={submit} cards={cards} requests={requests} gkey={gkey} onSent={() => { setPrefill(null); if (me.kind === "driver") setTab("dhome"); }} />}
         {tab === "approver" && <ApproverMode drivers={drivers} requests={requests} cards={cards} onApprove={approve} onDecline={decline} gkey={gkey} />}
         {tab === "cardsys" && <CardSystem requests={requests} />}
         {tab === "fleet" && <FleetEfficiency horses={horses} />}
+        {tab === "approvals" && <ApprovalsHistory />}
         {tab === "intel" && <IntelligenceMode />}
         {tab === "cockpit" && <Cockpit me={me} tabs={tabs.map(([k]) => k)} />}
         {tab === "wetstock" && <WetstockView />}
         {tab === "cash" && <CashView />}
         {tab === "deposit" && <SiteDeposit me={me} />}
         {tab === "cashoffice" && <CashOffice />}
-        {tab === "cashflow" && <CashflowView />}
-        {tab === "digest" && <OwnerDigest />}
-        {tab === "radar" && <RadarView />}
+        {(tab === "digest" || tab === "radar") && <RadarView />}
         {tab === "exec" && <ExecutiveDashboard />}
-        {tab === "hub" && <Hub me={me} modules={tabs.filter(([k]) => k !== "hub")} onOpen={setTab} />}
+        {tab === "birdseye" && <ManagerBirdsEye />}
+        {tab === "hub" && <><DeliveriesDue onGo={setTab} /><Hub me={me} modules={tabs.filter(([k]) => k !== "hub")} onOpen={setTab} /></>}
         {tab === "inbox" && <Inbox items={alerts?.items || []} onOpen={setTab} />}
         {tab === "master" && !isMobileApp() && <MasterData drivers={drivers} horses={horses} onAddDriver={onAddDriver} gkey={gkey} setGkey={setGkey} />}
         {/* super-app modules */}
@@ -958,7 +997,9 @@ function App() {
         {tab === "recon" && <WarehouseImports me={me} />}
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
         {tab === "dapprove" && <DeliveryApprovals me={me} />}
+        {tab === "incoming" && <DeliveriesInProgress />}
         {tab === "logistics" && <LogisticsDashboard />}
+        {tab === "league" && <DriverLeague />}
         {tab === "inventory" && <InventoryView />}
         {tab === "rrequest" && <RetailRequest me={me} />}
         {tab === "yardwork" && <YardWorkshop me={me} />}
@@ -976,7 +1017,7 @@ function App() {
           <button className="railbtn" onClick={() => { const n = !rail; setRail(n); try { localStorage.setItem("da_rail", n ? "1" : "0"); } catch { /* ignore */ } }} aria-label={rail ? "Expand menu" : "Collapse menu"}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d={rail ? "M9 18l6-6-6-6" : "M15 18l-6-6 6-6"} /></svg>
           </button>
-          <div className="brand">
+          <div className="brand" onClick={() => homeTab && setTab(homeTab)} style={{ cursor: "pointer" }} title="Home" role="button">
             <img src="/da-logo.png" alt="DA" width="30" height="30" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.35))" }} />
             <div className="disp" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1 }}>DA <span style={{ color: "var(--lime)" }}>OPS</span></div>
           </div>
@@ -1061,16 +1102,27 @@ const SectionHead = ({ icon, title, tint, accent }) => (
   </div>
 );
 
-const BalanceHero = ({ card, balance, children }) => (
-  <div style={{ background: "linear-gradient(150deg,#22345C,#14213D)", color: "#EAF0FA", borderRadius: 18, padding: 20, boxShadow: "0 12px 30px rgba(20,33,61,.22)" }}>
-    <div className="disp" style={{ fontSize: 11, letterSpacing: ".12em", color: "#8FA0C4" }}>Card balance</div>
-    <div className="mono" style={{ fontSize: 46, fontWeight: 500, color: "var(--lime)", lineHeight: 1.1, letterSpacing: "-.02em" }}>{L(balance)}<span style={{ fontSize: 16, color: "#8FA0C4", marginLeft: 6 }}>L</span></div>
-    <div className="mono" style={{ fontSize: 11, color: "#9FB0D0", marginTop: 4 }}>card {card}</div>
-    {children}
-  </div>
-);
+// The card is a USD wallet with per-product litre sub-balances. When the
+// authoritative figures are present (usdCash != null) we show the wallet balance;
+// otherwise we fall back to the ledger-derived litres balance.
+// Fleet card balance is shown in LITRES (the authoritative petrol+diesel litre
+// balance from the card system). The small USD wallet is noted underneath.
+const BalanceHero = ({ card, balance, usdCash, petrolL, dieselL, children }) => {
+  const parts = [];
+  if (petrolL > 0) parts.push(`${L(petrolL)} L petrol`);
+  if (dieselL > 0) parts.push(`${L(dieselL)} L diesel`);
+  if (usdCash != null && Math.abs(usdCash) >= 0.5) parts.push(`$${usdCash.toLocaleString(undefined, { maximumFractionDigits: 0 })} wallet`);
+  return (
+    <div style={{ background: "linear-gradient(150deg,#22345C,#14213D)", color: "#EAF0FA", borderRadius: 18, padding: 20, boxShadow: "0 12px 30px rgba(20,33,61,.22)" }}>
+      <div className="disp" style={{ fontSize: 11, letterSpacing: ".12em", color: "#8FA0C4" }}>Card balance</div>
+      <div className="mono" style={{ fontSize: 46, fontWeight: 500, color: "var(--lime)", lineHeight: 1.1, letterSpacing: "-.02em" }}>{L(balance)}<span style={{ fontSize: 16, color: "#8FA0C4", marginLeft: 6 }}>L</span></div>
+      <div className="mono" style={{ fontSize: 11, color: "#9FB0D0", marginTop: 4 }}>card {card}{parts.length ? ` · ${parts.join(" · ")}` : ""}</div>
+      {children}
+    </div>
+  );
+};
 
-function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery }) {
+function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onApprove }) {
   const c = cards[me.card] || { balance: 0, loads: [], redemptions: [], legs: [] };
   const mine = requests.filter((r) => r.card === me.card);
   const open = mine.filter((r) => r.status === "pending" || r.status === "approved");
@@ -1078,9 +1130,6 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery }) {
   // Recent activity = settled requests only — the in-flight (open) and needs-changes
   // (declined) ones already have their own sections above, so don't repeat them here.
   const history = mine.filter((r) => r.status !== "pending" && r.status !== "approved" && r.status !== "declined");
-  const loaded = c.loads.reduce((s, x) => s + x.litres, 0);
-  const taken = c.redemptions.reduce((s, x) => s + x.litres, 0);
-  const pending = mine.filter((r) => r.status === "pending").length;
   const first = (me.name || "").split(" ")[0];
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
@@ -1088,13 +1137,27 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery }) {
     <div>
       <h2 style={{ margin: "2px 0 16px", fontSize: "clamp(22px,6vw,28px)" }}>Hi {first} 👋</h2>
       <div style={{ marginBottom: 14 }}>
-        <BalanceHero card={me.card} balance={c.balance}>
+        <BalanceHero card={me.card} balance={c.balance} usdCash={c.usdCash} petrolL={c.petrolL} dieselL={c.dieselL}>
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
             <button onClick={onRequest} className="disp pill pill-lime" style={{ flex: 1 }}>New request</button>
             <button onClick={onDelivery} className="disp pill-ghost" style={{ flex: 1, background: "rgba(255,255,255,.14)", color: "#EAF0FA", borderColor: "transparent" }}>New delivery</button>
           </div>
         </BalanceHero>
       </div>
+      {onApprove && (
+        <div onClick={onApprove} role="button" className="card"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "13px 15px", marginBottom: 14, cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>✍️</span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14, color: "var(--navy)" }}>Sign off delivery notes</div>
+              <div style={{ fontSize: 11.5, color: "var(--steel)" }}>Approve delivery notes waiting on you</div>
+            </div>
+          </div>
+          <span style={{ color: "var(--steel)", fontSize: 18 }}>›</span>
+        </div>
+      )}
+      <DriverPerformance />
       {myTrips.length > 0 && (
         <div style={{ marginBottom: 18 }}>
           <SectionHead icon="route" title="Pending trips" tint="#FEF4E6" accent="#C07A00" />
@@ -1104,7 +1167,7 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery }) {
                 <span className="mono" style={{ fontWeight: 700, color: "var(--navy)" }}>{t.tripNo}</span>
                 <span className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{L(t.qty)} L {t.product}</span>
               </div>
-              <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {t.date}</div>
+              <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {fmtD(t.date)}</div>
               <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 4 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
             </div>))}
         </div>
@@ -1129,32 +1192,37 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery }) {
           <div className="card" style={{ padding: 8 }}>{open.map((r) => <RequestLine key={r.id} r={r} />)}</div>
         </div>
       )}
-      {/* card stats — passive summary, kept below the actionable sections above */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 18 }}>
-        {[["Loaded", L(loaded)], ["Taken", L(taken)], ["Pending", pending]].map(([k, v]) => (
-          <div key={k} className="card" style={{ padding: 12, textAlign: "center" }}>
-            <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: k === "Pending" && pending ? "var(--amber)" : "var(--navy)" }}>{v}</div>
-            <div className="lbl" style={{ margin: "4px 0 0" }}>{k}</div>
-          </div>))}
-      </div>
-      {(history.length > 0 || mine.length === 0) && (
+      {(c.redemptions.length > 0 || history.length > 0 || mine.length === 0) && (
         <div style={{ marginBottom: 18 }}>
-          <SectionHead icon="check" title="Recent activity" tint="#E9F5E2" accent="#3E8E28" />
-          {mine.length === 0
-            ? <div className="card" style={{ padding: 18, color: "var(--steel)", fontSize: 14 }}>No requests yet. Tap “New request” to raise your first one.</div>
-            : <div className="card" style={{ padding: 8 }}>{history.slice(0, 8).map((r) => <RequestLine key={r.id} r={r} />)}</div>}
+          <SectionHead icon="check" title="Recent fuel drawn" tint="#E9F5E2" accent="#3E8E28" />
+          {c.redemptions.length === 0 && mine.length === 0
+            ? <div className="card" style={{ padding: 18, color: "var(--steel)", fontSize: 14 }}>No fuel drawn yet. Tap “New request” to raise your first one.</div>
+            : c.redemptions.length > 0
+              ? <div className="card" style={{ padding: 8 }}>{c.redemptions.slice().reverse().slice(0, 8).map((rd, i, a) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 10px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{rd.station || "—"}</div>
+                      <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{rd.date ? fmtD(rd.date) : "—"}{rd.horse ? ` · ${rd.horse}` : ""}{rd.odo ? ` · ${L(rd.odo)} km` : ""}</div>
+                    </div>
+                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap" }}>{L(rd.litres)} L</div>
+                  </div>))}</div>
+              : <div className="card" style={{ padding: 8 }}>{history.slice(0, 8).map((r) => <RequestLine key={r.id} r={r} />)}</div>}
         </div>
       )}
       {c.legs.length > 0 && (
         <div>
           <SectionHead icon="gauge" title="Trips · fill to fill" tint="#FBEDD6" accent="#C07A00" />
-          <AcctTable head={<><Th right>Distance</Th><Th right>Litres</Th><Th right>km/L</Th></>}>
-            {c.legs.slice().reverse().slice(0, 6).map((l, i) => (
-              <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td right>{L(l.dist)} km</Td><Td right>{L(l.litres)}</Td>
-                <Td right style={{ fontWeight: 700, color: "var(--blue)" }}>{l.kmpl.toFixed(2)}</Td>
-              </tr>))}
-          </AcctTable>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "-6px 2px 8px" }}>Distance & fuel efficiency between consecutive fills — town runs read lower than open road.</div>
+          <div className="card" style={{ padding: 8 }}>
+            {c.legs.slice().reverse().slice(0, 8).map((l, i, a) => (
+              <div key={i} style={{ padding: "9px 10px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)", minWidth: 0 }}>{l.from && l.to ? `${l.from} → ${l.to}` : (l.to || l.from || "trip")}</span>
+                  <span className="mono" style={{ fontWeight: 700, whiteSpace: "nowrap", color: l.kmpl < 1.5 ? "var(--red)" : "var(--blue)" }}>{l.kmpl.toFixed(2)} km/L</span>
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{l.date ? fmtD(l.date) : "—"}{l.horse ? ` · ${l.horse}` : ""} · {L(l.dist)} km · {L(l.litres)} L</div>
+              </div>))}
+          </div>
         </div>
       )}
     </div>
@@ -1168,7 +1236,7 @@ function DriverCard({ me, cards, requests }) {
   const pending = requests.filter((r) => r.card === me.card && r.status === "pending").length;
   return (
     <div>
-      <div style={{ marginBottom: 16 }}><BalanceHero card={me.card} balance={c.balance} /></div>
+      <div style={{ marginBottom: 16 }}><BalanceHero card={me.card} balance={c.balance} usdCash={c.usdCash} petrolL={c.petrolL} dieselL={c.dieselL} /></div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 18 }}>
         {[["Loaded", L(loaded)], ["Taken", L(taken)], ["Pending", pending]].map(([k, v]) => (
           <div key={k} className="card" style={{ padding: 12, textAlign: "center" }}>
@@ -1180,13 +1248,16 @@ function DriverCard({ me, cards, requests }) {
         <SectionHead icon="gauge" title="Trips · fill to fill" tint="#FBEDD6" accent="#C07A00" />
         {c.legs.length === 0
           ? <div className="card" style={{ padding: 18, color: "var(--steel)", fontSize: 14 }}>No completed trips yet — a trip is measured between two fills.</div>
-          : <AcctTable head={<><Th right>Distance</Th><Th right>Litres</Th><Th right>km/L</Th></>}>
-              {c.legs.slice().reverse().map((l, i) => (
-                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
-                  <Td right>{L(l.dist)} km</Td><Td right>{L(l.litres)}</Td>
-                  <Td right style={{ fontWeight: 700, color: "var(--blue)" }}>{l.kmpl.toFixed(2)}</Td>
-                </tr>))}
-            </AcctTable>}
+          : <div className="card" style={{ padding: 8 }}>
+              {c.legs.slice().reverse().map((l, i, a) => (
+                <div key={i} style={{ padding: "9px 10px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)", minWidth: 0 }}>{l.from && l.to ? `${l.from} → ${l.to}` : (l.to || l.from || "trip")}</span>
+                    <span className="mono" style={{ fontWeight: 700, whiteSpace: "nowrap", color: l.kmpl < 1.5 ? "var(--red)" : "var(--blue)" }}>{l.kmpl.toFixed(2)} km/L</span>
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{l.date ? fmtD(l.date) : "—"}{l.horse ? ` · ${l.horse}` : ""} · {L(l.dist)} km · {L(l.litres)} L</div>
+                </div>))}
+            </div>}
       </div>
       <div>
         <SectionHead icon="drop" title="Fuel taken" tint="#EDE8FD" accent="#7A5AF0" />
@@ -1377,7 +1448,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
       <>
         <Field label="Scheduled delivery trip">
           <Picker value={tripNo} title="Scheduled delivery trip"
-            onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t && t.truck && !horse) setHorse(t.truck); }}
+            onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck && !horse) setHorse(t.truck); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
             options={[{ value: "", label: "General — no scheduled trip" }, ...myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}` }))]} />
         </Field>
         {myTrips.length === 0 && <div style={{ fontSize: 11, color: "var(--steel)", marginTop: -6, marginBottom: 11 }}>No trips scheduled for you yet — this will be logged as a general request. Ideally, match it to a scheduled delivery.</div>}
@@ -1430,23 +1501,40 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
           <div className="lbl" style={{ color: "#8FA0C4", marginBottom: 2 }}>Start · fixed by GPS</div>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{fuelStn || "—"}</div>
         </div>
-        <Field label="Drops on the way — add in order">
-          <Picker value={pick} onChange={(v) => { setPick(""); if (v) setDrops([...drops, v]); }} placeholder="Choose a drop to add" title="Add a drop" options={STATIONS.map((s) => s.name)} />
-        </Field>
+        {tripNo && (
+          <div style={{ background: "#EEF2FF", border: "1px solid #C9D4F5", borderRadius: 12, padding: "9px 12px", marginBottom: 12, fontSize: 12.5, color: "var(--navy)", lineHeight: 1.5 }}>
+            🔒 Drops and end point are set by the logistics schedule for <b>{tripNo}</b> and can't be changed here. You only confirm the fuelling station (start) above.
+          </div>
+        )}
+        {/* Drops: locked (read-only) when this request is against a scheduled trip;
+            freely editable only for an ad-hoc run with no trip. */}
+        {!tripNo && (
+          <Field label="Drops on the way — add in order">
+            <Picker value={pick} onChange={(v) => { setPick(""); if (v) setDrops([...drops, v]); }} placeholder="Choose a drop to add" title="Add a drop" options={STATIONS.map((s) => s.name)} />
+          </Field>
+        )}
         <div style={{ marginBottom: 12 }}>
           {drops.map((d, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1.5px solid var(--line)", borderRadius: 12, padding: "6px 8px", marginBottom: 6 }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: tripNo ? "#F6F8FC" : "#fff", border: "1.5px solid var(--line)", borderRadius: 12, padding: "6px 8px", marginBottom: 6 }}>
               <span className="mono" style={{ width: 22, height: 22, display: "grid", placeItems: "center", background: "var(--ink)", color: "#fff", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>{i + 2}</span>
               <span style={{ flex: 1, fontSize: 14 }}>{d}</span>
-              <button aria-label="Move earlier" disabled={i === 0} onClick={() => { const a = [...drops]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; setDrops(a); }} style={{ background: "#fff", border: "1.5px solid var(--line)", borderRadius: 8, padding: "3px 9px", color: i === 0 ? "var(--line)" : "var(--ink)", fontSize: 13 }}>↑</button>
-              <button aria-label="Move later" disabled={i === drops.length - 1} onClick={() => { const a = [...drops]; [a[i + 1], a[i]] = [a[i], a[i + 1]]; setDrops(a); }} style={{ background: "#fff", border: "1.5px solid var(--line)", borderRadius: 8, padding: "3px 9px", color: i === drops.length - 1 ? "var(--line)" : "var(--ink)", fontSize: 13 }}>↓</button>
-              <button aria-label={`Remove ${d}`} onClick={() => setDrops(drops.filter((_, j) => j !== i))} style={{ background: "none", color: "var(--red)", fontSize: 16, lineHeight: 1, padding: "0 4px" }}>×</button>
+              {!tripNo && <>
+                <button aria-label="Move earlier" disabled={i === 0} onClick={() => { const a = [...drops]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; setDrops(a); }} style={{ background: "#fff", border: "1.5px solid var(--line)", borderRadius: 8, padding: "3px 9px", color: i === 0 ? "var(--line)" : "var(--ink)", fontSize: 13 }}>↑</button>
+                <button aria-label="Move later" disabled={i === drops.length - 1} onClick={() => { const a = [...drops]; [a[i + 1], a[i]] = [a[i], a[i + 1]]; setDrops(a); }} style={{ background: "#fff", border: "1.5px solid var(--line)", borderRadius: 8, padding: "3px 9px", color: i === drops.length - 1 ? "var(--line)" : "var(--ink)", fontSize: 13 }}>↓</button>
+                <button aria-label={`Remove ${d}`} onClick={() => setDrops(drops.filter((_, j) => j !== i))} style={{ background: "none", color: "var(--red)", fontSize: 16, lineHeight: 1, padding: "0 4px" }}>×</button>
+              </>}
             </div>))}
-          {drops.length === 0 && <div style={{ fontSize: 13, color: "var(--steel)" }}>No drops yet. Leave empty for a direct run.</div>}
+          {drops.length === 0 && <div style={{ fontSize: 13, color: "var(--steel)" }}>{tripNo ? "This trip has no drops." : "No drops yet. Leave empty for a direct run."}</div>}
         </div>
-        <Field label="End point — where the journey finishes">
-          <Picker value={end} onChange={setEnd} placeholder="Select" title="End point" options={STATIONS.map((s) => s.name)} />
-        </Field>
+        {tripNo ? (
+          <Field label="End point — where the journey finishes">
+            <div style={{ background: "#F6F8FC", border: "1.5px solid var(--line)", borderRadius: 12, padding: "10px 12px", fontSize: 14, color: end ? "var(--ink)" : "var(--steel)" }}>{end || "— (set by the schedule)"}</div>
+          </Field>
+        ) : (
+          <Field label="End point — where the journey finishes">
+            <Picker value={end} onChange={setEnd} placeholder="Select" title="End point" options={STATIONS.map((s) => s.name)} />
+          </Field>
+        )}
         {journeyOk && <div style={{ marginTop: 4 }}><RouteMap names={full} route={route} height={190} /></div>}
         <div style={{ marginTop: 14 }}><PumpHead caption={route && route.loading ? "Working out the distance…" : "Estimated for this route"} litres={calc} km={km || null} kmpl={est ? est.blended : kmpl} /></div>
         {!ready && <div style={{ marginTop: 10, background: "#FBEDD6", border: "1px solid var(--amber)", borderRadius: 12, padding: "10px 12px", fontSize: 13 }}>Finish the earlier steps first: {missing.slice(0, 3).join(", ")}{missing.length > 3 ? "…" : ""}</div>}
@@ -1567,9 +1655,11 @@ function ApproverMode({ drivers, requests, cards, onApprove, onDecline, gkey }) 
   const isToday = (d) => { try { return d && new Date(d).toDateString() === new Date().toDateString(); } catch { return false; } };
   const approvedToday = requests.filter((r) => r.status === "approved" && isToday(r.decidedAt));
   // recently decided (approved / declined / redeemed), newest first — click to see
-  // exactly what the approver saw.
+  // exactly what the approver saw. Only requests that went through an ACTUAL app
+  // decision (decidedAt set) belong here — the historical card-system imports are
+  // redeemed WITHOUT a decision, so they must not clutter the approver's log.
   const recent = requests
-    .filter((r) => r.status === "approved" || r.status === "declined" || r.status === "redeemed")
+    .filter((r) => r.decidedAt && (r.status === "approved" || r.status === "declined" || r.status === "redeemed"))
     .sort((a, b) => new Date(b.decidedAt || b.at) - new Date(a.decidedAt || a.at))
     .slice(0, 40);
   const sel = selId ? requests.find((x) => x.id === selId) : null;
@@ -1611,7 +1701,7 @@ const DecisionRow = ({ r, onClick }) => {
       ? { c: "var(--blue)", bg: "#E7ECFF", label: "Redeemed", detail: `${L(r.approvedLitres)} → ${L(r.takenLitres)} L` }
       : { c: "var(--ok)", bg: "#E9F5E2", label: "Approved", detail: `${L(r.approvedLitres)} L loaded` };
   const when = r.decidedAt ? new Date(r.decidedAt) : null;
-  const day = when ? when.toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
+  const day = when ? fmtD(when) : "";
   return (
     <button onClick={onClick} style={{ width: "100%", textAlign: "left", background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: "11px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1732,7 +1822,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
           {r.status === "declined"
             ? <Flag tone="red" title="Declined — sent back to the driver">{r.note ? <span>“{r.note}”</span> : "No note recorded."}</Flag>
             : <Flag tone="ok" title={r.status === "redeemed" ? `Approved ${L(r.approvedLitres)} L · drawn ${L(r.takenLitres)} L` : `Approved — ${L(r.approvedLitres)} L loaded`}>
-                {r.decidedAt ? `Decided ${new Date(r.decidedAt).toLocaleString()}` : ""}{r.note ? ` · “${r.note}”` : ""}
+                {r.decidedAt ? `Decided ${fmtD(r.decidedAt)}` : ""}{r.note ? ` · “${r.note}”` : ""}
               </Flag>}
           {r.status === "redeemed" && <div style={{ marginTop: 10 }}><Cell k="Drawn at" v={r.takenAt || "—"} /></div>}
         </div>
@@ -1932,7 +2022,7 @@ function CardSystem({ requests }) {
   const headers = ["Request", "Date", "Driver", "Card", "Horse", "Station", "Approved L", "Taken L", "Variance L"];
   const data = rows.map((r) => {
     const hasApp = Number.isFinite(Number(r.approvedLitres));
-    return [r.id, r.at ? new Date(r.at).toLocaleDateString() : "", r.driver, r.card, r.horse, r.takenAt || "",
+    return [r.id, r.at ? fmtD(r.at) : "", r.driver, r.card, r.horse, r.takenAt || "",
       hasApp ? r.approvedLitres : "", r.takenLitres, hasApp ? r.takenLitres - r.approvedLitres : ""];
   });
   const totalTaken = rows.reduce((s, r) => s + (r.takenLitres || 0), 0);
@@ -1970,7 +2060,7 @@ function CardSystem({ requests }) {
                   <Td style={{ color: "var(--steel)" }}>{r.id}</Td>
                   <Td style={{ color: "var(--steel)" }}>{r.horse}</Td>
                   <Td style={{ color: "var(--steel)" }}>{r.takenAt || "—"}</Td>
-                  <Td style={{ color: "var(--steel)" }}>{r.at ? new Date(r.at).toLocaleDateString() : "—"}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{r.at ? fmtD(r.at) : "—"}</Td>
                   <Td right>{hasApp ? L(r.approvedLitres) : "—"}</Td>
                   <Td right style={{ fontWeight: 700 }}>{L(r.takenLitres)}</Td>
                   <Td right style={{ fontWeight: 700, color: v == null ? "var(--steel)" : v > 0 ? "var(--red)" : v < 0 ? "var(--steel)" : "var(--ok)" }}>{v == null ? "—" : (v > 0 ? "+" : "") + L(v)}</Td>
@@ -1992,7 +2082,7 @@ function CardSystem({ requests }) {
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><tbody>
-                {[["Driver", drill.driver], ["Card", drill.card], ["Horse", drill.horse], ["Station", drill.takenAt || "—"], ["Date", drill.at ? new Date(drill.at).toLocaleString() : "—"], ["Request", drill.id]].map(([k, val]) => (
+                {[["Driver", drill.driver], ["Card", drill.card], ["Horse", drill.horse], ["Station", drill.takenAt || "—"], ["Date", drill.at ? fmtD(drill.at) : "—"], ["Request", drill.id]].map(([k, val]) => (
                   <tr key={k} style={{ borderTop: "1px solid var(--line)" }}><Td style={{ color: "var(--steel)" }}>{k}</Td><Td right>{val}</Td></tr>
                 ))}
               </tbody></table>
@@ -2188,7 +2278,7 @@ function FleetEfficiency({ horses }) {
               return (
                 <tr key={i} style={{ borderTop: "1px solid var(--line)", background: low ? "#FDECEA" : undefined }}>
                   <Td style={{ fontWeight: 600 }}>{l.route}{(dim !== "driver" || dim !== "horse") && <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400 }}>{dim !== "driver" ? l.driver : ""}{dim !== "driver" && dim !== "horse" ? " · " : ""}{dim !== "horse" ? l.horse : ""}</div>}</Td>
-                  <Td style={{ color: "var(--steel)" }}>{l.date ? new Date(l.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—"}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{l.date ? fmtD(l.date) : "—"}</Td>
                   <Td right>{L(l.dist)}</Td>
                   <Td right>{L(l.litres)}</Td>
                   <Td right style={{ fontWeight: 700, color: low ? "var(--red)" : "var(--ink)" }}>{lk.toFixed(2)}</Td>
@@ -2284,7 +2374,7 @@ function IntelligenceMode() {
             <div style={{ width: 24, height: 24, borderRadius: 8, background: "#EDE8FD", color: "#7A5AF0", display: "grid", placeItems: "center", flexShrink: 0 }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{NAV_PATHS.intel}</svg>
             </div>
-            <span className="disp" style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", letterSpacing: ".04em" }}>Fleet analyst</span>
+            <span className="disp" style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", letterSpacing: ".04em" }}>Operations analyst</span>
           </div>
           <div className="card" style={{ padding: "14px 16px" }}><RichText text={m.content} /></div>
         </div>
@@ -2303,7 +2393,7 @@ function IntelligenceMode() {
         <div className="card" style={{ padding: 8, display: "flex", gap: 8, alignItems: "flex-end", boxShadow: "var(--shlg)" }}>
           <textarea value={q} onChange={(e) => setQ(e.target.value)} rows={1}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="Ask about the fleet…"
+            placeholder="Ask for additional insights…"
             style={{ flex: 1, resize: "none", border: "none", background: "none", padding: "10px 8px", fontFamily: "'Barlow',sans-serif", fontSize: 14, maxHeight: 120 }} />
           <button onClick={() => send()} disabled={busy || !q.trim()} className="disp pill" style={{ flex: "0 0 auto", padding: "13px 20px", opacity: busy || !q.trim() ? .5 : 1 }}>Send</button>
         </div>

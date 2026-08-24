@@ -6,19 +6,27 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getCashRecon, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
-  getSiteConfig, postSiteSubmit, addSiteTank, addSiteCompetitor,
+  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, routeGoogle, getStationCoords,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
+  getApprovalHistory, getApprovalDetail, downloadApprovalsCsv, getBankOutflows, getOutflowTxns,
 } from "./api.js";
 import { takeOdometerPhoto } from "./device.js";
+import { startTracking } from "./tripTracker.js";
 import { Picker } from "./Picker.jsx";
 import { remindersOn, setRemindersOn, syncReminders, cancelReminders, sendTestNotification } from "./notify.js";
 
-const L = (n) => (Number.isFinite(Number(n)) ? Math.round(n).toLocaleString() : "—");
+// Accounting format used app-wide: 0 decimals, thousands separators, and
+// NEGATIVES IN PARENTHESES — e.g. -3912 → "(3,912)". Non-numbers → "—".
+const acct = (n) => {
+  const x = Math.round(Number(n) || 0);
+  return x < 0 ? "(" + Math.abs(x).toLocaleString("en-US") + ")" : x.toLocaleString("en-US");
+};
+const L = (n) => (Number.isFinite(Number(n)) ? acct(n) : "—");
 // fuel prices are quoted to the tenth-of-a-cent — 3dp everywhere so the retail
 // board matches the executive board (was 2dp here, hiding sub-cent gaps).
 const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(3) : "—");
@@ -184,9 +192,9 @@ function exportExecMargin(d) {
 }
 function exportExecInventory(d) {
   const rows = [];
-  for (const w of (d.supply?.warehouses || [])) rows.push(["Warehouse", w.name, w.products?.Diesel || 0, w.products?.Blend || 0, w.products?.ULP || 0, w.stock || 0, w.transit || 0]);
-  for (const s of (d.supply?.siteList || [])) rows.push(["Site", s.site, s.diesel || 0, s.blend || 0, s.ulp || 0, s.total || 0, ""]);
-  downloadCsv(`DA_Inventory_${d.asOf?.date || ""}.csv`, ["Type", "Name", "Diesel (L)", "Blend (L)", "ULP (L)", "On hand (L)", "In transit (L)"], rows);
+  for (const w of (d.supply?.warehouses || [])) rows.push(["Warehouse", w.name, w.products?.Blend || 0, w.products?.Diesel || 0, w.products?.ULP || 0, w.stock || 0, w.transit || 0]);
+  for (const s of (d.supply?.siteList || [])) rows.push(["Site", s.site, s.blend || 0, s.diesel || 0, s.ulp || 0, s.total || 0, ""]);
+  downloadCsv(`DA_Inventory_${d.asOf?.date || ""}.csv`, ["Type", "Name", "Blend (L)", "Diesel (L)", "ULP (L)", "On hand (L)", "In transit (L)"], rows);
 }
 function exportExecFleet(d) {
   downloadCsv("DA_Fleet_efficiency.csv", ["Vehicle", "km/L", "Town km/L", "Road km/L", "90d km", "Litres", "Fills"],
@@ -286,6 +294,8 @@ export function SiteSubmit({ me }) {
   const [loading, setLoading] = useState(false);
   const activeSite = choice.fixed ? choice.fixedSite : site;
   const shift = shiftNow(); const date = todayISO();
+  // managers (not tied to a site) can pick ANY site and edit a locked submission
+  const isManager = !!me && ["manager", "operations_manager", "executive", "admin"].includes(me.kind);
 
   const loadCfg = useCallback(() => {
     if (!activeSite) { setConfig(null); return; }
@@ -303,28 +313,68 @@ export function SiteSubmit({ me }) {
         <>
           <div className="card" style={{ padding: "11px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div><span className="lbl" style={{ marginBottom: 1 }}>Shift (auto)</span><div className="disp" style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{shiftLabel(shift)}</div></div>
-            <div style={{ textAlign: "right" }}><span className="lbl" style={{ marginBottom: 1 }}>Date</span><div className="mono" style={{ fontSize: 13 }}>{date}</div></div>
+            <div style={{ textAlign: "right" }}><span className="lbl" style={{ marginBottom: 1 }}>Date</span><div className="mono" style={{ fontSize: 13 }}>{fmtD(date)}</div></div>
           </div>
-          <Segmented options={[["readings", "Stock & Sales"], ["prices", "Prices"], ["cash", "Cash"]]} value={which} onChange={setWhich} />
+          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"]]} value={which} onChange={setWhich} />
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
           {cfgErr && <Note tone="red" title="Couldn't load this site">{cfgErr} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={loadCfg}>Retry</button></Note>}
-          {config && which === "readings" && <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={loadCfg} />}
-          {config && which === "prices" && <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={loadCfg} />}
-          {which === "cash" && <CashForm choice={choice} site={activeSite} date={date} shift={shift} />}
+          {config && which === "readings" && <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={loadCfg} isManager={isManager} />}
+          {config && which === "dip" && <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} />}
+          {config && which === "prices" && <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={loadCfg} isManager={isManager} />}
+          {which === "cash" && (shift === "night"
+            ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />
+            : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>)}
         </>
       )}
     </Wrap>
   );
 }
 
+// Shown after a site submission lands — a clear "submitted" state so the same
+// figures aren't sent twice, with an Edit button to reopen the form and correct
+// a mistake (a re-submit writes a correction; the latest reading wins).
+// canEdit gates the Edit button: once a SITE submits it's LOCKED — only a manager
+// can reopen and correct it (managers pass canEdit=true). Supervisors see a note.
+function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true }) {
+  const c = tone === "amber"
+    ? { bg: "#FEF7E6", fg: "#8A6D1E", ic: "!" }
+    : { bg: "#EAF7EC", fg: "#2E7D33", ic: "✓" };
+  return (
+    <Panel>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <div style={{ width: 34, height: 34, borderRadius: 100, background: c.bg, color: c.fg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>{c.ic}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)" }}>{title}</div>
+          {body && <div style={{ fontSize: 13, color: "var(--steel)", marginTop: 3 }}>{body}</div>}
+          {canEdit
+            ? <button type="button" className="pill-ghost" style={{ marginTop: 12, padding: "8px 16px" }} onClick={onEdit}>Edit submission</button>
+            : <div style={{ marginTop: 10, fontSize: 12, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>🔒 Locked. If something needs changing, ask a manager to edit it.</div>}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 // Stock (per tank) + sales in one submission. Tanks and the previous readings
 // are preloaded; the user changes only what moved.
-function ReadingsForm({ choice, site, config, date, shift, onSaved }) {
+function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
-  const [sales, setSales] = useState({ blendSales: "", dieselSales: "" });
-  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
+  const [sales, setSales] = useState({ blendSales: "", dieselSales: "", ulpSales: "", cashSales: "", petroSales: "", daCardSales: "" });
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
+  const hasULP = (config.tanks || []).some((t) => t.product === "ULP");   // only sites with a ULP tank see the ULP field
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
+  const setS = (k, v) => setSales((s) => ({ ...s, [k]: v }));
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
+  const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  // the site's own DA pump price → a total-sales-value target the split should reconcile to
+  const daP = (fuel) => { const l = (config.lastPrice || []).find((x) => x.isDA && x.fuelType === fuel && x.price > 0); return l ? Number(l.price) : null; };
+  const blendPrice = daP("Petrol"), dieselPrice = daP("Diesel");
+  const salesValue = (blendPrice ? n(sales.blendSales) * blendPrice : 0) + (dieselPrice ? n(sales.dieselSales) * dieselPrice : 0);
+  const split = n(sales.cashSales) + n(sales.petroSales) + n(sales.daCardSales);
+  const hasSplit = split > 0;
+  const litresEntered = n(sales.blendSales) > 0 || n(sales.dieselSales) > 0;
 
   const send = async (e) => {
     e.preventDefault(); setBusy(true); setMsg(null);
@@ -332,17 +382,24 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved }) {
       const r = await postSiteSubmit({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
         tanks: tanks.map((t) => ({ label: t.label, product: t.product, litres: t.litres })),
-        blendSales: sales.blendSales, dieselSales: sales.dieselSales, deviceTime: new Date().toISOString(),
+        blendSales: sales.blendSales, dieselSales: sales.dieselSales, ulpSales: sales.ulpSales || null,
+        cashSales: sales.cashSales || null, petroSales: sales.petroSales || null, daCardSales: sales.daCardSales || null,
+        deviceTime: new Date().toISOString(),
       });
-      setMsg({ tone: "ok", title: "Submitted", body: `Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel` });
+      if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
+      setDone({ title: `Stock & sales submitted · ${r.site || site}`, body: `Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
   return (
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        <div style={{ fontSize: 11.5, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "7px 10px", marginBottom: 12 }}>
+          This is the <b>once-per-shift</b> stock &amp; sales submission. For a midday tank check, use the <b>Midday dip</b> tab — don&apos;t enter sales there.
+        </div>
         <span className="lbl">Tank readings (litres)</span>
         {tanks.map((t, i) => (
           <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
@@ -354,13 +411,75 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved }) {
           </div>
         ))}
         <div style={{ height: 8 }} />
-        <span className="lbl">Sales this shift (litres)</span>
+        <span className="lbl">Total sales this shift (litres)</span>
         <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ flex: 1 }}><Field label="Blend sold"><Num value={sales.blendSales} onChange={(v) => setSales((s) => ({ ...s, blendSales: v }))} /></Field></div>
-          <div style={{ flex: 1 }}><Field label="Diesel sold"><Num value={sales.dieselSales} onChange={(v) => setSales((s) => ({ ...s, dieselSales: v }))} /></Field></div>
+          <div style={{ flex: 1 }}><Field label="Blend sold"><Num value={sales.blendSales} onChange={(v) => setS("blendSales", v)} /></Field></div>
+          <div style={{ flex: 1 }}><Field label="Diesel sold"><Num value={sales.dieselSales} onChange={(v) => setS("dieselSales", v)} /></Field></div>
+          {hasULP && <div style={{ flex: 1 }}><Field label="ULP sold"><Num value={sales.ulpSales} onChange={(v) => setS("ulpSales", v)} /></Field></div>}
         </div>
-        {config.lastSales && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 12 }}>Last: {L(config.lastSales.blend_sales)} blend · {L(config.lastSales.diesel_sales)} diesel sold</div>}
-        <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Sending…" : "Submit stock & sales"}</button>
+        {config.lastSales && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 4 }}>Last: {L(config.lastSales.blend_sales)} blend · {L(config.lastSales.diesel_sales)} diesel sold</div>}
+        {litresEntered && salesValue > 0 && (
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}</div>
+        )}
+
+        {/* Split the sales by tender — the CASH portion is what the Cash tab reconciles */}
+        <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
+          <span className="lbl">Split sales by tender (US$)</span>
+          <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
+            <div style={{ flex: 1 }}><Field label="Cash"><Num value={sales.cashSales} onChange={(v) => setS("cashSales", v)} placeholder="$" /></Field></div>
+            <div style={{ flex: 1 }}><Field label="Petrotrade"><Num value={sales.petroSales} onChange={(v) => setS("petroSales", v)} placeholder="$" /></Field></div>
+            <div style={{ flex: 1 }}><Field label="DA card"><Num value={sales.daCardSales} onChange={(v) => setS("daCardSales", v)} placeholder="$" /></Field></div>
+          </div>
+          {hasSplit && (
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 2px 0" }}>
+              <span style={{ color: "var(--steel)" }}>Split total{salesValue > 0 ? ` vs ${dollars(salesValue)} sales` : ""}</span>
+              <span className="mono" style={{ fontWeight: 700, color: salesValue > 0 && Math.abs(split - salesValue) > salesValue * 0.05 ? "var(--amber)" : "var(--navy)" }}>{dollars(split)}</span>
+            </div>
+          )}
+        </div>
+
+        <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 14 }}>{busy ? "Sending…" : "Submit stock & sales"}</button>
+      </form>
+    </Panel>
+  );
+}
+
+// Midday dip — a stock-only snapshot (litres in tank) between the day and night
+// submissions. Tank readings ONLY, no sales or prices.
+function DipForm({ choice, site, config, date, isManager }) {
+  const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
+  const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: "" })));
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
+  const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
+  const send = async (e) => {
+    e.preventDefault(); setBusy(true); setMsg(null);
+    const filled = tanks.filter((t) => t.litres !== "" && t.litres != null);
+    if (!filled.length) { setBusy(false); setMsg({ tone: "amber", title: "Nothing to submit", body: "Enter the litres in at least one tank." }); return; }
+    try {
+      const r = await postSiteDip({ site: choice.fixed ? undefined : site, tradingDate: date,
+        tanks: tanks.map((t) => ({ label: t.label, product: t.product, litres: t.litres })), deviceTime: new Date().toISOString() });
+      if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
+      setDone({ title: `Midday dip submitted · ${r.site || site}`, body: `${L(r.blend)} blend · ${L(r.diesel)} diesel` });
+    } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
+    finally { setBusy(false); }
+  };
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
+  return (
+    <Panel>
+      <form onSubmit={send}>
+        {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 10 }}>A mid-day tank dip — just the litres in each tank. No sales or prices.</div>
+        <span className="lbl">Tank dips (litres)</span>
+        {tanks.map((t, i) => (
+          <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{t.label}</div>
+              <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.product}{lastByLabel[t.label] != null ? ` · last ${L(lastByLabel[t.label])}` : ""}</div>
+            </div>
+            <Num style={{ maxWidth: 150 }} value={t.litres} onChange={(v) => setTank(i, v)} placeholder="litres" />
+          </div>
+        ))}
+        <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 8 }}>{busy ? "Sending…" : "Submit midday dip"}</button>
       </form>
     </Panel>
   );
@@ -368,17 +487,18 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved }) {
 
 // Price survey — the site's competitor list is preloaded, prices default to
 // yesterday's; the user changes only what moved and can add a competitor.
-function PricesForm({ choice, site, config, date, onSaved }) {
+function PricesForm({ choice, site, config, date, onSaved, isManager }) {
   const last = config.lastPrice || [];
   const priceOf = (station, fuel) => { const l = last.find((x) => x.station === station && x.fuelType === fuel); return l ? l.price : ""; };
   const daName = `DA ${site}`;
   const daPrice = (fuel) => { const l = last.find((x) => x.isDA && x.fuelType === fuel); return l ? l.price : ""; };
+  const hasULP = (config.tanks || []).some((t) => t.product === "ULP");   // only ULP sites show the ULP column
   const [rows, setRows] = useState([
-    { station: daName, isDA: true, petrol: daPrice("Petrol"), diesel: daPrice("Diesel") },
-    ...config.competitors.map((c) => ({ station: c.name, brand: c.brand, isDA: false, petrol: priceOf(c.name, "Petrol"), diesel: priceOf(c.name, "Diesel") })),
+    { station: daName, isDA: true, petrol: daPrice("Petrol"), diesel: daPrice("Diesel"), ulp: daPrice("ULP") },
+    ...config.competitors.map((c) => ({ station: c.name, brand: c.brand, isDA: false, petrol: priceOf(c.name, "Petrol"), diesel: priceOf(c.name, "Diesel"), ulp: priceOf(c.name, "ULP") })),
   ]);
   const [newComp, setNewComp] = useState("");
-  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
   const setRow = (i, k, v) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
 
   const addComp = async () => {
@@ -393,19 +513,21 @@ function PricesForm({ choice, site, config, date, onSaved }) {
       if (!r.station.trim()) continue;
       if (r.petrol) lines.push({ station: r.station.trim(), brand: r.brand, isDA: r.isDA, fuelType: "Petrol", price: Number(r.petrol) });
       if (r.diesel) lines.push({ station: r.station.trim(), brand: r.brand, isDA: r.isDA, fuelType: "Diesel", price: Number(r.diesel) });
+      if (r.ulp) lines.push({ station: r.station.trim(), brand: r.brand, isDA: r.isDA, fuelType: "ULP", price: Number(r.ulp) });
     }
-    try { const r = await postPrice({ site: choice.fixed ? undefined : site, tradingDate: date, lines, deviceTime: new Date().toISOString() }); setMsg({ tone: "ok", title: "Prices submitted", body: `${r.lines} prices` }); }
+    try { const r = await postPrice({ site: choice.fixed ? undefined : site, tradingDate: date, lines, deviceTime: new Date().toISOString() }); setDone(r && r.__queued ? { title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." } : { title: "Prices submitted", body: `${r.lines} price${r.lines === 1 ? "" : "s"} recorded` }); }
     catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
   return (
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
         <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>Yesterday's prices are preloaded — change only what moved.</div>
         <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--steel)", padding: "0 2px 4px" }}>
-          <span style={{ flex: 1 }}>STATION</span><span style={{ width: 66, textAlign: "center" }}>PETROL</span><span style={{ width: 66, textAlign: "center" }}>DIESEL</span>
+          <span style={{ flex: 1 }}>STATION</span><span style={{ width: 66, textAlign: "center" }}>PETROL</span><span style={{ width: 66, textAlign: "center" }}>DIESEL</span>{hasULP && <span style={{ width: 66, textAlign: "center" }}>ULP</span>}
         </div>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "6px 8px", borderRadius: 10, background: r.isDA ? "#EAEEFB" : "#fff", border: "1px solid var(--line)" }}>
@@ -415,6 +537,7 @@ function PricesForm({ choice, site, config, date, onSaved }) {
             </div>
             <Num style={{ width: 66, padding: "9px 7px" }} value={r.petrol} onChange={(v) => setRow(i, "petrol", v)} />
             <Num style={{ width: 66, padding: "9px 7px" }} value={r.diesel} onChange={(v) => setRow(i, "diesel", v)} />
+            {hasULP && <Num style={{ width: 66, padding: "9px 7px" }} value={r.ulp} onChange={(v) => setRow(i, "ulp", v)} />}
           </div>
         ))}
         <div style={{ display: "flex", gap: 6, margin: "10px 0 14px" }}>
@@ -427,60 +550,127 @@ function PricesForm({ choice, site, config, date, onSaved }) {
   );
 }
 
-// Cash collections — the tender split (USD cash / swipe / DA card) taken this
-// shift, plus what was banked. Reconciled server-side against expected takings
-// (litres × price). USD notes are the tender that must be physically banked.
-function CashForm({ choice, site, date, shift }) {
-  const [f, setF] = useState({ usdCash: "", swipe: "", daCard: "", banked: "", bankRef: "" });
-  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null);
+// Cash handling — NOT a re-declaration of takings. The expected cash is pulled
+// from the site's own sales submission (litres sold × its DA pump price) and is
+// not editable here. The supervisor records HOW that cash was handled — banked,
+// sent to HQ, card swipe, ecocash/mobile, DA card, cash still on hand — and the
+// form shows the variance so anything unaccounted is visible before it's sent.
+// The Cash tab (night shift only) reconciles the trading day's OFFICIAL cash
+// (FileMaker) against where the takings went — banked, to HQ, card swipe,
+// ecocash/mobile, or still on hand.
+const CASH_LEGS = [
+  { key: "banked", label: "Banked", hint: "USD cash deposited", tone: "#2B3990" },
+  { key: "sentToHq", label: "Sent to HQ", hint: "cash handed to head office", tone: "#22345C" },
+  { key: "swipe", label: "Card swipe", hint: "POS / bank card", tone: "#6BC048" },
+  { key: "ecocash", label: "EcoCash / mobile", hint: "mobile money", tone: "#4FA45B" },
+  { key: "cashOnHand", label: "Cash on hand", hint: "float / not yet moved", tone: "#C8A24B" },
+];
+function CashForm({ choice, site, date, shift, isManager }) {
+  const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", daCard: "", cashOnHand: "" };
+  const [f, setF] = useState(empty);
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
+  const [exp, setExp] = useState(null); const [expLoading, setExpLoading] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
-  const declared = n(f.usdCash) + n(f.swipe) + n(f.daCard);
   const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  // Pull the expected cash the moment the site / date / shift settles.
+  useEffect(() => {
+    let live = true;
+    if (!site) { setExp(null); return; }
+    setExpLoading(true); setExp(null);
+    getExpectedCash({ site: choice.fixed ? undefined : site, date, shift })
+      .then((d) => { if (live) setExp(d); })
+      .catch(() => { if (live) setExp(null); })
+      .finally(() => { if (live) setExpLoading(false); });
+    return () => { live = false; };
+  }, [site, date, shift, choice.fixed]);
+
+  const expected = exp && exp.expected != null && (exp.hasSplit || (exp.hasSales && exp.hasPrice)) ? n(exp.expected) : null;
+  const accounted = CASH_LEGS.reduce((a, l) => a + n(f[l.key]), 0);
+  const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
-    if (declared + n(f.banked) === 0) { setMsg({ tone: "amber", title: "Nothing to submit", body: "Enter at least one tender amount, or the amount banked." }); return; }
+    if (accounted === 0) { setMsg({ tone: "amber", title: "Nothing to submit", body: "Record how at least one part of the cash was handled." }); return; }
+    if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
     setBusy(true);
     try {
       const r = await postCash({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
-        usdCash: n(f.usdCash), swipe: n(f.swipe), daCard: n(f.daCard), banked: n(f.banked),
-        bankRef: f.bankRef || null, deviceTime: new Date().toISOString(),
+        banked: n(f.banked), bankRef: f.bankRef || null, sentToHq: n(f.sentToHq),
+        swipe: n(f.swipe), ecocash: n(f.ecocash), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
+        expected, deviceTime: new Date().toISOString(),
       });
-      setMsg({ tone: "ok", title: "Cash submitted", body: `${dollars(declared)} taken · ${dollars(n(f.banked))} banked — ${r.site}` });
-      setF({ usdCash: "", swipe: "", daCard: "", banked: "", bankRef: "" });
+      const tail = expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
+      if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
+      setDone({ tone: variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
+  const okVar = variance != null && Math.abs(variance) < 1;
+  const varTone = variance == null ? "var(--steel)" : okVar ? "#3C9A52" : variance > 0 ? "var(--amber)" : "#C0563A";
+
+  if (done) return <SubmittedCard tone={done.tone} title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
   return (
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
-        <span className="lbl">Takings this shift (US$)</span>
-        <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
-          <div style={{ flex: 1 }}><Field label="USD cash"><Num value={f.usdCash} onChange={(v) => set("usdCash", v)} placeholder="notes" /></Field></div>
-          <div style={{ flex: 1 }}><Field label="Card swipe"><Num value={f.swipe} onChange={(v) => set("swipe", v)} /></Field></div>
-          <div style={{ flex: 1 }}><Field label="DA card"><Num value={f.daCard} onChange={(v) => set("daCard", v)} /></Field></div>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 2px 12px", fontSize: 12.5 }}>
-          <span style={{ color: "var(--steel)" }}>Total takings declared</span>
-          <span className="mono" style={{ fontWeight: 700, color: "var(--navy)" }}>{dollars(declared)}</span>
-        </div>
-        <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
-          <span className="lbl">Banking</span>
-          <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}><Field label="USD cash banked"><Num value={f.banked} onChange={(v) => set("banked", v)} /></Field></div>
-            <div style={{ flex: 1 }}><Field label="Deposit ref (optional)"><input value={f.bankRef} onChange={(e) => set("bankRef", e.target.value)} placeholder="slip no." /></Field></div>
+
+        {/* Expected cash — pulled from the sales submission, not editable here */}
+        <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <span style={{ fontSize: 12, letterSpacing: ".04em", opacity: .8, textTransform: "uppercase" }}>Cash to account for · trading day</span>
+            <span style={{ fontSize: 11, opacity: .7 }}>{exp && exp.basis === "site-declared" ? "site declared" : "official · FileMaker"}</span>
           </div>
-          {n(f.usdCash) > 0 && (
-            <div style={{ fontSize: 11, color: n(f.banked) < n(f.usdCash) ? "var(--amber)" : "var(--steel)", marginBottom: 12 }}>
-              {n(f.banked) >= n(f.usdCash) ? "All USD cash banked." : `${dollars(n(f.usdCash) - n(f.banked))} of USD cash still on hand — bank it as soon as possible.`}
+          {expLoading ? (
+            <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6, opacity: .7 }}>…</div>
+          ) : expected != null ? (
+            <>
+              <div className="mono" style={{ fontSize: 30, fontWeight: 800, marginTop: 2 }}>{dollars(expected)}</div>
+              <div style={{ fontSize: 11.5, opacity: .82, marginTop: 4 }}>
+                {exp.basis === "site-declared" ? "Site's declared cash · whole trading day" : "Official cash sales · whole trading day"}
+                {exp.salesValue > 0 ? ` · ${dollars(exp.salesValue)} total sales` : ""}{exp.daCardSales > 0 ? ` · DA card ${dollars(exp.daCardSales)}` : ""}
+              </div>
+            </>
+          ) : (
+            <div className="mono" style={{ fontSize: 30, fontWeight: 800, marginTop: 2, opacity: .55 }}>—</div>
+          )}
+        </div>
+
+        {/* How the cash was handled */}
+        <span className="lbl">How the cash was handled (US$)</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+          {CASH_LEGS.map((l) => (
+            <div key={l.key} style={{ flex: "1 1 44%", minWidth: 130 }}>
+              <Field label={l.label}>
+                <Num value={f[l.key]} onChange={(v) => set(l.key, v)} placeholder={l.hint} />
+              </Field>
+            </div>
+          ))}
+        </div>
+        {n(f.banked) > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <Field label="Deposit ref"><input value={f.bankRef} onChange={(e) => set("bankRef", e.target.value)} placeholder="slip no. (required when banking)" /></Field>
+          </div>
+        )}
+
+        {/* Accounted for + variance against expected */}
+        <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}>
+            <span style={{ color: "var(--steel)" }}>Accounted for</span>
+            <span className="mono" style={{ fontWeight: 700, color: "var(--navy)" }}>{dollars(accounted)}</span>
+          </div>
+          {variance != null && (
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+              <span style={{ color: "var(--steel)" }}>{okVar ? "Reconciles" : variance > 0 ? "Unaccounted (short)" : "Over expected"}</span>
+              <span className="mono" style={{ fontWeight: 800, color: varTone }}>{okVar ? "✓ balanced" : dollars(Math.abs(variance))}</span>
             </div>
           )}
         </div>
-        <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Sending…" : "Submit cash & banking"}</button>
+
+        <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 14 }}>{busy ? "Sending…" : "Submit cash handling"}</button>
       </form>
     </Panel>
   );
@@ -489,12 +679,14 @@ function CashForm({ choice, site, date, shift }) {
 /* ============================================================ *
  *  EXECUTIVE DASHBOARD — the numbers at a glance, any period
  * ============================================================ */
-const compact = (n) => {
-  const x = Number(n) || 0, a = Math.abs(x);
-  if (a >= 1e6) return (x / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
-  if (a >= 1e3) return (x / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
-  return Math.round(x).toLocaleString();
-};
+// NOTE: this used to abbreviate (15M / 145k) but that rounds figures down and the
+// user wants exact numbers on the bird's-eye (web AND mobile). Now returns the
+// FULL figure with thousands separators everywhere. Kept the name so every caller
+// (Heroes, Stats, drills) shows the real number; Hero font shrinks to fit.
+const compact = (n) => acct(n);
+// Full figure with thousands separators. Accounting style (0 dp, negatives in
+// parentheses) — same `acct` used everywhere so the whole app is consistent.
+const full = (n) => acct(n);
 
 function Sparkline({ points, height = 46, color = "var(--blue)" }) {
   if (!points || points.length < 2) return <div style={{ height, display: "grid", placeItems: "center", color: "var(--steel)", fontSize: 12 }}>Not enough data yet</div>;
@@ -529,8 +721,8 @@ const Hero = ({ label, value, unit, sub, accent = "var(--lime)", delta, onClick 
     style={{ background: "linear-gradient(150deg,#22345C,#14213D)", borderRadius: 18, padding: "16px 18px", color: "#EAF0FA", boxShadow: "0 10px 26px rgba(20,33,61,.22)", cursor: onClick ? "pointer" : "default", position: "relative" }}>
     {onClick && <span aria-hidden style={{ position: "absolute", top: 12, right: 14, color: "#8FA0C4", fontSize: 15 }}>›</span>}
     <div className="disp" style={{ fontSize: 11, letterSpacing: ".12em", color: "#8FA0C4" }}>{label}</div>
-    <div className="mono" style={{ fontSize: "clamp(26px,7vw,34px)", lineHeight: 1.05, fontWeight: 500, color: accent, marginTop: 6, letterSpacing: "-.02em" }}>
-      {value}{unit && <span style={{ fontSize: 14, marginLeft: 4, color: "#8FA0C4" }}>{unit}</span>}
+    <div className="mono" style={{ fontSize: "clamp(15px,4.4vw,22px)", lineHeight: 1.08, fontWeight: 500, color: accent, marginTop: 6, letterSpacing: "-.02em", whiteSpace: "nowrap" }}>
+      {value}{unit && <span style={{ fontSize: 13, marginLeft: 4, color: "#8FA0C4" }}>{unit}</span>}
     </div>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
       {sub && <div className="mono" style={{ fontSize: 11, color: "#9FB0D0", marginTop: 5 }}>{sub}</div>}
@@ -730,7 +922,7 @@ function MarginPanel({ margin }) {
         <div className="mono" style={{ fontSize: 23, fontWeight: 700, letterSpacing: "-.01em" }}>{money0(margin.total)}</div>
       </div>
       <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8, lineHeight: 1.5 }}>
-        Reported months use the audited P&amp;L figures; the current month is a live estimate (invoiced price − landed cost incl. ~11c distribution). Petrotrade coupons earn commission at zero fuel cost. Excludes bulk/corporate.
+        Reported months use the finance-report P&amp;L figures (not audited); the current month is a live estimate (invoiced price − landed cost incl. ~11c distribution). Petrotrade coupons earn commission at zero fuel cost. Excludes bulk/corporate.
       </div>
     </Panel>
   );
@@ -810,7 +1002,7 @@ const Stat = ({ label, value, unit, sub, tone, onClick }) => {
       onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(e); } } : undefined}
       style={{ padding: "13px 15px", cursor: onClick ? "pointer" : undefined, position: "relative" }}>
       <div className="lbl" style={{ marginBottom: 4 }}>{label}</div>
-      <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: col, lineHeight: 1 }}>{value}{unit && <span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>{unit}</span>}</div>
+      <div className="mono" style={{ fontSize: "clamp(17px,4.6vw,22px)", fontWeight: 600, color: col, lineHeight: 1.05, whiteSpace: "nowrap" }}>{value}{unit && <span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>{unit}</span>}</div>
       {sub && <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 4 }}>{sub}</div>}
       {onClick && <span aria-hidden style={{ position: "absolute", top: 10, right: 12, color: "var(--steel)", fontSize: 15, opacity: .5 }}>›</span>}
     </div>
@@ -818,7 +1010,18 @@ const Stat = ({ label, value, unit, sub, tone, onClick }) => {
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmtD = (v) => { if (!v) return ""; const [y, m, dd] = String(v).slice(0, 10).split("-"); return dd && m ? `${+dd} ${MONTHS[+m - 1]}` : String(v); };
+const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// The ONE date format for the whole app: "1 January 2026". Accepts an ISO string
+// (YYYY-MM-DD…) or a Date. Everything user-facing routes through here.
+export const fmtD = (v) => {
+  if (!v) return "";
+  if (v instanceof Date) { if (isNaN(v)) return ""; return `${v.getDate()} ${MONTHS_FULL[v.getMonth()]} ${v.getFullYear()}`; }
+  const s = String(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${+m[3]} ${MONTHS_FULL[+m[2] - 1]} ${m[1]}`;
+  const d = new Date(s);
+  return isNaN(d) ? s : `${d.getDate()} ${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}`;
+};
 // ranked table (top / bottom sites): Site | Litres | Revenue
 const RankTable = ({ rows, tone }) => (
   <div style={{ overflowX: "auto" }}>
@@ -1036,7 +1239,7 @@ function warehouseStockDrill(warehouses) {
   return () => {
     const rows = warehouses || [];
     if (!rows.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>No warehouse data yet.</div>;
-    const prods = ["Diesel", "Blend", "ULP"];
+    const prods = ["Blend", "Diesel", "ULP"];
     const tot = {}; prods.forEach((p) => tot[p] = rows.reduce((s, w) => s + ((w.products && w.products[p]) || 0), 0));
     const totAll = rows.reduce((s, w) => s + (w.stock || 0), 0);
     return (
@@ -1133,9 +1336,9 @@ export function Cockpit({ me, go, tabs = [] }) {
     setLoaded(false); setEx(null); setHl(null); setRt(null); setWs(null); setErrs({});
     let n = 4; const done = () => { if (--n === 0) setLoaded(true); };
     getExecutive(period, f, t).then(setEx).catch((e) => setErrs((p) => ({ ...p, "watchlist": e.message }))).finally(done);
-    getHaulage(w.days).then(setHl).catch((e) => setErrs((p) => ({ ...p, deliveries: e.message }))).finally(done);
+    getHaulage(w.days, w.from, w.to).then(setHl).catch((e) => setErrs((p) => ({ ...p, deliveries: e.message }))).finally(done);
     getRetail(w.retailDate).then(setRt).catch((e) => setErrs((p) => ({ ...p, retail: e.message }))).finally(done);
-    getWetstock(w.days).then(setWs).catch((e) => setErrs((p) => ({ ...p, losses: e.message }))).finally(done);
+    getWetstock(w.days, w.from, w.to).then(setWs).catch((e) => setErrs((p) => ({ ...p, losses: e.message }))).finally(done);
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { red: "var(--red)", amber: "var(--amber)", ok: "var(--ok)" };
   const has = (t) => tabs.includes(t);
@@ -1215,7 +1418,7 @@ export function Cockpit({ me, go, tabs = [] }) {
     { tab: "logistics", title: "Open / overdue trips", tone: openTrips.some((t) => t.daysOpen >= 2) ? "red" : openTrips.length ? "amber" : "ok", rows: openTrips, cols: [["Trip", "tripNo"], ["Truck", "truck"], ["Route", (r) => (r.drops || []).join(", ")], ["Delivered", "coveragePct", "%"], ["Open", "daysOpen", "d"]], render: () => <OpenTripsPanel rows={openTrips} onReload={() => setReloadKey((k) => k + 1)} /> },
     { tab: "logistics", title: "High-loss trucks", tone: highLossTrucks.length ? "red" : "ok", rows: highLossTrucks, cols: [["Truck", "transporter"], ["Driver", (t) => t.driver || "—"], ["Loads", "loads"], ["Loss", "loss", L], ["%", "lossPct", "%"]] },
     { tab: "logistics", title: "Flagged deliveries", tone: flaggedDeliv.length ? "amber" : "ok", rows: flaggedDeliv, cols: [["DN", "id"], ["Truck", "truckName"], ["Loss", "combinedLoss", L], ["%", "lossPct", "%"]] },
-    { tab: "inventory", title: "Negative warehouse stock", tone: negWh.length ? "red" : "ok", rows: negWh, cols: [["Warehouse", "name"], ["Diesel", (w) => w.products?.Diesel || 0, L], ["Blend", (w) => w.products?.Blend || 0, L], ["ULP", (w) => w.products?.ULP || 0, L]] },
+    { tab: "inventory", title: "Negative warehouse stock", tone: negWh.length ? "red" : "ok", rows: negWh, cols: [["Warehouse", "name"], ["Blend", (w) => w.products?.Blend || 0, L], ["Diesel", (w) => w.products?.Diesel || 0, L], ["ULP", (w) => w.products?.ULP || 0, L]] },
     { tab: "fleet", title: "Efficiency laggards", tone: laggards.length ? "amber" : "ok", rows: laggards, cols: [["Truck", "vehicle"], ["km/L", "kmpl"], ["vs median", "vsMedian", "%"], ["90d km", "km", L]] },
     { tab: "fleet", title: "Fuel-draw exceptions", tone: fdExc.length ? "red" : "ok", rows: fdExc, cols: [["Vehicle", (e) => e.vehicle || e.driver], ["Flag", "kind"], ["Detail", (e) => (e.kind === "over-draw" ? "+" + L(e.overBy) + "L" : L(e.odoGap) + "km gap")], ["Date", (e) => fmtD(e.date)]] },
     { tab: "fleetstatus", title: "Trucks in workshop", tone: inWorkshop.length ? "amber" : "ok", rows: inWorkshop, cols: [["Vehicle", "vehicle"], ["Fault", (c) => c.fault || c.title || "—"], ["Days", "days", "d"]] },
@@ -1290,11 +1493,49 @@ export function Cockpit({ me, go, tabs = [] }) {
   );
 }
 
+// Cash bridge — revenue → how it was actually tendered, reconciled. Coupons are
+// settled in FUEL (DA gets the fuel back + a cash commission), NOT a receivable.
+// Responds to the Bird's-eye period + site/region selection.
+function CashBridgePanel({ cb, scopeLabel, pLabel }) {
+  const $ = (v) => "$" + compact(v || 0);
+  const Row = ({ label, value, sub, tone, strong, indent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: "1px solid var(--line)", paddingLeft: indent ? 16 : 0 }}>
+      <div style={{ paddingRight: 10 }}><div style={{ fontWeight: strong ? 700 : 500, color: tone === "amber" ? "var(--amber)" : tone === "ok" ? "var(--ok)" : "var(--navy)", fontSize: indent ? 13 : 14 }}>{label}</div>{sub && <div style={{ fontSize: 11, color: "var(--steel)" }}>{sub}</div>}</div>
+      <div className="mono" style={{ fontWeight: strong ? 700 : 600, fontSize: strong ? 17 : 15, color: tone === "amber" ? "var(--amber)" : tone === "ok" ? "var(--ok)" : "var(--navy)", whiteSpace: "nowrap" }}>{value}</div>
+    </div>
+  );
+  return (
+    <>
+      <SectionHead title="Fuel cash bridge" sub={`${scopeLabel} · ${pLabel.toLowerCase()} · from revenue to cash`} />
+      <Panel>
+        <div className="lbl" style={{ marginBottom: 4 }}>Revenue — total sales value</div>
+        <div className="mono" style={{ fontSize: 30, fontWeight: 600, color: "var(--navy)" }}>{$(cb.revenue)}</div>
+        <Row label="Cash (notes)" value={$(cb.cash)} sub="In the till — immediate" tone="ok" />
+        <Row label="DA card" value={$(cb.daCard)} sub="A receivable — settles on a lag" tone="amber" />
+        <Row label="Coupons — Petrotrade / Redan" value={$(cb.coupons)} sub="Settled in FUEL — DA gives the fuel back, not cash" />
+        <Row indent label="↳ Commission earned (cash)" value={$(cb.couponCommission)} sub="The only cash DA earns on coupons" tone="ok" />
+        {cb.other > 0 && <Row label="Other / unallocated" value={$(cb.other)} sub="Tenders not yet mapped" />}
+      </Panel>
+      <Panel style={{ marginTop: 12 }}>
+        <div className="lbl" style={{ marginBottom: 8 }}>Where the money is</div>
+        <Row label="Cash now (notes + commission)" value={$(cb.immediateCash)} tone="ok" strong />
+        <Row label="Receivable (DA card)" value={$(cb.receivable)} sub="Settles on a lag — not yet banked" tone="amber" />
+        <Row label="Settled in fuel (coupons)" value={$(cb.fuelSettled)} sub="Returned as fuel — a cost, never a cash receivable" />
+      </Panel>
+      <div style={{ fontSize: 12, color: "var(--steel)", margin: "10px 2px", lineHeight: 1.5 }}>
+        Reconciles to revenue: cash + DA card + coupons{cb.other > 0 ? " + other" : ""} = total sales value. Coupons are redeemed in fuel — DA replaces the fuel at cost and earns the commission in cash — so they are never counted as a cash receivable.
+      </div>
+    </>
+  );
+}
+
 export function ExecutiveDashboard() {
   const [period, setPeriod] = useState("today");   // Overview defaults to Today (latest complete data day)
   const [range, setRange] = useState(() => { const t = new Date(); t.setDate(t.getDate() - 1); const f = new Date(t); f.setDate(f.getDate() - 6); return { from: f.toISOString().slice(0, 10), to: t.toISOString().slice(0, 10) }; });
+  const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
+  const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   const { tab, setTab, back, prev } = useNavStack("overview");
-  const SECTIONS = [["overview", "Overview"], ["sales", "Sales"], ["prices", "Prices"], ["supply", "Inventory"], ["fleet", "Fleet"], ["workshop", "Workshop"]];
+  const SECTIONS = [["overview", "Overview"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["midday", "Midday dip"], ["sales", "Sales"], ["prices", "Prices"], ["supply", "Inventory"], ["losses", "Losses"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["outflows", "Outflows"]];
   // Drill-down that lands on the EXACT section: switch tab, then scroll that
   // section (by id) into view once it renders. Use goTo(tab, sectionId).
   const [focusSec, setFocusSec] = useState(null);
@@ -1309,8 +1550,10 @@ export function ExecutiveDashboard() {
     const [f, t] = period === "range" ? [range.from, range.to] : [null, null];
     if (period === "range" && !(f && t)) return;
     setD(null); setErr(null);
-    getExecutive(period, f, t).then(setD).catch((e) => setErr(e.message));
-  }, [period, range.from, range.to, reloadKey]);
+    getExecutive(period, f, t, scope.type === "global" ? null : scope)
+      .then((r) => { setD(r); if (r?.scopeOptions) setScopeOpts(r.scopeOptions); })
+      .catch((e) => setErr(e.message));
+  }, [period, range.from, range.to, reloadKey, scope.type, scope.value]);
   // after a goTo(), scroll the targeted section into view once it has rendered
   useEffect(() => {
     if (!focusSec) return;
@@ -1333,7 +1576,7 @@ export function ExecutiveDashboard() {
     <div className="wrap">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Executive summary</h2>
+          <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Bird's-eye view</h2>
           {asOfLabel && <div className="mono" style={{ fontSize: 11, color: d?.asOf?.isPartial && period === "today" ? "var(--amber)" : "var(--steel)", marginTop: 3 }}>Showing {pLabel.toLowerCase()} · {asOfLabel}</div>}
         </div>
         <div style={{ minWidth: 240, flex: "0 1 340px" }}>
@@ -1343,6 +1586,41 @@ export function ExecutiveDashboard() {
               <input type="date" value={range.from} max={range.to} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} style={{ maxWidth: 150 }} />
               <span style={{ color: "var(--steel)" }}>→</span>
               <input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} style={{ maxWidth: 150 }} />
+            </div>
+          )}
+          {scopeOpts && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <span aria-hidden style={{ display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 11, background: scope.type === "global" ? "#EEF2FF" : "var(--blue)", flex: "0 0 auto" }}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={scope.type === "global" ? "var(--blue)" : "#fff"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {scope.type === "region" ? <><path d="M12 21s-7-6.7-7-11a7 7 0 0 1 14 0c0 4.3-7 11-7 11z" /><circle cx="12" cy="10" r="2.4" /></>
+                    : scope.type === "site" ? <><path d="M3 9l1.5-5h15L21 9" /><path d="M4 9h16v11H4z" /><path d="M9 20v-6h6v6" /></>
+                      : <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18" /></>}
+                </svg>
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Picker
+                  title="Show which sites?"
+                  placeholder="Whole network"
+                  value={scope.type === "global" ? "global" : `${scope.type}:${scope.value}`}
+                  onChange={(v) => {
+                    if (v === "global") return setScope({ type: "global", value: "", label: "" });
+                    const idx = v.indexOf(":"); const t = v.slice(0, idx), val = v.slice(idx + 1);
+                    const label = t === "region" ? val : (scopeOpts.sites.find((s) => String(s.id) === val)?.name || val);
+                    setScope({ type: t, value: val, label });
+                  }}
+                  options={[
+                    { value: "global", label: "Whole network" },
+                    ...scopeOpts.regions.map((r) => ({ value: `region:${r}`, label: `${r} region` })),
+                    ...scopeOpts.sites.map((s) => ({ value: `site:${s.id}`, label: s.name })),
+                  ]}
+                />
+              </div>
+              {scope.type !== "global" && (
+                <button type="button" onClick={() => setScope({ type: "global", value: "", label: "" })} aria-label="Clear filter"
+                  style={{ flex: "0 0 auto", display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 11, border: "1.5px solid var(--line)", background: "#fff", cursor: "pointer", color: "var(--steel)" }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1360,7 +1638,7 @@ export function ExecutiveDashboard() {
             {period === "today" && d.asOf?.isPartial &&
               <Note tone="amber" title={`${d.asOf.shiftLabel}`}>Figures are for {fmtD(d.asOf.date)} so far. The remaining shift has not been submitted yet.{d.kpis?.deltas?.shiftAware ? " Comparisons are like-for-like — this day shift vs the previous day shift." : ""}</Note>}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, marginBottom: 12 }}>
-              <Hero label="FUEL SOLD" value={compact(k.salesLitres)} unit="L" sub={`${compact(k.dieselSales)}L diesel · ${compact(k.blendSales)}L blend${k.ulpSales ? " · " + compact(k.ulpSales) + "L ULP" : ""}`} delta={k.deltas?.sales} onClick={() => goTo("sales")} />
+              <Hero label="FUEL SOLD" value={compact(k.salesLitres)} unit="L" sub={`${compact(k.blendSales)}L blend · ${compact(k.dieselSales)}L diesel${k.ulpSales ? " · " + compact(k.ulpSales) + "L ULP" : ""}`} delta={k.deltas?.sales} onClick={() => goTo("sales")} />
               <Hero label="REVENUE" value={"$" + compact(k.cash)} sub={k.revenueMix ? `fuel $${compact(k.revenueMix.pump.revenue)} + commission $${compact(k.revenueMix.coupon.commission)}` : null} accent="#6BC048" onClick={() => goTo("sales")} />
               {k.margin && <Hero label="GROSS MARGIN" value={"$" + compact(k.margin.total)} accent="#C8A24B" onClick={() => goTo("sales")} />}
               <Hero label="DELIVERED" value={compact(k.litresDelivered)} unit="L" sub={`${k.deliveries} loads${k.deliveryLoss ? " · " + compact(k.deliveryLoss) + "L loss" : ""}`} delta={k.deltas?.delivered}
@@ -1384,7 +1662,7 @@ export function ExecutiveDashboard() {
                 <div className="lbl" style={{ marginBottom: 0 }}>Fuel on hand — where it is</div>
                 <div style={{ textAlign: "right" }}>
                   <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: "var(--navy)" }}>{compact(k.stockTotal)} L</div>
-                  {k.stockValue ? <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>≈ ${compact(k.stockValue)} working capital</div> : null}
+                  {k.stockValue ? <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>≈ ${compact(k.stockValue)} working capital · FIFO</div> : null}
                 </div>
               </div>
               <StockBar parts={[["Sites", k.stockSites, "#2B3990"], ["Warehouses", k.stockWarehouse, "#6BC048"], ["In transit", k.stockTransit, "#C07A00"]]} total={k.stockTotal} />
@@ -1460,10 +1738,10 @@ export function ExecutiveDashboard() {
               <Hero label="ULP SOLD" value={compact(d.sales.ulp)} unit="L" accent="#C07A00"
                 onClick={() => setDrill({ title: "ULP sold — by site", sub: `${compact(d.sales.ulp)} L across the period · pump-metered`, render: siteSalesDrill(d.sales.sites, [["ULP (L)", "ulp"]], "ulp") })} />
               <Hero label="TOTAL VOLUME" value={compact(d.sales.totalVolume)} unit="L"
-                onClick={() => setDrill({ title: "Total volume — by site", sub: `${compact(d.sales.totalVolume)} L · diesel + blend + ULP`, render: siteSalesDrill(d.sales.sites, [["Diesel", "diesel"], ["Blend", "blend"], ["ULP", "ulp"], ["Total", "litres"]], "litres") })} />
+                onClick={() => setDrill({ title: "Total volume — by site", sub: `${compact(d.sales.totalVolume)} L · diesel + blend + ULP`, render: siteSalesDrill(d.sales.sites, [["Blend", "blend"], ["Diesel", "diesel"], ["ULP", "ulp"], ["Total", "litres"]], "litres") })} />
               <Hero label="REVENUE" value={"$" + compact(d.sales.cash)} sub={d.sales.revenueMix ? `pump $${compact(d.sales.revenueMix.pump.revenue)} + coupon $${compact(d.sales.revenueMix.coupon.commission)}` : "invoiced · Sage"} accent="#6BC048"
                 onClick={() => setDrill({ title: "Revenue — by site", sub: `Invoiced (Sage) $${compact(d.sales.cash)}`, render: siteSalesDrill(d.sales.sites, [["Volume (L)", "litres"], ["Revenue", "cash", money0]], "cash") })} />
-              {d.sales.margin && <Hero label="GROSS MARGIN" value={"$" + compact(d.sales.margin.total)} sub={`${(d.sales.margin.cpl * 100).toFixed(1)}c/L · invoiced − cost`} accent="#C8A24B" />}
+              {d.sales.margin && <Hero label="GROSS MARGIN" value={"$" + compact(d.sales.margin.total)} sub={`${(d.sales.margin.cpl * 100).toFixed(1)}c/L`} accent="#C8A24B" />}
             </div>
             {d.sales.margin && <MarginPanel margin={d.sales.margin} />}
             {d.sales.tenderMix && <TenderMixPanel label="Revenue by tender" parts={[["Cash", d.sales.tenderMix.cash, "#2B3990"], ["DA card", d.sales.tenderMix.daCard, "#6BC048"], ["Petrotrade commission", d.sales.tenderMix.commission, "#8FB8FF"]]} />}
@@ -1491,35 +1769,27 @@ export function ExecutiveDashboard() {
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><ExportBtn onClick={() => exportExecInventory(d)} /></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
               <Stat label="At sites" value={compact(d.supply.sites)} unit="L" sub={`${(d.supply.siteList || []).length} sites`}
-                onClick={() => setDrill({ title: "At sites — stock by product", sub: `${compact(d.supply.sites)} L across ${(d.supply.siteList || []).length} sites`, render: siteSalesDrill(d.supply.siteList, [["Diesel", "diesel"], ["Blend", "blend"], ["Total", "total"]], "total") })} />
+                onClick={() => setDrill({ title: "At sites — stock by product", sub: `${compact(d.supply.sites)} L across ${(d.supply.siteList || []).length} sites`, render: siteSalesDrill(d.supply.siteList, [["Blend", "blend"], ["Diesel", "diesel"], ["Total", "total"]], "total") })} />
               <Stat label="In warehouses" value={compact(d.supply.warehouse)} unit="L" sub={`${(d.supply.warehouses || []).length} depots`}
                 onClick={() => setDrill({ title: "In warehouses — stock by product", sub: `${compact(d.supply.warehouse)} L on hand`, render: warehouseStockDrill(d.supply.warehouses) })} />
               <Stat label="On trucks" value={compact(d.supply.transit)} unit="L" sub={`${(d.supply.trucks || []).length} trips`} />
               <Stat label="Total" value={compact(d.supply.total)} unit="L" />
             </div>
+            <DeliveriesInProgress />
             <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
               <div className="lbl" style={{ padding: "12px 14px 8px" }}>Warehouses</div>
               <div style={{ overflowX: "auto" }}>
                 <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Warehouse</Th><Th right>Diesel</Th><Th right>Blend</Th><Th right>ULP</Th><Th right>Total</Th></tr></thead>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Warehouse</Th><Th right>Blend</Th><Th right>Diesel</Th><Th right>ULP</Th><Th right>Total</Th></tr></thead>
                   <tbody>{(d.supply.warehouses || []).map((w) => (
                     <Fragment key={w.name}>
                       <tr style={{ borderTop: "1px solid var(--line)" }}>
                         <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{w.name}</Td>
-                        <Td right>{L(w.products.Diesel)}</Td>
                         <Td right style={{ color: w.products.Blend < 0 ? "var(--red)" : undefined }}>{L(w.products.Blend)}</Td>
+                        <Td right>{L(w.products.Diesel)}</Td>
                         <Td right style={{ color: w.products.ULP < 0 ? "var(--red)" : undefined }}>{L(w.products.ULP)}</Td>
                         <Td right style={{ fontWeight: 700, color: w.stock < 0 ? "var(--red)" : "var(--navy)" }}>{L(w.stock)}</Td>
                       </tr>
-                      {w.productAsOf && ["Diesel", "Blend", "ULP"].some((p) => w.productAsOf[p]) && (
-                        <tr><td colSpan={5} style={{ fontSize: 10.5, padding: "0 11px 7px 14px" }}>
-                          <span style={{ color: "var(--steel)" }}>counted: </span>
-                          {["Diesel", "Blend", "ULP"].filter((p) => w.productAsOf[p]).map((p, i) => {
-                            const stale = (new Date() - new Date(w.productAsOf[p])) > 45 * 864e5;
-                            return <span key={p} style={{ color: stale ? "var(--red)" : "var(--steel)", fontWeight: stale ? 700 : 400 }}>{i > 0 ? "  ·  " : ""}{p} {fmtD(w.productAsOf[p])}{stale ? " ⚠ stale" : ""}</span>;
-                          })}
-                        </td></tr>
-                      )}
                     </Fragment>
                   ))}</tbody>
                 </table>
@@ -1563,7 +1833,7 @@ export function ExecutiveDashboard() {
                 <div style={{ overflowX: "auto" }}>
                   <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Product</Th><Th right>Cover</Th><Th right>Now</Th><Th right>End of shift</Th></tr></thead>
-                    <tbody>{["Diesel", "Blend"].flatMap((prod) => (d.stockout || []).filter((s) => s.product === prod)).map((s) => {
+                    <tbody>{["Blend", "Diesel"].flatMap((prod) => (d.stockout || []).filter((s) => s.product === prod)).map((s) => {
                       const col = s.level === "risk" ? "var(--red)" : "var(--amber)";
                       return (
                         <tr key={s.site + s.product} style={{ borderTop: "1px solid var(--line)", background: s.level === "risk" ? "#FDECEA" : undefined }}>
@@ -1599,67 +1869,53 @@ export function ExecutiveDashboard() {
                 <span style={{ opacity: 0.7 }}>· split by leg distance (approx)</span>
               </div>
             )}
-            {(d.fleet?.vehicles || []).length > 0 && (
-              <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 14px 8px" }}>
-                  <div className="lbl" style={{ marginBottom: 0 }}>Trucks by efficiency — worst first</div>
-                  <div className="mono" style={{ fontSize: 11, color: d.fleet.laggards ? "var(--red)" : "var(--steel)" }}>{d.fleet.laggards} below par · median {d.fleet.median} km/L</div>
+            {/* Bird's-eye: fleet health at a glance — tap any card for the full detail. */}
+            {(d.fleet?.vehicles || []).length > 0 && (() => {
+              const fleetTable = (title, note, rows, cols) => () => (
+                <Panel style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>{cols.map((c) => <Th key={c.k} right={c.right}>{c.h}</Th>)}</tr></thead>
+                      <tbody>{rows}</tbody>
+                    </table>
+                  </div>
+                  {note && <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>{note}</div>}
+                </Panel>
+              );
+              const truckRows = d.fleet.vehicles.slice(0, 80).map((v) => (
+                <tr key={v.vehicle} style={{ borderTop: "1px solid var(--line)", background: v.flag ? "#FDECEA" : "#fff" }}>
+                  <Td>{v.flag ? "⚠ " : ""}{v.vehicle}</Td>
+                  <Td right style={{ fontWeight: 700, color: v.flag ? "var(--red)" : undefined }}>{v.kmpl}</Td>
+                  <Td right style={{ color: v.vsMedian < 0 ? "var(--red)" : "var(--ok)" }}>{v.vsMedian > 0 ? "+" : ""}{v.vsMedian}%</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{L(v.km)}</Td>
+                </tr>));
+              const driverRows = (d.fleet.drivers || []).slice(0, 80).map((dr) => (
+                <tr key={dr.driver} onClick={() => setDrill({ title: dr.driver, sub: `${dr.kmpl} km/L · ${dr.trucks.length} truck${dr.trucks.length === 1 ? "" : "s"}`, render: () => driverTruckTable(dr) })} style={{ borderTop: "1px solid var(--line)", background: dr.flag ? "#FDECEA" : "#fff", cursor: "pointer" }}>
+                  <Td>{dr.flag ? "⚠ " : ""}{dr.driver}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                  <Td right style={{ fontWeight: 700, color: dr.flag ? "var(--red)" : undefined }}>{dr.kmpl}</Td>
+                  <Td right style={{ color: dr.vsMedian < 0 ? "var(--red)" : "var(--ok)" }}>{dr.vsMedian > 0 ? "+" : ""}{dr.vsMedian}%</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{dr.trucks.length}</Td>
+                </tr>));
+              const excRows = (d.fleet.exceptions || []).slice(0, 60).map((e, i) => (
+                <tr key={e.ref + i} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td>{e.vehicle || e.driver}<div style={{ fontSize: 10, color: "var(--steel)" }}>{e.driver}</div></Td>
+                  <Td><span style={{ color: e.kind === "over-draw" ? "var(--red)" : "var(--amber)" }}>{e.kind}</span></Td>
+                  <Td right>{e.kind === "over-draw" ? `+${L(e.overBy)} L over` : `${L(e.odoGap)} km gap`}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{fmtD(e.date)}</Td>
+                </tr>));
+              const openTrucks = () => setDrill({ title: "Trucks by efficiency", sub: `${d.fleet.laggards} below par · median ${d.fleet.median} km/L`, render: fleetTable("Trucks", `Flagged = below ${d.fleet.effFloor} km/L · rolling 90-day.`, truckRows, [{ k: "t", h: "Truck" }, { k: "e", h: "km/L", right: true }, { k: "m", h: "vs median", right: true }, { k: "km", h: "90-day km", right: true }]) });
+              const openDrivers = () => setDrill({ title: "Drivers by efficiency", sub: "tap a driver for per-truck", render: fleetTable("Drivers", "Tap a driver to see each truck they've driven.", driverRows, [{ k: "d", h: "Driver" }, { k: "e", h: "km/L", right: true }, { k: "m", h: "vs median", right: true }, { k: "t", h: "Trucks", right: true }]) });
+              const openExc = () => setDrill({ title: "Fuel-draw exceptions", sub: `${d.fleet.exceptionCount} to review`, render: fleetTable("Exceptions", "Odometer photo vs typed >5 km apart, or litres drawn over what was approved.", excRows, [{ k: "v", h: "Vehicle / driver" }, { k: "f", h: "Flag" }, { k: "dt", h: "Detail", right: true }, { k: "d", h: "Date", right: true }]) });
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
+                  <Stat label="Trucks below par" value={d.fleet.laggards} unit={`/ ${d.fleet.vehicles.length}`} tone={d.fleet.laggards ? "amber" : "ok"} onClick={openTrucks} />
+                  <Stat label="Median" value={d.fleet.median} unit="km/L" onClick={openTrucks} />
+                  {(d.fleet.drivers || []).length > 0 && <Stat label="Drivers flagged" value={(d.fleet.drivers || []).filter((x) => x.flag).length} unit={`/ ${d.fleet.drivers.length}`} tone={(d.fleet.drivers || []).some((x) => x.flag) ? "amber" : "ok"} onClick={openDrivers} />}
+                  {(d.fleet.exceptions || []).length > 0 && <Stat label="Exceptions" value={d.fleet.exceptionCount} tone="red" onClick={openExc} />}
                 </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th right>km/L</Th><Th right>vs median</Th><Th right>90-day km</Th></tr></thead>
-                    <tbody>{d.fleet.vehicles.slice(0, 60).map((v) => (
-                      <tr key={v.vehicle} style={{ borderTop: "1px solid var(--line)", background: v.flag ? "#FDECEA" : "#fff" }}>
-                        <Td>{v.flag ? "⚠ " : ""}{v.vehicle}</Td>
-                        <Td right style={{ fontWeight: 700, color: v.flag ? "var(--red)" : undefined }}>{v.kmpl}</Td>
-                        <Td right style={{ color: v.vsMedian < 0 ? "var(--red)" : "var(--ok)" }}>{v.vsMedian > 0 ? "+" : ""}{v.vsMedian}%</Td>
-                        <Td right style={{ color: "var(--steel)" }}>{L(v.km)}</Td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>By truck — a truck's odometer is continuous regardless of driver. Flagged = below {d.fleet.effFloor} km/L. Rolling 90-day.</div>
-              </Panel>
-            )}
-            {(d.fleet?.drivers || []).length > 0 && (
-              <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
-                <div className="lbl" style={{ padding: "12px 14px 8px" }}>Drivers by efficiency — worst first · tap for per-truck</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Driver</Th><Th right>km/L</Th><Th right>vs median</Th><Th right>Trucks</Th></tr></thead>
-                    <tbody>{d.fleet.drivers.slice(0, 60).map((dr) => (
-                      <tr key={dr.driver} onClick={() => setDrill({ title: dr.driver, sub: `${dr.kmpl} km/L overall · ${dr.trucks.length} truck${dr.trucks.length === 1 ? "" : "s"}`, render: () => driverTruckTable(dr) })} style={{ borderTop: "1px solid var(--line)", background: dr.flag ? "#FDECEA" : "#fff", cursor: "pointer" }}>
-                        <Td>{dr.flag ? "⚠ " : ""}{dr.driver}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                        <Td right style={{ fontWeight: 700, color: dr.flag ? "var(--red)" : undefined }}>{dr.kmpl}</Td>
-                        <Td right style={{ color: dr.vsMedian < 0 ? "var(--red)" : "var(--ok)" }}>{dr.vsMedian > 0 ? "+" : ""}{dr.vsMedian}%</Td>
-                        <Td right style={{ color: "var(--steel)" }}>{dr.trucks.length}</Td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Tap a driver to see how they perform on each truck they've driven.</div>
-              </Panel>
-            )}
-            {(d.fleet?.exceptions || []).length > 0 && (
-              <Panel style={{ marginBottom: 12, borderLeft: "4px solid var(--red)", padding: 0, overflow: "hidden" }}>
-                <div className="lbl" style={{ padding: "12px 14px 8px", color: "var(--navy)" }}>Fuel-draw exceptions — {d.fleet.exceptionCount} to review</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Vehicle / driver</Th><Th>Flag</Th><Th right>Detail</Th><Th right>Date</Th></tr></thead>
-                    <tbody>{d.fleet.exceptions.slice(0, 30).map((e, i) => (
-                      <tr key={e.ref + i} style={{ borderTop: "1px solid var(--line)" }}>
-                        <Td>{e.vehicle || e.driver}<div style={{ fontSize: 10, color: "var(--steel)" }}>{e.driver}</div></Td>
-                        <Td><span style={{ color: e.kind === "over-draw" ? "var(--red)" : "var(--amber)" }}>{e.kind}</span></Td>
-                        <Td right>{e.kind === "over-draw" ? `+${L(e.overBy)} L over` : `${L(e.odoGap)} km gap`}</Td>
-                        <Td right style={{ color: "var(--steel)" }}>{fmtD(e.date)}</Td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Odometer photo vs typed &gt;5 km apart, or litres drawn over what was approved.</div>
-              </Panel>
-            )}
-            <Note tone="blue" title="How this is measured">Distance is the sum of odometer gaps between consecutive card draws per vehicle. Town legs run ~1.70 km/L and open-road ~2.52 km/L; a blended fleet figure is shown here.</Note>
+              );
+            })()}
+            <div style={{ fontSize: 11, color: "var(--steel)", margin: "2px 2px" }}>Distance = odometer gaps between consecutive card draws. Town ~1.70 km/L, road ~2.52 km/L (blended here). Tap a card for the full breakdown.</div>
           </>}
 
           {/* ---------------- WORKSHOP ---------------- */}
@@ -1689,6 +1945,22 @@ export function ExecutiveDashboard() {
                   </div>
                 </Panel>
               )}
+              {(d.workshop.vehicles || []).length > 0 && (
+                <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
+                  <div className="lbl" style={{ padding: "12px 14px 8px" }}>Fleet status <span style={{ color: "var(--steel)", fontWeight: 400 }}>· {d.workshop.counts.active} running · {d.workshop.counts.workshop} in workshop</span></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(62px,1fr))", gap: 6, padding: 10 }}>
+                    {d.workshop.vehicles.map((v) => {
+                      const ws = v.inWorkshop || v.yardStatus === "workshop";
+                      return (
+                        <div key={v.code} title={v.fault || v.yardStatusDetail || (v.yardStatus || "Active")}
+                          style={{ textAlign: "center", padding: "8px 4px", borderRadius: 10, background: ws ? "#FDECEA" : "#EBF6E7", border: `1px solid ${ws ? "var(--red)" : "var(--ok)"}` }}>
+                          <div className="mono" style={{ fontWeight: 700, fontSize: 13 }}>{v.code}</div>
+                          <div style={{ fontSize: 11, color: ws ? "var(--red)" : "var(--ok)" }}>{v.inWorkshop ? `${v.days}d` : (v.yardStatus === "workshop" ? "workshop" : "ready")}</div>
+                        </div>);
+                    })}
+                  </div>
+                </Panel>
+              )}
               <Panel style={{ padding: 0, overflow: "hidden" }}>
                 <div className="lbl" style={{ padding: "12px 14px 8px" }}>Open workshop cases</div>
                 {d.workshop.openCases.length === 0 ? <div style={{ color: "var(--steel)", fontSize: 13, padding: "0 14px 14px" }}>No trucks currently in the workshop.</div> : (
@@ -1696,12 +1968,12 @@ export function ExecutiveDashboard() {
                     <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Vehicle</Th><Th>Fault</Th><Th>Severity</Th><Th right>Days</Th></tr></thead>
                       <tbody>{d.workshop.openCases.map((c) => (
-                        <tr key={c.ref} onClick={() => setDrill({ title: c.vehicle, sub: `${c.ref || ""}${c.severity ? " · " + c.severity : ""}`, render: workshopCaseDetail(c) })}
+                        <tr key={c.ref || c.vehicle} onClick={() => setDrill({ title: c.vehicle, sub: c.fromGroup ? "From the truck-faults group" : `${c.ref || ""}${c.severity ? " · " + c.severity : ""}`, render: c.fromGroup ? () => <Note tone="red" title="In the workshop">{c.description}{c.at ? <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Yard report · {new Date(c.at).toLocaleString()}</div> : null}</Note> : workshopCaseDetail(c) })}
                           style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
                           <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{c.vehicle}</Td>
                           <Td style={{ color: "var(--steel)" }}>{c.description || c.title}</Td>
                           <Td style={{ fontWeight: 700, color: EXEC_SEV[String(c.severity).toLowerCase()] || "var(--steel)", textTransform: "uppercase", fontSize: 11 }}>{c.severity || "—"}</Td>
-                          <Td right style={{ fontWeight: 700, color: c.days >= 7 ? "var(--red)" : "var(--navy)" }}>{c.days}d</Td>
+                          <Td right style={{ fontWeight: 700, color: c.days >= 7 ? "var(--red)" : "var(--navy)" }}>{c.days != null ? c.days + "d" : "—"}</Td>
                         </tr>
                       ))}</tbody>
                     </table>
@@ -1710,10 +1982,142 @@ export function ExecutiveDashboard() {
               </Panel>
             </>}
           </>}
+
+          {/* ---------------- LOSSES — the wet-stock losses screen, embedded ---------------- */}
+          {tab === "losses" && <div id="losses" style={{ scrollMarginTop: 8 }}><WetstockView /></div>}
+
+          {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
+          {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
+          {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
+
+          {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
+          {tab === "dayshift" && <div id="dayshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="day" /></div>}
+          {tab === "nightshift" && <div id="nightshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="night" /></div>}
+          {tab === "midday" && <div id="midday" style={{ scrollMarginTop: 8 }}><MiddayDipView /></div>}
         </>
       )}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </div>
+  );
+}
+
+/* SHIFT REPORT (Day / Night) — an in-app rebuild of the DA Finance Bot's PDF
+   reports, from the same supervisor submissions. Indicative: the audited numbers
+   come later from the FileMaker retail export. Ported to match the bot exactly —
+   DAY = day-shift sales vs the previous day shift; NIGHT = the trading day's
+   total (MAX of the cumulative day/night readings) vs the previous day. */
+function KpiCard({ label, value, tone }) {
+  return (
+    <div style={{ background: tone === "bad" ? "#FDECEC" : tone === "good" ? "#EDF7EE" : "#fff", border: `1px solid ${tone === "bad" ? "#F3C0C0" : tone === "good" ? "#BFE3C2" : "var(--line)"}`, borderRadius: 14, padding: "14px 16px", textAlign: "center" }}>
+      <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: tone === "bad" ? "#B23B3B" : tone === "good" ? "#2E7D33" : "var(--navy)", letterSpacing: "-.01em" }}>{value}</div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".03em" }}>{label}</div>
+    </div>
+  );
+}
+const coverTxt = (c) => c == null ? "—" : c > 30 ? ">30s" : `${c}s`;
+function ShiftReportView({ shift }) {
+  const [d, setD] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
+  const isNight = shift === "night";
+  useEffect(() => { setD(null); setErr(null); getShiftReport(shift).then(setD).catch((e) => setErr(e.message)); }, [shift, key]);
+
+  if (err) return <Note tone="red" title="Could not load">{err} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={() => setKey((k) => k + 1)}>Retry</button></Note>;
+  if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
+  if (!d.hasData) return <Note tone="amber" title={`No ${shift}-shift submissions yet`}>No site has submitted a {shift}-shift return{d.date ? ` for ${fmtD(d.date)}` : ""} yet. This screen fills in as supervisors send their Stock &amp; Sales for the shift.</Note>;
+
+  const t = d.totals;
+  const L = (v) => full(v) + "L";
+  const arrow = (v) => v > 0 ? "▲" : v < 0 ? "▼" : "";
+  const dTone = (v) => v > 0 ? "#2E7D33" : v < 0 ? "#C0563A" : "var(--steel)";
+
+  return (
+    <>
+      {/* Indicative banner */}
+      <div style={{ background: "#FFF6E5", border: "1px solid #F3D48A", borderRadius: 14, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ fontSize: 18, lineHeight: 1 }}>{isNight ? "🌙" : "☀️"}</span>
+        <div style={{ fontSize: 12.5, color: "#6B5312", lineHeight: 1.5 }}>
+          <b>Indicative — {shift} shift · {fmtD(d.date)}.</b> Rebuilt live from what site supervisors submitted, hours ahead of the official numbers.
+        </div>
+      </div>
+
+      {/* KPI cards — like the PDF header */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
+        <KpiCard label="Total sales" value={L(t.totalSales)} />
+        <KpiCard label="Sites reported" value={`${t.sitesReported}/${t.sitesTotal}`} tone={t.sitesReported >= t.sitesTotal ? "good" : undefined} />
+        <KpiCard label="Blend sales" value={L(t.blendSales)} />
+        <KpiCard label="Diesel sales" value={L(t.dieselSales)} />
+        {t.hasUlp && <KpiCard label="ULP sales" value={L(t.ulpSales)} />}
+        <KpiCard label="Total stock" value={L(t.totalStock)} />
+        <KpiCard label="Low stock sites" value={t.lowStockCount} tone={t.lowStockCount > 0 ? "bad" : "good"} />
+      </div>
+
+      {/* Tender split (US$) — how the shift's takings were tendered */}
+      {(t.tenderTotal > 0) && (
+        <Panel style={{ marginBottom: 14 }}>
+          <span className="lbl">Split of sales by tender (US$)</span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
+            <KpiCard label="Cash" value={"$" + full(t.cashTender)} />
+            <KpiCard label="Petrotrade" value={"$" + full(t.petroTender)} />
+            <KpiCard label="DA card" value={"$" + full(t.dacardTender)} />
+            <KpiCard label="Total tendered" value={"$" + full(t.tenderTotal)} tone="good" />
+          </div>
+        </Panel>
+      )}
+
+      {/* Sales & stock by site — the main table */}
+      <Panel>
+        <span className="lbl">{shift} shift — sales &amp; stock by site</span>
+        <div style={{ fontSize: 10.5, color: "var(--steel)", margin: "2px 0 8px" }}>Cover = shifts the current stock lasts at this shift's sales rate. vs Prev = vs previous {isNight ? "day total" : "day shift"}.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ color: "var(--steel)", borderBottom: "1.5px solid var(--line)" }}>
+              <Th>#</Th><Th>Site</Th><Th right>Blend</Th><Th right>Diesel</Th>{t.hasUlp && <Th right>ULP</Th>}<Th right>Total</Th><Th right>vs Prev</Th>
+              <Th right>Blend stk</Th><Th right>Diesel stk</Th>{t.hasUlp && <Th right>ULP stk</Th>}<Th right>B cover</Th><Th right>D cover</Th>{t.hasUlp && <Th right>U cover</Th>}<Th>Status</Th>
+            </tr></thead>
+            <tbody>
+              {d.sites.map((s, i) => (
+                <tr key={s.siteId} style={{ borderBottom: "1px solid var(--line)", background: s.low ? "#FDECEC" : undefined }}>
+                  <Td style={{ color: "var(--steel)" }}>{i + 1}</Td>
+                  <Td style={{ fontWeight: 600 }}>{s.site}{!s.daySubmitted && !isNight && <span style={{ color: "var(--amber)", fontSize: 10, marginLeft: 5 }}>no day</span>}{isNight && s.dayOnly && <span style={{ color: "var(--steel)", fontSize: 10, marginLeft: 5, fontWeight: 500 }}>day only</span>}</Td>
+                  <Td right>{full(s.blendSales)}</Td>
+                  <Td right>{full(s.dieselSales)}</Td>
+                  {t.hasUlp && <Td right>{s.ulpSales ? full(s.ulpSales) : "—"}</Td>}
+                  <Td right style={{ fontWeight: 700 }}>{full(s.totalSales)}</Td>
+                  <Td right style={{ color: dTone(s.salesDiffPct) }}>
+                    {s.salesDiffPct == null ? "—" : <>{arrow(s.salesDiffPct)} {s.salesDiffPct > 0 ? "+" : ""}{s.salesDiffPct}%</>}
+                  </Td>
+                  <Td right style={{ color: s.blendStatus === "LOW" ? "#C0563A" : "var(--steel)", fontWeight: s.blendStatus === "LOW" ? 700 : 400 }}>{s.blendStock == null ? "—" : full(s.blendStock)}</Td>
+                  <Td right style={{ color: s.dieselStatus === "LOW" ? "#C0563A" : "var(--steel)", fontWeight: s.dieselStatus === "LOW" ? 700 : 400 }}>{s.dieselStock == null ? "—" : full(s.dieselStock)}</Td>
+                  {t.hasUlp && <Td right style={{ color: s.ulpStatus === "LOW" ? "#C0563A" : "var(--steel)", fontWeight: s.ulpStatus === "LOW" ? 700 : 400 }}>{s.ulpStock == null ? "—" : full(s.ulpStock)}</Td>}
+                  <Td right style={{ color: "var(--steel)" }}>{coverTxt(s.blendCover)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{coverTxt(s.dieselCover)}</Td>
+                  {t.hasUlp && <Td right style={{ color: "var(--steel)" }}>{s.ulpStock == null ? "—" : coverTxt(s.ulpCover)}</Td>}
+                  <Td><span style={{ fontSize: 11, fontWeight: 700, color: s.low ? "#B23B3B" : "#2E7D33" }}>{s.low ? "LOW" : "OK"}</span></Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {/* Missing / incomplete */}
+      {(d.missingFull.length > 0 || d.missingShift.length > 0) && (
+        <Panel>
+          <span className="lbl" style={{ color: "#B23B3B" }}>Missing / incomplete</span>
+          {d.missingFull.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#B23B3B", marginBottom: 4 }}>Not submitted ({d.missingFull.length})</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.7 }}>{d.missingFull.join(" · ")}</div>
+            </div>
+          )}
+          {d.missingShift.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#B4801F", marginBottom: 4 }}>{isNight ? "Partial (one shift only)" : "Day shift missing"} ({d.missingShift.length})</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.7 }}>{d.missingShift.join(" · ")}</div>
+            </div>
+          )}
+        </Panel>
+      )}
+    </>
   );
 }
 
@@ -1810,19 +2214,45 @@ function ExecPrices({ prices, onDrill }) {
         <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>vs avg: how far our price sits above (red) or below (green) the market average.</div>
       </Panel>
       {/* by region */}
-      {(prices.byRegion || []).length > 0 && (
-        <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
-          <div className="lbl" style={{ margin: 0, padding: "12px 14px 8px" }}>DA price by region</div>
-          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Region</Th><Th right>Blend</Th><Th right>Diesel</Th></tr></thead>
-            <tbody>{prices.byRegion.map((r) => (
-              <tr key={r.region} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td>{r.region}</Td><Td right>{money3(r.blend)}</Td><Td right>{money3(r.diesel)}</Td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </Panel>
-      )}
+      {(prices.byRegion || []).length > 0 && (() => {
+        const vs = (x) => (x == null ? <span style={{ color: "var(--steel)" }}>—</span> : <span style={{ color: x <= 0 ? "var(--ok)" : "var(--red)" }}>{x > 0 ? "+" : ""}{x.toFixed(3)}</span>);
+        const grpHdr = { textAlign: "center", padding: "6px 10px", borderLeft: "1px solid rgba(255,255,255,.18)" };
+        const subHdr = (i) => ({ textAlign: "right", padding: "4px 10px", fontWeight: 600, fontSize: 10.5, borderLeft: i === 0 ? "1px solid rgba(255,255,255,.18)" : "none" });
+        const bl = { borderLeft: "1px solid var(--line)" };
+        return (
+          <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+            <div className="lbl" style={{ margin: 0, padding: "12px 14px 8px" }}>DA price by region <span style={{ color: "var(--steel)", fontWeight: 400 }}>· vs market</span></div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="mono" style={{ width: "100%", minWidth: 660, borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--navy)", color: "#fff" }}>
+                    <th rowSpan={2} style={{ textAlign: "left", padding: "8px 10px" }}>Region</th>
+                    <th colSpan={4} style={grpHdr}>Blend</th>
+                    <th colSpan={4} style={grpHdr}>Diesel</th>
+                  </tr>
+                  <tr style={{ background: "var(--navy)", color: "#fff" }}>
+                    {["DA", "Mkt avg", "Mkt min", "vs avg"].map((h, i) => <th key={"b" + i} style={subHdr(i)}>{h}</th>)}
+                    {["DA", "Mkt avg", "Mkt min", "vs avg"].map((h, i) => <th key={"d" + i} style={subHdr(i)}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>{prices.byRegion.map((r) => (
+                  <tr key={r.region} style={{ borderTop: "1px solid var(--line)" }}>
+                    <Td style={{ fontWeight: 600 }}>{r.region}</Td>
+                    <Td right style={{ fontWeight: 700, ...bl }}>{money3(r.blend)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{money3(r.blendMktAvg)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{money3(r.blendMktMin)}</Td>
+                    <Td right>{vs(r.blendVsAvg)}</Td>
+                    <Td right style={{ fontWeight: 700, ...bl }}>{money3(r.diesel)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{money3(r.dieselMktAvg)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{money3(r.dieselMktMin)}</Td>
+                    <Td right>{vs(r.dieselVsAvg)}</Td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </Panel>
+        );
+      })()}
       {/* per-site detail table — full listing, at the bottom; tap a row to drill */}
       {bySite.length > 0 && (
         <Panel style={{ padding: 0, overflow: "hidden" }}>
@@ -1904,6 +2334,246 @@ export function RetailRequest({ me }) {
 
 // Wet-stock reconciliation — per-site variance (expected vs actual dip) from the
 // day-end engine. Variance is a signal to investigate, NOT a pilferage figure.
+// Client-side text filter for large tables — match a query against any string/number field.
+const rowMatches = (obj, q) => { if (!q) return true; const t = q.toLowerCase(); return Object.values(obj || {}).some((v) => (typeof v === 'string' || typeof v === 'number') && String(v).toLowerCase().includes(t)); };
+const FilterBox = ({ value, onChange, placeholder }) => (
+  <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || 'Filter — site, truck, driver…'} style={{ width: '100%', maxWidth: 320, marginBottom: 10, padding: '8px 12px', border: '1px solid var(--line)', borderRadius: 10, fontSize: 13 }} />
+);
+
+// MANAGER BIRDS-EYE — the "DA Site Analytics" finance workbook, live in the app:
+// Scorecard, Day end, Tank trends, Status trends + Deliveries, Day/Night shift,
+// Losses and Prices (the executive screens managers asked to also see).
+// Midday dip — standalone view (executive dashboard). Same read as the manager
+// Bird's-eye midday tab, self-fetching the latest snapshot.
+export function MiddayDipView() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
+  useEffect(() => { const to = todayISO(); const from = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", from, to).then(setD).catch((e) => setErr(e.message)); }, []);
+  if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
+  if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
+  if (!Array.isArray(d.sites) || !d.sites.length) return <Note tone="amber" title="No midday dip yet">No site has submitted a midday tank dip for this window.</Note>;
+  return (<>
+    <Note tone="blue" title={`Midday dip · ${d.date ? fmtD(d.date) : "—"}`}>Stock-only snapshot taken between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
+      <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF" />
+      <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" />
+      <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"} />
+    </div>
+    <FilterBox value={q} onChange={setQ} />
+    <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+      <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+        <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>At</Th><Th right>Blend</Th><Th right>Diesel</Th>{d.hasUlp && <Th right>ULP</Th>}<Th right>Total</Th><Th right>Days cover</Th><Th right>Shift cover</Th><Th>Status</Th></tr></thead>
+        <tbody>{d.sites.filter((s) => rowMatches(s, q)).map((s) => (
+          <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "LOW" ? "#FDECEA" : "#fff" }}>
+            <Td>{s.status === "LOW" ? "⚠ " : ""}{s.site}</Td>
+            <Td style={{ color: "var(--steel)" }}>{s.at || "—"}</Td>
+            <Td right>{full(s.blend)}</Td><Td right>{full(s.diesel)}</Td>{d.hasUlp && <Td right>{s.ulp ? full(s.ulp) : "—"}</Td>}
+            <Td right style={{ fontWeight: 700 }}>{full(s.total)}</Td>
+            <Td right style={{ color: s.daysCover != null && s.daysCover < 1 ? "var(--red)" : "var(--steel)" }}>{s.daysCover == null ? "—" : s.daysCover + "d"}</Td>
+            <Td right style={{ color: "var(--steel)" }}>{s.shiftCover == null ? "—" : s.shiftCover + "s"}</Td>
+            <Td><span style={{ fontSize: 11, fontWeight: 700, color: s.status === "LOW" ? "var(--red)" : "var(--ok)" }}>{s.status}</span></Td>
+          </tr>))}</tbody>
+      </table>
+    </div></Panel>
+  </>);
+}
+
+export function ManagerBirdsEye() {
+  const [tab, setTab] = useState("scorecard");
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
+  const [d, setD] = useState(null); const [err, setErr] = useState(null);
+  const [ex, setEx] = useState(null);
+  const [siteSel, setSiteSel] = useState("");
+  const [q, setQ] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const w = periodWindow(period, range);
+  const ANALYTIC = ["scorecard", "dayend", "tanktrends", "statustrends", "midday"];
+  useEffect(() => {
+    if (!ANALYTIC.includes(tab)) return;
+    let live = true; setD(null); setErr(null);
+    getSiteAnalytics(tab, w.from, w.to).then((r) => { if (live) setD(r); }).catch((e) => { if (live) setErr(e.message); });
+    return () => { live = false; };
+  }, [tab, w.from, w.to, reloadKey]);
+  useEffect(() => { if (tab === "prices" && !ex) getExecutive("month").then(setEx).catch(() => {}); }, [tab, ex]);
+
+  const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["losses", "Losses"], ["cash", "Cash banked"], ["prices", "Prices"]];
+  const $ = (v) => "$" + full(v);
+  const lossCol = (s) => (s === "critical" ? "var(--red)" : s === "watch" ? "var(--amber)" : "var(--ok)");
+
+  return (
+    <Wrap>
+      {/* Header — same look & feel as the executive Bird's-eye: title left, the
+          Today/Yesterday/Month/Year/Range ribbon on TOP-RIGHT (never below). */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Bird's-eye view</h2>
+          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Site analytics — the finance workbook, live{ANALYTIC.includes(tab) ? ` · ${w.label}` : ""}</div>
+        </div>
+        {ANALYTIC.includes(tab) && (
+          <div style={{ minWidth: 240, flex: "0 1 360px" }}>
+            <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} showLabel={false} />
+          </div>
+        )}
+      </div>
+      {ANALYTIC.includes(tab) && <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />}
+      <div style={{ marginBottom: 12, overflowX: "auto" }}><Segmented options={TABS} value={tab} onChange={(v) => { setTab(v); setD(null); setQ(""); }} /></div>
+      {['scorecard','dayend','tanktrends','midday'].includes(tab) && d && <FilterBox value={q} onChange={setQ} />}
+      {ANALYTIC.includes(tab) && err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {ANALYTIC.includes(tab) && !d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+
+      {tab === "scorecard" && d && Array.isArray(d.sites) && (<>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, marginBottom: 12 }}>
+          <Hero label="REVENUE" value={"$" + compact(d.totals.revenue)} accent="#6BC048" />
+          <Hero label="VOLUME SOLD" value={compact(d.totals.volume)} unit="L" />
+          <Hero label="TOTAL LOSS" value={compact(d.totals.netLoss)} unit="L" sub={`${d.totals.lossPct ?? 0}% of volume`} accent={d.totals.netLoss > 0 ? "#E7A33E" : "#6BC048"} />
+          <Hero label="SITES AT RISK" value={d.totals.critical} unit={d.totals.critical === 1 ? "critical" : "critical"} sub={`${d.totals.watch} on watch`} accent={d.totals.critical ? "#E5604D" : "#8FB8FF"} />
+        </div>
+        <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Revenue</Th><Th right>Volume</Th><Th right>Delivery</Th><Th right>Site loss</Th><Th right>Total loss</Th><Th right>Loss %</Th><Th right>Cash %</Th><Th right>Short</Th></tr></thead>
+            <tbody>{d.sites.filter((s) => rowMatches(s, q)).map((s) => (
+              <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
+                <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}</Td>
+                <Td right>{$(s.revenue)}</Td><Td right>{full(s.volume)}</Td>
+                <Td right style={{ color: s.deliveryLoss > 0 ? "var(--red)" : "var(--steel)" }}>{full(s.deliveryLoss)}</Td>
+                <Td right style={{ color: s.siteLoss > 0 ? "var(--red)" : "var(--steel)" }}>{full(s.siteLoss)}</Td>
+                <Td right style={{ fontWeight: 700, color: s.totalLoss > 0 ? "var(--red)" : "var(--ok)" }}>{full(s.totalLoss)}</Td>
+                <Td right style={{ fontWeight: 700, color: lossCol(s.status) }}>{s.lossPct != null ? s.lossPct + "%" : "—"}</Td>
+                <Td right>{s.cashPct != null ? s.cashPct + "%" : "—"}</Td><Td right>{s.shortDays}</Td>
+              </tr>))}</tbody>
+          </table>
+        </div></Panel>
+      </>)}
+
+      {tab === "dayend" && d && Array.isArray(d.rows) && (<>
+        <Note tone="blue" title="Expected-cash waterfall">Total Sales Value less every non-cash channel (Coupons, Cards, Swipe, Banking) and Petty Cash = <b>Expected Cash</b> — the physical cash that should be banked. <b>Actual Banked</b> is what the cash office recorded. <b>Cash Check Δ</b> = Total − Coupons − Cards − Swipe − the report's own cash figure; ≈$0 means the channels read cleanly (a non-zero amber value = a column mis-read — treat that row as unverified).</Note>
+        <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
+              <Th>Site</Th><Th>Date</Th><Th right>Total sales</Th><Th right>Coupons</Th><Th right>Cards</Th><Th right>Swipe</Th><Th right>Banking</Th><Th right>Petty</Th><Th right>Expected cash</Th><Th right>Actual banked</Th><Th right>Variance</Th><Th right>% Banked</Th><Th right>Δ</Th>
+            </tr></thead>
+            <tbody>{d.rows.filter((r) => rowMatches(r, q)).slice(0, 400).map((r, i) => (
+              <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td>{r.site}</Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
+                <Td right>{$(r.total)}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{r.coupons ? $(r.coupons) : "—"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{r.cards ? $(r.cards) : "—"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{r.swipe ? $(r.swipe) : "—"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{r.banking ? $(r.banking) : "—"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{r.petty ? $(r.petty) : "—"}</Td>
+                <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
+                <Td right style={{ color: r.actual == null ? "var(--amber)" : "var(--ink)" }}>{r.actual == null ? "—" : $(r.actual)}</Td>
+                <Td right style={{ fontWeight: 600, color: Math.abs(r.variance) >= 1 ? "var(--red)" : "var(--steel)" }}>{r.variance ? $(r.variance) : "—"}</Td>
+                <Td right>{r.pctBanked != null ? r.pctBanked + "%" : "—"}</Td>
+                <Td right style={{ color: Math.abs(r.cashCheck) >= 0.5 ? "var(--amber)" : "#C7CDD6", fontWeight: Math.abs(r.cashCheck) >= 0.5 ? 700 : 400 }}>{r.cashCheck ? $(r.cashCheck) : "$0"}</Td>
+              </tr>))}
+              {d.totals && (
+                <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA", fontWeight: 700 }}>
+                  <Td>TOTAL</Td><Td></Td>
+                  <Td right>{$(d.totals.total)}</Td><Td right>{$(d.totals.coupons)}</Td><Td right>{$(d.totals.cards)}</Td><Td right>{$(d.totals.swipe)}</Td><Td right>{$(d.totals.banking)}</Td><Td right>{$(d.totals.petty)}</Td>
+                  <Td right>{$(d.totals.expected)}</Td><Td right>{d.totals.actual ? $(d.totals.actual) : "—"}</Td><Td right style={{ color: "var(--red)" }}>{$(d.totals.variance)}</Td>
+                  <Td right>{d.totals.pctBanked != null ? d.totals.pctBanked + "%" : "—"}</Td><Td right>{$(d.totals.cashCheck)}</Td>
+                </tr>
+              )}</tbody>
+          </table>
+        </div>{d.rows.length > 400 && <div style={{ fontSize: 11, color: "var(--steel)", padding: "8px 12px" }}>Latest 400 of {d.rows.length} rows — narrow the period for fewer.</div>}</Panel>
+      </>)}
+
+      {tab === "tanktrends" && d && Array.isArray(d.grid) && (
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", padding: "10px 12px 6px" }}>Each cell = that day's wet-stock variance (L). <span style={{ color: "var(--red)" }}>Red = loss</span>, green = gain.</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ borderCollapse: "collapse", fontSize: 11, whiteSpace: "nowrap" }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Tank</Th><Th>Product</Th><Th right>Σ</Th>{d.dates.map((dt) => <Th key={dt} right>{dt.slice(8)}/{dt.slice(5, 7)}</Th>)}</tr></thead>
+              <tbody>{d.grid.filter((row) => rowMatches({ site: row.site, tank: row.tank, product: row.product }, q)).slice(0, 600).map((row, i) => (
+                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td>{row.site}</Td><Td>{row.tank}</Td><Td style={{ color: "var(--steel)" }}>{row.product}</Td>
+                  <Td right style={{ fontWeight: 700, color: row.total > 0 ? "var(--red)" : "var(--ok)" }}>{row.total}</Td>
+                  {d.dates.map((dt) => { const v = row.cells[dt]; return <Td key={dt} right style={{ color: v > 0 ? "var(--red)" : v < 0 ? "var(--ok)" : "#C7CDD6" }}>{v == null ? "·" : v}</Td>; })}
+                </tr>))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+
+      {tab === "statustrends" && d && Array.isArray(d.sites) && (() => {
+        const scope = siteSel || "global";
+        const inScope = (s) => scope === "global" ? true : scope.startsWith("region:") ? s.region === scope.slice(7) : s.site === scope.slice(5);
+        const shown = d.sites.filter(inScope);
+        const dir = (v) => v > 0 ? <span style={{ color: "var(--steel)" }}>▲</span> : v < 0 ? <span style={{ color: "var(--steel)" }}>▼</span> : <span style={{ color: "#C7CDD6" }}>—</span>;
+        const gl = (v) => v > 0 ? <span style={{ color: "var(--ink)" }}>{full(v)} ▲</span> : v < 0 ? <span style={{ color: "var(--red)" }}>{full(v)} ▼</span> : <span style={{ color: "#C7CDD6" }}>—</span>;
+        return (<>
+          <div style={{ marginBottom: 8, maxWidth: 360 }}>
+            <Picker value={scope} onChange={setSiteSel} title="Show which sites?" placeholder="Whole network"
+              options={[{ value: "global", label: "Whole network" }, ...d.regions.map((r) => ({ value: "region:" + r, label: r + " region" })), ...d.sites.map((s) => ({ value: "site:" + s.site, label: s.site }))]} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "0 2px 12px", lineHeight: 1.5 }}>Per-site daily trend from the status reports. <b>Total Value ▲/▼</b> = direction vs the previous day. <b>Gain/Loss</b>: gains show positive in black ▲, losses negative in <span style={{ color: "var(--red)" }}>red ▼</span>. Commentary appears <span style={{ color: "var(--red)" }}>only on days that break trend</span> for this site.</div>
+          {shown.map((s) => (
+            <Panel key={s.site} style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 12px 6px", flexWrap: "wrap", gap: 6 }}>
+                <span className="lbl" style={{ color: "var(--navy)" }}>{s.site}</span>
+                <span style={{ fontSize: 11, color: s.flagCount ? "var(--red)" : "var(--steel)" }}>{s.flagCount ? `${s.flagCount} trend-break${s.flagCount > 1 ? "s" : ""}` : "no trend breaks"} · {s.region}</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, whiteSpace: "nowrap" }}>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th right>Total value $</Th><Th></Th><Th right>Cash diff</Th><Th right>Blend L</Th><Th right>Diesel L</Th><Th right>GL Blend</Th><Th right>GL Diesel</Th><Th>Commentary</Th></tr></thead>
+                  <tbody>
+                    {s.days.map((x, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--line)", background: x.flags.length ? "#FFF7F5" : "#fff" }}>
+                        <Td style={{ color: "var(--steel)" }}>{fmtD(x.date)}</Td>
+                        <Td right>{$(x.value)}</Td><Td style={{ textAlign: "center" }}>{dir(x.valueDir)}</Td>
+                        <Td right style={{ color: Math.abs(x.cashDiff) >= 1 ? "var(--red)" : "var(--steel)" }}>{x.cashDiff.toFixed(2)}</Td>
+                        <Td right>{full(x.blendSold)}</Td><Td right>{full(x.dieselSold)}</Td>
+                        <Td right>{gl(x.blendGl)}</Td><Td right>{gl(x.dieselGl)}</Td>
+                        <Td style={{ color: "var(--red)", whiteSpace: "normal", maxWidth: 320, fontSize: 11, lineHeight: 1.4 }}>{x.flags.join("; ")}</Td>
+                      </tr>))}
+                    <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA", fontWeight: 700 }}>
+                      <Td>PERIOD TOTAL</Td><Td right>{$(s.totals.value)}</Td><Td></Td><Td right>{s.totals.cashDiff.toFixed(2)}</Td>
+                      <Td right>{full(s.totals.blendSold)}</Td><Td right>{full(s.totals.dieselSold)}</Td>
+                      <Td right>{gl(s.totals.blendGl)}</Td><Td right>{gl(s.totals.dieselGl)}</Td><Td></Td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          ))}
+        </>);
+      })()}
+
+      {tab === "midday" && d && Array.isArray(d.sites) && (<>
+        <Note tone="blue" title={`Midday dip · ${d.date ? fmtD(d.date) : "—"}`}>Stock-only snapshot taken between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
+          <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF" />
+          <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" />
+          <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"} />
+        </div>
+        <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>At</Th><Th right>Blend</Th><Th right>Diesel</Th>{d.hasUlp && <Th right>ULP</Th>}<Th right>Total</Th><Th right>Days cover</Th><Th right>Shift cover</Th><Th>Status</Th></tr></thead>
+            <tbody>{d.sites.filter((s) => rowMatches(s, q)).map((s) => (
+              <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "LOW" ? "#FDECEA" : "#fff" }}>
+                <Td>{s.status === "LOW" ? "⚠ " : ""}{s.site}</Td>
+                <Td style={{ color: "var(--steel)" }}>{s.at || "—"}</Td>
+                <Td right>{full(s.blend)}</Td><Td right>{full(s.diesel)}</Td>{d.hasUlp && <Td right>{s.ulp ? full(s.ulp) : "—"}</Td>}
+                <Td right style={{ fontWeight: 700 }}>{full(s.total)}</Td>
+                <Td right style={{ color: s.daysCover != null && s.daysCover < 1 ? "var(--red)" : "var(--steel)" }}>{s.daysCover == null ? "—" : s.daysCover + "d"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{s.shiftCover == null ? "—" : s.shiftCover + "s"}</Td>
+                <Td><span style={{ fontSize: 11, fontWeight: 700, color: s.status === "LOW" ? "var(--red)" : "var(--ok)" }}>{s.status}</span></Td>
+              </tr>))}</tbody>
+          </table>
+        </div></Panel>
+      </>)}
+
+      {tab === "deliveries" && <DeliveriesInProgress />}
+      {tab === "dayshift" && <ShiftReportView shift="day" />}
+      {tab === "nightshift" && <ShiftReportView shift="night" />}
+      {tab === "losses" && <WetstockView />}
+      {tab === "cash" && <CashOffice readOnly />}
+      {tab === "prices" && (ex ? <ExecPrices prices={ex.prices} onDrill={() => {}} /> : <Panel><div style={{ color: "var(--steel)" }}>Loading prices…</div></Panel>)}
+    </Wrap>
+  );
+}
+
 export function WetstockView() {
   const [period, setPeriod] = useState("year");   // loss analysis is retrospective — default to the full picture; narrow with the selector
   const [range, setRange] = useState(defaultRange);
@@ -1912,7 +2582,7 @@ export function WetstockView() {
   useEffect(() => {
     if (period === "range" && !(range.from && range.to)) return;
     const w = periodWindow(period, range);
-    setD(null); setErr(null); getWetstock(w.days).then(setD).catch((e) => setErr(e.message));
+    setD(null); setErr(null); getWetstock(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
   const varCell = (v) => <Td right style={{ color: v < 0 ? "var(--red)" : v > 0 ? "var(--ok)" : "var(--steel)" }}>{v ? (v > 0 ? "+" : "") + L(v) : "—"}</Td>;
@@ -1928,8 +2598,8 @@ export function WetstockView() {
       {d && d.sites.length > 0 && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={compact(d.net) + "L"} label={`Total loss · ${d.days}d`} tone={d.critical ? "red" : d.watch ? "amber" : "ok"} />
-            {d.netValue != null && <CountPill n={"$" + compact(d.netValue)} label="Loss at cost" tone={d.netValue > 0 ? (d.critical ? "red" : "amber") : "ok"} />}
+            <CountPill n={full(d.net) + "L"} label={`Total loss · ${d.days}d`} tone={d.critical ? "red" : d.watch ? "amber" : "ok"} />
+            {d.netValue != null && <CountPill n={"$" + full(d.netValue)} label="Loss at cost" tone={d.netValue > 0 ? (d.critical ? "red" : "amber") : "ok"} />}
             <CountPill n={d.critical} label={`Critical (>${d.critAt ?? "1.0"}%)`} tone={d.critical ? "red" : "ok"} />
             <CountPill n={d.watch} label={`Watch (>${d.watchAt ?? "0.5"}%)`} tone={d.watch ? "amber" : "ok"} />
             {d.netRate != null && <CountPill n={d.netRate + "%"} label="Network rate" tone="ok" />}
@@ -1946,7 +2616,7 @@ export function WetstockView() {
                     <Td right style={{ color: s.deliveryLoss > 0 ? "var(--red)" : "var(--steel)" }}>{L(s.deliveryLoss)}</Td>
                     <Td right style={{ color: s.siteLoss > 0 ? "var(--red)" : "var(--steel)" }}>{L(s.siteLoss)}</Td>
                     <Td right style={{ fontWeight: 700, color: TONE[s.status] }}>{L(s.totalLoss)}</Td>
-                    <Td right style={{ color: s.lossValue > 0 ? TONE[s.status] : "var(--steel)" }}>{s.lossValue != null ? "$" + compact(s.lossValue) : "—"}</Td>
+                    <Td right style={{ color: s.lossValue > 0 ? TONE[s.status] : "var(--steel)" }}>{s.lossValue != null ? "$" + full(s.lossValue) : "—"}</Td>
                     <Td right style={{ color: TONE[s.status] }}>{s.lossPct != null ? s.lossPct + "%" : "—"}</Td>
                   </tr>
                 ))}</tbody>
@@ -2018,7 +2688,7 @@ function TenderMixPanel({ parts, label }) {
 function SiteDayendDrill({ site }) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   useEffect(() => { getSiteDayend(site, 14).then(setD).catch((e) => setErr(e.message || "load failed")); }, [site]);
-  const $ = (v) => "$" + compact(v || 0);
+  const $ = (v) => "$" + full(v || 0);
   if (err) return <Note tone="red" title="Could not load">{err}</Note>;
   if (!d) return <div style={{ color: "var(--steel)" }}>Loading…</div>;
   if (!(d.rows || []).length) return <Note tone="amber" title="No day-end data">No Summary Status rows for this site in the last {d.days} days.</Note>;
@@ -2071,7 +2741,7 @@ export function CashView() {
     setD(null); setErr(null); getCash(w.days).then(setD).catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
-  const $ = (v) => "$" + compact(v);
+  const $ = (v) => "$" + full(v);
   const [drill, setDrill] = useState(null);
   return (
     <Wrap>
@@ -2097,7 +2767,7 @@ export function CashView() {
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                  <Th>Site</Th><Th right>Takings</Th><Th right>Cash</Th><Th right>DA card</Th><Th right>Coupons</Th><Th right>Cash %</Th><Th right>Till +/−</Th></tr></thead>
+                  <Th>Site</Th><Th right>Expected</Th><Th right>Cash</Th><Th right>DA card</Th><Th right>Coupons</Th><Th right>Received</Th><Th right>Variance</Th><Th right>Till +/−</Th></tr></thead>
                 <tbody>{d.sites.map((s) => (
                   <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
                     <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
@@ -2105,7 +2775,8 @@ export function CashView() {
                     <Td right style={{ color: "var(--steel)" }}>{$(s.cashSale)}</Td>
                     <Td right style={{ color: "var(--steel)" }}>{$(s.daCard)}</Td>
                     <Td right style={{ color: "var(--steel)" }}>{$(s.coupons)}</Td>
-                    <Td right>{s.cashMix != null ? s.cashMix + "%" : "—"}</Td>
+                    <Td right style={{ fontWeight: 600, color: s.received != null ? "var(--navy)" : "var(--steel)" }} title={s.received != null ? "Cash office confirmed: cash + banking" : "Cash office hasn't confirmed yet"}>{s.received != null ? $(s.received) : "—"}</Td>
+                    <Td right style={{ fontWeight: 700, color: s.variance == null ? "var(--steel)" : Math.abs(s.variance) < 1 ? "var(--ok)" : s.variance > 0 ? "var(--red)" : "var(--ok)" }} title={s.variance == null ? "awaiting confirmation" : s.variance > 0 ? "short — received less than expected" : "over"}>{s.variance == null ? "—" : (s.variance > 0 ? "−" : s.variance < 0 ? "+" : "") + $(Math.abs(s.variance))}</Td>
                     <Td right style={{ color: Math.abs(s.cashVar) > 50 ? "var(--amber)" : "var(--steel)" }}>{s.cashVar ? "$" + compact(Math.abs(s.cashVar)) : "—"}</Td>
                   </tr>
                 ))}</tbody>
@@ -2191,19 +2862,21 @@ export function SiteDeposit({ me }) {
 }
 
 // The cash office view: open days, deposits to confirm, cash unbanked/short.
-export function CashOffice() {
-  const [days, setDays] = useState(30);
+export function CashOffice({ readOnly = false } = {}) {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [drill, setDrill] = useState(null);
   const [onlyOpen, setOnlyOpen] = useState(true);
-  useEffect(() => { setD(null); setErr(null); getCashRecon(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
+  useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
-  const $ = (v) => "$" + compact(v);
+  const $ = (v) => "$" + full(v);
   const rows = d ? (onlyOpen ? d.openItems : d.rows) : [];
   return (
     <Wrap>
-      <SectionHead title="Cash office — banking reconciliation" sub="Confirm site deposits, record the cash received, and close each day" />
+      <SectionHead title="Cash office — banking reconciliation" sub={readOnly ? "Banked vs expected, by site and day — view only" : "Confirm site deposits, record the cash received, and close each day"} />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
       <RefreshBar data={d} busy={!d && !err} onRefresh={reload} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
@@ -2217,8 +2890,6 @@ export function CashOffice() {
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
-            <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ padding: "5px 8px" }}>{[7, 14, 30, 60, 90].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
           </div>
           {rows.length === 0 && <Note tone="ok" title={onlyOpen ? "Nothing open" : "No days in window"}>{onlyOpen ? "Every day in this window is closed." : "No cash days found for this window."}</Note>}
           {rows.length > 0 && (
@@ -2229,7 +2900,7 @@ export function CashOffice() {
                   <tbody>{rows.map((r) => (
                     <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.status === "open" ? "#FFF7E6" : "#fff" }}>
                       <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                      <Td style={{ color: "var(--steel)" }}>{r.date}</Td>
+                      <Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
                       <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
                       <Td right>{r.received == null ? "—" : $(r.received)}</Td>
                       <Td right style={{ color: "var(--steel)" }}>{$(r.depConfirmed)}{r.pendingCount ? ` +${r.pendingCount}?` : ""}</Td>
@@ -2243,20 +2914,20 @@ export function CashOffice() {
           )}
         </>
       )}
-      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} onDone={() => { setDrill(null); reload(); }} /></DetailSheet>}
+      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} readOnly={readOnly} onDone={() => { setDrill(null); reload(); }} /></DetailSheet>}
     </Wrap>
   );
 }
 
 // The per-day drill: confirm/reject each deposit (view its slip), enter the cash
 // received, and close the day.
-function CashOfficeDay({ row, onDone }) {
+function CashOfficeDay({ row, onDone, readOnly = false }) {
   const [deposits, setDeposits] = useState(row.deposits);
   const [cashReceived, setCashReceived] = useState(row.received != null ? String(row.received) : "");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [slip, setSlip] = useState(null);   // {seq, url|null}
-  const $ = (v) => "$" + compact(v);
+  const $ = (v) => "$" + full(v);
 
   const review = async (seq, outcome) => {
     setMsg(null);
@@ -2302,20 +2973,32 @@ function CashOfficeDay({ row, onDone }) {
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
             {dp.hasSlip && <button className="disp" onClick={() => viewSlip(dp.seq)} style={cashBtn()}>View slip</button>}
-            {dp.status !== "confirmed" && <button className="disp" onClick={() => review(dp.seq, "confirmed")} style={cashBtn("var(--ok)")}>Confirm</button>}
-            {dp.status !== "rejected" && <button className="disp" onClick={() => review(dp.seq, "rejected")} style={cashBtn("var(--red)")}>Reject</button>}
+            {!readOnly && dp.status !== "confirmed" && <button className="disp" onClick={() => review(dp.seq, "confirmed")} style={cashBtn("var(--ok)")}>Confirm</button>}
+            {!readOnly && dp.status !== "rejected" && <button className="disp" onClick={() => review(dp.seq, "rejected")} style={cashBtn("var(--red)")}>Reject</button>}
           </div>
           {slip && slip.seq === dp.seq && (slip.url ? <img src={slip.url} alt="deposit slip" style={{ maxWidth: "100%", borderRadius: 10, marginTop: 8, border: "1px solid var(--line)" }} /> : <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 8 }}>Loading slip…</div>)}
         </div>
       ))}
       <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
-        <Field label="Actual cash received from the site (US$)"><Num value={cashReceived} onChange={setCashReceived} /></Field>
-        {shortfall != null && (
-          <div style={{ fontSize: 12, color: shortfall > 0 ? "var(--red)" : shortfall < 0 ? "var(--amber)" : "var(--steel)", marginBottom: 10 }}>
-            {shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}
-          </div>
+        {readOnly ? (
+          <>
+            <div className="lbl" style={{ marginBottom: 6 }}>Reconciliation</div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span style={{ color: "var(--steel)" }}>Cash received from site</span><strong className="mono">{row.received == null ? "—" : $(row.received)}</strong></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span style={{ color: "var(--steel)" }}>Expected cash</span><strong className="mono">{$(row.expected)}</strong></div>
+            {shortfall != null && <div style={{ fontSize: 12, color: shortfall > 0 ? "var(--red)" : shortfall < 0 ? "var(--amber)" : "var(--steel)", marginTop: 6 }}>{shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}</div>}
+            <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 8 }}>{row.status === "closed" ? "Day closed." : "Day still open — the cash office will confirm deposits and close it."}</div>
+          </>
+        ) : (
+          <>
+            <Field label="Actual cash received from the site (US$)"><Num value={cashReceived} onChange={setCashReceived} /></Field>
+            {shortfall != null && (
+              <div style={{ fontSize: 12, color: shortfall > 0 ? "var(--red)" : shortfall < 0 ? "var(--amber)" : "var(--steel)", marginBottom: 10 }}>
+                {shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}
+              </div>
+            )}
+            <button className="pill" disabled={busy} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : "Close day"}</button>
+          </>
         )}
-        <button className="pill" disabled={busy} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : "Close day"}</button>
       </div>
     </div>
   );
@@ -2326,62 +3009,269 @@ function CashOfficeDay({ row, onDone }) {
  *  Cash in (tenders, sourced) vs cash out (fuel purchases — only when fed).
  *  No net figure is shown until the outflow side has a real data feed.
  * ============================================================ */
-export function CashflowView() {
-  const [days, setDays] = useState(30);
+export function CashflowView({ embedded = false } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
-  useEffect(() => { setD(null); setErr(null); getCashflow(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
-  const $ = (v) => "$" + compact(v);
-  const Row = ({ label, value, sub, tone, strong }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: "1px solid var(--line)" }}>
-      <div style={{ paddingRight: 10 }}><div style={{ fontWeight: strong ? 700 : 500, color: tone === "amber" ? "var(--amber)" : "var(--navy)" }}>{label}</div>{sub && <div style={{ fontSize: 11, color: "var(--steel)" }}>{sub}</div>}</div>
-      <div className="mono" style={{ fontWeight: strong ? 700 : 500, fontSize: strong ? 18 : 15, color: tone === "amber" ? "var(--amber)" : "var(--navy)", whiteSpace: "nowrap" }}>{value}</div>
-    </div>
-  );
+  // Same corrected cash bridge as Bird's-eye (coupons settled in fuel, NOT a
+  // receivable). Whole network, this month.
+  useEffect(() => { setD(null); setErr(null); getExecutive("month").then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
   return (
-    <Wrap>
-      <SectionHead title="Fuel cash bridge" sub="Cash the fuel operation generated — every line sourced, gaps flagged" />
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
-        <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ padding: "5px 8px" }}>{[30, 60, 90, 180].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
-        <button className="disp" onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: "auto", border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+    <Shell>
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && (d.cashBridge
+        ? <CashBridgePanel cb={d.cashBridge} scopeLabel="Whole network" pLabel="This month" />
+        : <Note tone="amber" title="Cash bridge unavailable">No tender data.</Note>)}
+    </Shell>
+  );
+}
+
+/* ============================================================ *
+ *  CASH OUTFLOWS — the "cash out" side of the cash bridge, from
+ *  the daily white-slip disbursements (cleaned + classified).
+ *  By category, by payee (searchable), by month.
+ * ============================================================ */
+const OUTFLOW_CAT_COLOR = {
+  "DA Site": "#2B3990", Shareholder: "#7A5AF0", Supplier: "#2E9E5B", Utility: "#E0860E",
+  Bank: "#C8A24B", Payroll: "#6BC048", Opex: "#8FB8FF", Other: "#5B6B84",
+};
+const ZIG_RATE = 31;   // ZWL-book amounts ÷ this = ZiG
+export function CashOutflows({ embedded = false, from = null, to = null } = {}) {
+  const [days, setDays] = useState(90);
+  const [currency, setCurrency] = useState("USD");
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [q, setQ] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [drill, setDrill] = useState(null);
+  const isZig = currency === "ZiG";
+  const apiCur = isZig ? "ZWL" : "USD";   // ZiG figures come from the ZWL book, converted
+  // embedded → follow the Bird's-eye period (from/to props); standalone → own window
+  const effTo = embedded ? to : new Date().toISOString().slice(0, 10);
+  const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  useEffect(() => {
+    if (embedded && !(effFrom && effTo)) return;
+    setD(null); setErr(null);
+    getBankOutflows(effFrom, effTo, apiCur).then(setD).catch((e) => setErr(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, currency, from, to, embedded, reloadKey]);
+  // Drill into the underlying transactions behind a payee or a category.
+  const openDrill = async ({ payee, category, label }) => {
+    setDrill({ title: label, loading: true });
+    try { const r = await getOutflowTxns({ payee, category, from: effFrom, to: effTo, currency: apiCur }); setDrill({ title: label, txns: r.txns }); }
+    catch (e) { setDrill({ title: label, error: e.message }); }
+  };
+  const cur = isZig ? "ZiG " : "$";
+  const conv = (v) => (isZig ? v / ZIG_RATE : v);
+  const $ = (v) => cur + full(conv(v));
+  const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
+  const PRESETS = [[90, "90d"], [180, "6mo"], [365, "1y"], [1095, "3y"]];
+  const payees = d?.byPayee || [];
+  const filtered = q ? payees.filter((p) => p.payee.toLowerCase().includes(q.toLowerCase()) || (p.category || "").toLowerCase().includes(q.toLowerCase())) : payees;
+  const maxCat = Math.max(1, ...(d?.byCategory || []).map((c) => c.total));
+  return (
+    <Shell>
+      {!embedded && <SectionHead title="Cash outflows" sub="Cash paid out — parsed from the daily cash-office whiteslips" />}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <Segmented options={[["USD", "US$"], ["ZiG", "ZiG"]]} value={currency} onChange={setCurrency} />
+        {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
+        <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: embedded ? "auto" : undefined, border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
       </div>
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
-      {d && (
+      {d && d.count === 0 && <Note tone="blue" title="No outflows yet">No {currency} outflows recorded for this window.</Note>}
+      {d && d.count > 0 && (
         <>
-          <Panel>
-            <div className="lbl" style={{ marginBottom: 4 }}>Cash in — from fuel sales · {d.days} days to {d.asOf}</div>
-            <div className="mono" style={{ fontSize: 30, fontWeight: 600, color: "var(--navy)" }}>{$(d.collected)}</div>
-            <Row label="Already cash (notes + card swipe)" value={$(d.immediateCash)} />
-            <Row label="Still a receivable (DA card + coupons)" value={$(d.receivable)} sub="Settles on a lag — not yet in the bank" tone="amber" />
+          <Panel style={{ marginBottom: 12 }}>
+            <div className="lbl" style={{ marginBottom: 4 }}>Total paid out{d.from ? ` · ${fmtD(d.from)} → ${fmtD(d.to)}` : ""}</div>
+            <div className="mono" style={{ fontSize: 30, fontWeight: 600, color: "var(--navy)" }}>{$(d.total)}</div>
+            <div className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{full(d.count)} payments</div>
           </Panel>
-          <Panel style={{ marginTop: 12 }}>
-            <div className="lbl" style={{ marginBottom: 8 }}>Cash out — fuel purchases</div>
-            {d.purchase
-              ? <Row label="Fuel purchases (imports, duty-paid)" value={"−" + $(d.purchase.cost)} sub={`${L(d.purchase.litres)} L · ${d.purchase.loads} loads`} strong />
-              : <Note tone="amber" title="Fuel purchases — not fed">No import-cost feed yet (the import log is empty). Feed supplier invoices to complete the outflow side.</Note>}
-          </Panel>
-          <Panel style={{ marginTop: 12 }}>
-            {d.netFuelCash != null
-              ? <Row label="Net fuel operating cash (before overheads)" value={$(d.netFuelCash)} strong />
-              : <Note tone="blue" title="No net cash figure — yet">The inflow side is ready. A real net figure needs the outflow feeds below — we don't show a number we can't stand behind.</Note>}
-          </Panel>
-          {d.unfed?.length > 0 && (
-            <Panel style={{ marginTop: 12 }}>
-              <div className="lbl" style={{ marginBottom: 6 }}>Not yet fed (needed for a full cash statement)</div>
-              {d.unfed.map((u, i) => (
-                <div key={i} style={{ display: "flex", gap: 8, padding: "7px 0", fontSize: 13, borderTop: i ? "1px solid var(--line)" : "none" }}>
-                  <span style={{ color: "var(--amber)" }}>○</span>
-                  <div><strong>{u.line}</strong><div style={{ fontSize: 11, color: "var(--steel)" }}>{u.why}</div></div>
+          <Panel style={{ marginBottom: 12 }}>
+            <div className="lbl" style={{ marginBottom: 8 }}>By category</div>
+            {(d.byCategory || []).map((c) => (
+              <div key={c.category} onClick={() => openDrill({ category: c.category, label: c.category })} style={{ marginBottom: 8, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600, color: "var(--navy)" }}>{c.category} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></span>
+                  <span className="mono" style={{ fontWeight: 700 }}>{$(c.total)} <span style={{ color: "var(--steel)", fontWeight: 400 }}>· {c.n}</span></span>
                 </div>
-              ))}
-            </Panel>
-          )}
-          {d.note && <div style={{ fontSize: 12, color: "var(--steel)", margin: "10px 2px" }}>{d.note}</div>}
+                <div style={{ height: 7, borderRadius: 100, background: "#EEF1F6", overflow: "hidden" }}>
+                  <div style={{ width: `${(c.total / maxCat) * 100}%`, height: "100%", background: OUTFLOW_CAT_COLOR[c.category] || "var(--steel)" }} />
+                </div>
+              </div>
+            ))}
+          </Panel>
+          <Panel style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ padding: "12px 14px 8px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div className="lbl" style={{ marginBottom: 0 }}>By payee</div>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search payee…" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, minWidth: 160 }} />
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 460 }}>
+              <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "var(--navy)", color: "#fff", position: "sticky", top: 0 }}><Th>Payee</Th><Th>Category</Th><Th right>Paid</Th><Th right>Count</Th></tr></thead>
+                <tbody>{filtered.slice(0, 200).map((p, i) => (
+                  <tr key={p.payee + i} onClick={() => openDrill({ payee: p.payee, label: p.payee })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                    <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{p.payee}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                    <Td><span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 100, background: "#F4F6FA", color: OUTFLOW_CAT_COLOR[p.category] || "var(--steel)", fontWeight: 600 }}>{p.category}</span></Td>
+                    <Td right style={{ fontWeight: 700 }}>{$(p.total)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{p.n}</Td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </Panel>
+          <div style={{ fontSize: 11, color: "var(--steel)", margin: "10px 2px", lineHeight: 1.5 }}>
+            Source: the daily cash-office whiteslips (the CASH_BREAKDOWN sheets). Only days whose line items reconcile exactly to the sheet's own printed total are included — a day that doesn't reconcile is skipped rather than shown wrong. Payee names are canonicalised so the same recipient totals correctly.
+          </div>
         </>
       )}
+      {drill && (
+        <DetailSheet title={drill.title} sub={drill.txns ? `${drill.txns.length} payments · ${cur}${full(conv(drill.txns.reduce((a, t) => a + t.amount, 0)))}` : ""} onClose={() => setDrill(null)}>
+          {drill.loading && <div style={{ color: "var(--steel)" }}>Loading…</div>}
+          {drill.error && <Note tone="red" title="Could not load">{drill.error}</Note>}
+          {drill.txns && (drill.txns.length === 0 ? <Note tone="blue" title="No transactions" /> : (
+            <Panel style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ overflowX: "auto", maxHeight: "62vh" }}>
+                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff", position: "sticky", top: 0 }}><Th>Date</Th><Th>Detail</Th><Th right>Amount</Th></tr></thead>
+                  <tbody>{drill.txns.map((t, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                      <Td style={{ whiteSpace: "nowrap", color: "var(--steel)" }}>{t.date || "—"}</Td>
+                      <Td>{t.raw || t.payee}{t.payee && t.payee !== drill.title ? <div style={{ fontSize: 10, color: "var(--steel)" }}>{t.payee} · {t.category}</div> : null}</Td>
+                      <Td right style={{ fontWeight: 700 }}>{$(t.amount)}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </Panel>
+          ))}
+        </DetailSheet>
+      )}
+    </Shell>
+  );
+}
+
+/* ============================================================ *
+ *  APPROVER HISTORY — every fuel approval this approver made,
+ *  searchable (driver / truck / date), Excel export, tap → full
+ *  detail on one screen (no stepping through the workflow).
+ * ============================================================ */
+export function ApprovalsHistory() {
+  const [f, setF] = useState({ driver: "", truck: "", from: "", to: "", q: "" });
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState(false);
+  const [drill, setDrill] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  useEffect(() => {
+    setD(null); setErr(null); setBusy(true);
+    getApprovalHistory(f).then((r) => { setD(r); setBusy(false); }).catch((e) => { setErr(e.message); setBusy(false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
+  const run = () => setReloadKey((k) => k + 1);
+  const clear = () => { setF({ driver: "", truck: "", from: "", to: "", q: "" }); setReloadKey((k) => k + 1); };
+  const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+  const doExport = async () => { setExporting(true); try { await downloadApprovalsCsv(f); } catch (e) { alert(e.message); } setExporting(false); };
+  const openDetail = async (ref) => {
+    setDrill({ ref, loading: true });
+    try { const r = await getApprovalDetail(ref); setDrill({ ref, req: r.request }); }
+    catch (e) { setDrill({ ref, error: e.message }); }
+  };
+  const dt = (x) => (x ? new Date(x).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+  const OUT = { approved: "var(--ok)", declined: "var(--red)" };
+  const rows = d?.approvals || [], t = d?.totals;
+  const inp = { padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 9, fontSize: 13, minWidth: 0 };
+  return (
+    <Wrap>
+      <SectionHead title="My approvals" sub="Every fuel request you've decided — search, drill in, export to Excel" />
+      <Panel style={{ marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, marginBottom: 8 }}>
+          <input style={inp} placeholder="Driver" value={f.driver} onChange={set("driver")} onKeyDown={(e) => e.key === "Enter" && run()} />
+          <input style={inp} placeholder="Truck / vehicle" value={f.truck} onChange={set("truck")} onKeyDown={(e) => e.key === "Enter" && run()} />
+          <label style={{ display: "flex", flexDirection: "column", fontSize: 10, color: "var(--steel)", gap: 2 }}>From<input type="date" style={inp} value={f.from} max={f.to || undefined} onChange={set("from")} /></label>
+          <label style={{ display: "flex", flexDirection: "column", fontSize: 10, color: "var(--steel)", gap: 2 }}>To<input type="date" style={inp} value={f.to} min={f.from || undefined} onChange={set("to")} /></label>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inp, flex: 1 }} placeholder="Search anything — ref, station…" value={f.q} onChange={set("q")} onKeyDown={(e) => e.key === "Enter" && run()} />
+          <button onClick={run} style={{ border: "none", background: "var(--navy)", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Search</button>
+          <button onClick={clear} style={{ border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "9px 12px", fontSize: 13, cursor: "pointer" }}>Clear</button>
+          <button onClick={doExport} disabled={exporting || !rows.length} style={{ border: "1px solid var(--lime)", background: "#F1FAEA", color: "var(--navy)", borderRadius: 9, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: rows.length ? "pointer" : "not-allowed", opacity: rows.length ? 1 : .5 }}>{exporting ? "Exporting…" : "⤓ Excel"}</button>
+        </div>
+      </Panel>
+      {t && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <CountPill n={t.count} label="Decisions" tone="ok" />
+          <CountPill n={t.approvedCount} label="Approved" tone="ok" />
+          <CountPill n={L(t.approvedLitres) + " L"} label="Litres approved" tone="ok" />
+        </div>
+      )}
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {busy && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && !busy && rows.length === 0 && <Note tone="blue" title="No approvals found">Nothing matches those filters.</Note>}
+      {rows.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 560 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
+                <Th>When</Th><Th>Driver</Th><Th>Truck</Th><Th right>Req L</Th><Th right>Appr L</Th><Th>Outcome</Th></tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={r.ref + i} onClick={() => openDetail(r.ref)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                  <Td style={{ whiteSpace: "nowrap", color: "var(--steel)" }}>{dt(r.decidedAt)}</Td>
+                  <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{r.driver}</Td>
+                  <Td>{r.truck || "—"}</Td>
+                  <Td right>{L(r.requested)}</Td>
+                  <Td right style={{ fontWeight: 700 }}>{r.allocated == null ? "—" : L(r.allocated)}</Td>
+                  <Td style={{ fontWeight: 700, color: OUT[r.outcome] || "var(--steel)", textTransform: "capitalize" }}>{r.outcome}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {drill && (
+        <DetailSheet title={drill.ref} sub={drill.req ? `${drill.req.driver} · ${drill.req.status}` : ""} onClose={() => setDrill(null)}>
+          {drill.loading && <div style={{ color: "var(--steel)" }}>Loading…</div>}
+          {drill.error && <Note tone="red" title="Could not load">{drill.error}</Note>}
+          {drill.req && <ApprovalDetail r={drill.req} dt={dt} />}
+        </DetailSheet>
+      )}
     </Wrap>
+  );
+}
+
+// Full request on one screen — the whole approval, no workflow steps.
+function ApprovalDetail({ r, dt }) {
+  const Line = ({ k, v, tone }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderTop: "1px solid var(--line)" }}>
+      <span style={{ color: "var(--steel)", fontSize: 12.5 }}>{k}</span>
+      <span className="mono" style={{ fontWeight: 600, textAlign: "right", color: tone || "var(--navy)" }}>{v}</span>
+    </div>
+  );
+  const truck = r.horse || "—";
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <span style={{ fontWeight: 800, fontSize: 20, color: "var(--navy)" }}>{r.approvedLitres != null ? L(r.approvedLitres) : L(r.calcLitres)} L</span>
+        <span style={{ alignSelf: "center", fontSize: 12, padding: "2px 9px", borderRadius: 100, background: r.status === "declined" ? "#FDECEA" : "#EBF6E7", color: r.status === "declined" ? "var(--red)" : "var(--ok)", fontWeight: 700, textTransform: "capitalize" }}>{r.status}</span>
+      </div>
+      <Line k="Driver" v={r.driver} />
+      <Line k="Truck / vehicle" v={truck} />
+      {r.trailer ? <Line k="Trailer" v={r.trailer} /> : null}
+      <Line k="Mode" v={r.mode === "delivery" ? "Fleet (route)" : "Retail"} />
+      <Line k="Requested" v={L(r.calcLitres) + " L"} />
+      {r.approvedLitres != null && <Line k="Approved" v={L(r.approvedLitres) + " L"} tone="var(--ok)" />}
+      {r.km != null && <Line k="Route" v={L(r.km) + " km" + (r.distanceSource ? " · " + r.distanceSource : "")} />}
+      {r.kmpl != null && <Line k="Planned" v={(+r.kmpl).toFixed(2) + " km/L"} />}
+      <Line k="Station" v={r.station || "—"} />
+      {r.gpsMetres != null && <Line k="GPS from station" v={Math.round(r.gpsMetres) + " m"} tone={r.gpsMetres > 250 ? "var(--amber)" : undefined} />}
+      {r.odo != null && <Line k="Odometer (typed)" v={L(r.odo)} />}
+      {r.ocr != null && <Line k="Odometer (OCR)" v={L(r.ocr) + (r.ocrGap ? ` · ${r.ocrGap} gap` : "")} tone={r.ocrMismatch ? "var(--amber)" : undefined} />}
+      {r.reason ? <Line k="Reason" v={r.reason} /> : null}
+      {r.note ? <Line k="Approver note" v={r.note} /> : null}
+      <Line k="Requested at" v={dt(r.at)} />
+      {r.decidedAt && <Line k="Decided at" v={dt(r.decidedAt)} />}
+      {r.takenLitres != null && <Line k="Redeemed" v={L(r.takenLitres) + " L" + (r.takenAt ? " · " + r.takenAt : "")} />}
+      {r.photo && <div style={{ marginTop: 12 }}><div className="lbl" style={{ marginBottom: 6 }}>Odometer photo</div><img src={r.photo} alt="odometer" style={{ width: "100%", borderRadius: 10, border: "1px solid var(--line)" }} /></div>}
+    </>
   );
 }
 
@@ -2427,8 +3317,8 @@ export function OwnerDigest() {
       {d && (
         <>
           {d.signals.length === 0 && <Note tone="ok" title="All quiet">No cash or fuel signals worth flagging in the last 30 days.</Note>}
-          {cash.length > 0 && <><div className="lbl" style={{ margin: "6px 2px 8px" }}>Protecting the cash</div>{top(cash).map((s, i) => <SignalCard key={i} s={s} />)}</>}
-          {fuel.length > 0 && <><div className="lbl" style={{ margin: "14px 2px 8px" }}>Protecting the liquid fuel</div>{top(fuel).map((s, i) => <SignalCard key={i} s={s} />)}</>}
+          {cash.length > 0 && <><div className="lbl" style={{ margin: "6px 2px 8px" }}>Cash</div>{top(cash).map((s, i) => <SignalCard key={i} s={s} />)}</>}
+          {fuel.length > 0 && <><div className="lbl" style={{ margin: "14px 2px 8px" }}>Fuel</div>{top(fuel).map((s, i) => <SignalCard key={i} s={s} />)}</>}
           <button className="disp" onClick={copyText} style={{ marginTop: 12, border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Copy digest to share</button>
           <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>As of {d.asOf}. Every figure traces to a sourced screen — open the module to drill in.</div>
         </>
@@ -2438,17 +3328,19 @@ export function OwnerDigest() {
 }
 
 export function RadarView() {
-  const [days, setDays] = useState(30);
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
-  useEffect(() => { setD(null); setErr(null); getSignals(days).then(setD).catch((e) => setErr(e.message)); }, [days, reloadKey]);
+  const [drill, setDrill] = useState(null);
+  useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getSignals(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, reloadKey]);
+  const cellFmt = (v, kind) => v == null ? "—" : kind === "$" ? "$" + full(v) : kind === "L" ? full(v) + " L" : kind === "%" ? v + "%" : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? fmtD(v) : String(v);
   return (
     <Wrap>
       <SectionHead title="Radar" sub="Every cash & fuel tripwire, worst first — your early-warning layer" />
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
-        <span style={{ fontSize: 12, color: "var(--steel)" }}>Window:</span>
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))}>{[7, 14, 30, 60, 90].map((n) => <option key={n} value={n}>{n} days</option>)}</select>
-        <button className="disp" onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: "auto", border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}><PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} /></div>
+        <button className="disp" onClick={() => setReloadKey((k) => k + 1)} style={{ flexShrink: 0, border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
       </div>
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
@@ -2460,17 +3352,39 @@ export function RadarView() {
             <CountPill n={d.signals.length} label="Signals" tone="ok" />
           </div>
           {d.signals.length === 0 && <Note tone="ok" title="Radar clear">Nothing tripped in this window.</Note>}
-          {d.signals.map((s, i) => (
-            <div key={i} style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${SIGNAL_TONE[s.tone]}`, borderRadius: 10, padding: "11px 13px", marginBottom: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <span className="disp" style={{ fontWeight: 700 }}>{s.title} <span style={{ fontSize: 10, color: "var(--steel)", textTransform: "uppercase" }}>· {s.domain}</span></span>
-                <span className="mono" style={{ fontWeight: 700, color: SIGNAL_TONE[s.tone], whiteSpace: "nowrap" }}>{s.metric}</span>
+          {d.signals.map((s, i) => {
+            const canDrill = s.drill && Array.isArray(s.drill.rows) && s.drill.rows.length > 0;
+            return (
+              <div key={i} onClick={canDrill ? () => setDrill(s) : undefined} style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${SIGNAL_TONE[s.tone]}`, borderRadius: 10, padding: "11px 13px", marginBottom: 8, cursor: canDrill ? "pointer" : "default" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <span className="disp" style={{ fontWeight: 700 }}>{s.title} <span style={{ fontSize: 10, color: "var(--steel)", textTransform: "uppercase" }}>· {s.domain}</span></span>
+                  <span className="mono" style={{ fontWeight: 700, color: SIGNAL_TONE[s.tone], whiteSpace: "nowrap" }}>{s.metric}{canDrill && <span style={{ color: "var(--steel)", fontWeight: 400 }}> ›</span>}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{s.detail}{canDrill && <span style={{ color: "var(--blue)" }}> · tap to see all {s.drill.rows.length}</span>}</div>
               </div>
-              <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{s.detail}</div>
-            </div>
-          ))}
+            );
+          })}
           <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Thresholds are network-relative — a site is flagged against the network's own rate, not a fixed cutoff, so half the sites are never "exceptions" by construction. As of {d.asOf}.</div>
         </>
+      )}
+      {drill && (
+        <DetailSheet title={drill.title} sub={`${drill.metric} · ${drill.detail}`} onClose={() => setDrill(null)}>
+          <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>{drill.drill.cols.map((c, j) => <Th key={j} right={j > 0}>{c[0]}</Th>)}</tr></thead>
+              <tbody>{drill.drill.rows.map((r, ri) => (
+                <tr key={ri} style={{ borderTop: "1px solid var(--line)" }}>
+                  {drill.drill.cols.map((c, j) => {
+                    const val = cellFmt(r[c[1]], c[2]);
+                    const isStatus = c[1] === "status";
+                    return <Td key={j} right={j > 0} style={isStatus ? { fontWeight: 700, color: r.status === "critical" ? "var(--red)" : r.status === "watch" ? "var(--amber)" : "var(--steel)" } : (j === 0 ? {} : { color: "var(--ink)" })}>{isStatus ? String(r.status || "").toUpperCase() : val}</Td>;
+                  })}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div></Panel>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>{drill.drill.rows.length} row{drill.drill.rows.length === 1 ? "" : "s"} · worst first.</div>
+        </DetailSheet>
       )}
     </Wrap>
   );
@@ -2481,6 +3395,8 @@ function ComplianceBoard({ rows }) {
   const days = rows[0]?.days || 14;
   const avg = rows.length ? Math.round(rows.reduce((a, r) => a + r.pct, 0) / rows.length) : 0;
   const bar = (n) => <span style={{ color: n >= days ? "var(--ok)" : n === 0 ? "var(--red)" : "var(--amber)" }}>{n}/{days}</span>;
+  const [drill, setDrill] = useState(null);
+  const cell = (ok, k) => <td key={k} style={{ textAlign: "center", padding: "4px 2px", color: ok ? "var(--ok)" : "var(--red)", fontWeight: 700 }}>{ok ? "✓" : "✕"}</td>;
   return (
     <>
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
@@ -2493,8 +3409,8 @@ function ComplianceBoard({ rows }) {
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Score</Th><Th right>Sales</Th><Th right>Stock</Th><Th right>Price</Th></tr></thead>
             <tbody>{rows.map((r) => (
-              <tr key={r.site} style={{ borderTop: "1px solid var(--line)", background: r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
-                <Td>{r.pct < 50 ? "⚠ " : ""}{r.site}</Td>
+              <tr key={r.site} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
+                <Td>{r.pct < 50 ? "⚠ " : ""}{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                 <Td right style={{ fontWeight: 700, color: r.pct >= 80 ? "var(--ok)" : r.pct === 0 ? "var(--red)" : "var(--amber)" }}>{r.pct}%</Td>
                 <Td right>{bar(r.salesDays)}</Td><Td right>{bar(r.stockDays)}</Td><Td right>{bar(r.priceDays)}</Td>
               </tr>
@@ -2502,7 +3418,29 @@ function ComplianceBoard({ rows }) {
           </table>
         </div>
       </Panel>
-      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Days each site reported in the last {days}. Chase the red/amber managers.</div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Days each site reported in the last {days}. Tap a site for its day-by-day record. Chase the red/amber managers.</div>
+      {drill && (
+        <DetailSheet title={drill.site} sub={`${drill.pct}% compliance · last ${drill.days} days${drill.lastReported ? ` · last reported ${fmtD(drill.lastReported)}` : " · never reported"}`} onClose={() => setDrill(null)}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <CountPill n={`${drill.salesDays}/${drill.days}`} label="Sales" tone={drill.salesDays >= drill.days ? "ok" : drill.salesDays === 0 ? "red" : "amber"} />
+            <CountPill n={`${drill.stockDays}/${drill.days}`} label="Stock" tone={drill.stockDays >= drill.days ? "ok" : drill.stockDays === 0 ? "red" : "amber"} />
+            <CountPill n={`${drill.priceDays}/${drill.days}`} label="Price" tone={drill.priceDays >= drill.days ? "ok" : drill.priceDays === 0 ? "red" : "amber"} />
+          </div>
+          {Array.isArray(drill.daily) ? (
+            <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+              <table className="mono" style={{ borderCollapse: "collapse", fontSize: 11, whiteSpace: "nowrap" }}>
+                <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Channel</Th>{drill.daily.map((d) => <th key={d.date} style={{ padding: "6px 3px", color: "#fff", fontWeight: 600 }}>{d.date.slice(8)}/{d.date.slice(5, 7)}</th>)}</tr></thead>
+                <tbody>
+                  {[["Sales", "sales"], ["Stock", "stock"], ["Price", "price"]].map(([label, key]) => (
+                    <tr key={key} style={{ borderTop: "1px solid var(--line)" }}><Td style={{ fontWeight: 600 }}>{label}</Td>{drill.daily.map((d) => cell(d[key], d.date))}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div></Panel>
+          ) : <Note tone="amber" title="No per-day detail">Refresh to load the day-by-day record.</Note>}
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 10 }}>✓ submitted · ✕ missing, that day. Newest day on the left.</div>
+        </DetailSheet>
+      )}
     </>
   );
 }
@@ -2530,18 +3468,31 @@ export function RetailDashboard() {
   // tap any site (on any board) → one sheet with its full picture for the day
   const openSite = (site) => setDrill({ title: site.name, sub: `${site.region ? site.region + " · " : ""}${fmtD(data.date)}`, render: retailSiteDetail(data, site) });
 
+  const ymd = (o) => { const dd = new Date(); dd.setDate(dd.getDate() - o); return dd.toISOString().slice(0, 10); };
+  const yday = ymd(1), tday = ymd(0);
+  const sel = date === tday ? "today" : date === yday ? "yesterday" : "pick";
   return (
     <Wrap>
-      <SectionHead title="Retail sites" sub={`Stock · Price · Sales${data?.date ? " — showing " + fmtD(data.date) : ""}`} />
-      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-        {(() => { const ymd = (o) => { const d = new Date(); d.setDate(d.getDate() - o); return d.toISOString().slice(0, 10); }; const yday = ymd(1), tday = ymd(0);
-          return [["Yesterday", yday], ["Today", tday]].map(([lab, val]) => (
-            <button key={lab} className={"pill" + ((date || data?.date) === val ? "" : "-ghost")} onClick={() => setDate(val)} style={{ padding: "9px 14px" }}>{lab}</button>
-          )); })()}
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 160 }} />
+      {/* Header — same look & feel as the Bird's-eye: title left, the day ribbon top-right. */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Retail sites</h2>
+          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Stock · Price · Sales · showing <b style={{ color: "var(--navy)" }}>{fmtD(data?.date || date)}</b></div>
+        </div>
+        <div style={{ minWidth: 240, flex: "0 1 340px" }}>
+          <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["pick", "Pick a date"]]} value={sel}
+            onChange={(v) => { if (v === "today") setDate(tday); else if (v === "yesterday") setDate(yday); else setDate((dd) => (dd === tday || dd === yday ? ymd(2) : dd)); }} />
+          {sel === "pick" && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -6, marginBottom: 8 }}>
+              <input type="date" value={date} max={tday} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 160 }} />
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
-      <Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} />
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!data && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
@@ -2724,23 +3675,6 @@ function SalesBoard({ d, onSite }) {
       {d.hasDayEnd
         ? <Note tone="ok" title="Final — from the day-end report">The authoritative whole-day figure is the day-end report. The shift numbers here are the sites' indicative submissions; the variance below is each submission netted against the final.</Note>
         : <Note tone="blue" title="Indicative so far">These are the sites' shift submissions. The final, authoritative day total comes from the day-end report (usually in next morning).</Note>}
-      {d.hasDayEnd && (d.reconciliation || []).some((r) => r.final && Math.abs(r.variance) > 200) && (
-        <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
-          <div className="lbl" style={{ padding: "12px 14px 8px" }}>Submitted vs final (day-end) — variance</div>
-          <div style={{ overflowX: "auto" }}>
-            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Submitted</Th><Th right>Final</Th><Th right>Variance</Th></tr></thead>
-              <tbody>{d.reconciliation.filter((r) => r.final).slice(0, 20).map((r) => (
-                <tr key={r.site} style={{ borderTop: "1px solid var(--line)" }}>
-                  <Td>{r.site}</Td><Td right style={{ color: "var(--steel)" }}>{L(r.submitted)}</Td><Td right>{L(r.authoritative)}</Td>
-                  <Td right style={{ fontWeight: 700, color: Math.abs(r.variance) > 1000 ? "var(--red)" : Math.abs(r.variance) > 300 ? "var(--amber)" : "var(--ok)" }}>{r.variance > 0 ? "+" : ""}{L(r.variance)}</Td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Submitted = site's day+night reports · Final = day-end report (authoritative). Big gaps = a site mis-reporting its shift figures.</div>
-        </Panel>
-      )}
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
@@ -2822,18 +3756,42 @@ export function DeliverySubmit({ me }) {
   const [comps, setComps] = useState([{ comp: "1", mm: "", litres: "", temp: "" }]); // truck compartments
   const [done, setDone] = useState(null);            // { dnNo }
   const [busy, setBusy] = useState(false);
+  const [collecting, setCollecting] = useState(false);
   const [msg, setMsg] = useState(null);
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+  const reloadTrips = () => getMyTrips().then((r) => setTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load scheduled trips — " + (e.message || "tap refresh.") })));
   useEffect(() => {
     getSites().then((r) => setSites(r.sites || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load sites — " + (e.message || "tap refresh.") })));
-    getMyTrips().then((r) => setTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load scheduled trips — " + (e.message || "tap refresh.") })));
+    reloadTrips();
   }, []);
-  // load the site's tanks when the site changes
+  const confirmCollect = async (tripNo) => {
+    setCollecting(true); setMsg(null);
+    try { await collectTrip(tripNo); await reloadTrips(); }
+    catch (e) { setMsg({ tone: "red", title: "Couldn't confirm", body: e.message }); }
+    finally { setCollecting(false); }
+  };
+  // A tank only takes the trip's product: a Diesel trip dips diesel tanks only;
+  // a Petrol trip covers both petrol grades (Blend + ULP); never cross-product.
+  const productMatch = (tankProduct, commodity) => {
+    const tp = String(tankProduct || "").toLowerCase(), c = String(commodity || "").toLowerCase();
+    if (!c) return true;
+    if (c.includes("diesel") || c.includes("d50")) return tp.includes("diesel") || tp.includes("d50");
+    if (c.includes("blend")) return tp.includes("blend");
+    if (c.includes("ulp") || c.includes("unleaded")) return tp.includes("ulp") || tp.includes("unleaded");
+    if (c.includes("petrol")) return tp.includes("blend") || tp.includes("ulp") || tp.includes("petrol") || tp.includes("unleaded");
+    return true;
+  };
+  const [allTanksCount, setAllTanksCount] = useState(0);   // total tanks at the site (before product filter)
+  // load the site's tanks when the site (or trip product) changes — only the tanks
+  // that match the trip's product are shown for dipping.
   useEffect(() => {
-    if (!f.site) { setTanks([]); return; }
-    getSiteConfig(f.site).then((c) => setTanks((c.tanks || []).map((t) => ({ ...emptyTank, tank: t.label, product: t.product }))))
-      .catch((e) => { setTanks([]); window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load this site's tanks — " + (e.message || "tap refresh.") })); });
-  }, [f.site]);
+    if (!f.site) { setTanks([]); setAllTanksCount(0); return; }
+    getSiteConfig(f.site).then((c) => {
+      const all = c.tanks || [];
+      setAllTanksCount(all.length);
+      setTanks(all.filter((t) => productMatch(t.product, f.commodity)).map((t) => ({ ...emptyTank, tank: t.label, product: t.product })));
+    }).catch((e) => { setTanks([]); setAllTanksCount(0); window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load this site's tanks — " + (e.message || "tap refresh.") })); });
+  }, [f.site, f.commodity]);
   const num = (x) => Number(x) || 0;
   const setTank = (i, k, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
   const setComp = (i, k, v) => setComps((cs) => cs.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
@@ -2911,6 +3869,15 @@ export function DeliverySubmit({ me }) {
               ))}
             </div>
           )}
+          {/* COLLECTION GATE — driver must confirm fuel collected from the depot before delivering */}
+          {trip && !trip.collected && (
+            <div style={{ border: "1px solid #C9D4F5", background: "#EEF2FF", borderRadius: 12, padding: 14, margin: "4px 0 10px" }}>
+              <div style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 4 }}>🚚 Collect the fuel first</div>
+              <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 10, lineHeight: 1.5 }}>Confirm you've loaded and collected <b>{L(trip.qty)} L {trip.product}</b> from <b>{trip.warehouse}</b> before you head out. The delivery form unlocks once you confirm — this starts the journey.</div>
+              <button type="button" className="pill" disabled={collecting} style={{ width: "100%" }} onClick={() => confirmCollect(trip.tripNo)}>{collecting ? "Confirming…" : "✅ Confirm fuel collected — start journey"}</button>
+            </div>
+          )}
+          {(!trip || trip.collected) && (<>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 170px" }}><Field label="Drop site">
               <Picker value={f.site} onChange={pickDrop} disabled={!f.tripNo} placeholder={f.tripNo ? "Select drop…" : "Pick a trip first"} title="Drop site"
@@ -2938,8 +3905,8 @@ export function DeliverySubmit({ me }) {
           <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--steel)", marginBottom: 12 }}>Truck dip total: <b>{L(truckDip)} L</b></div>
 
           {/* site tanks — opening / closing dips */}
-          <div className="lbl">Site tanks — opening &amp; closing dip {f.site ? `at ${f.site}` : ""}</div>
-          {tanks.length === 0 ? <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>Choose a site to load its tanks.</div> :
+          <div className="lbl">Site tanks — opening &amp; closing dip {f.site ? `at ${f.site}` : ""} {f.site && f.commodity ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>· {f.commodity} tanks only</span> : ""}</div>
+          {tanks.length === 0 ? <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{!f.site ? "Choose a site to load its tanks." : allTanksCount > 0 ? `No ${f.commodity} tanks configured at ${f.site}. Check the trip product, or add the tank in Master data.` : "This site has no tanks configured yet."}</div> :
             tanks.map((t, i) => (
               <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
@@ -2965,6 +3932,7 @@ export function DeliverySubmit({ me }) {
           <Field label="Notes (optional)"><input value={f.note} onChange={(e) => set("note")(e.target.value)} /></Field>
           <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Submitting…" : "Submit for approval"}</button>
           <div style={{ fontSize: 11, color: "var(--steel)", textAlign: "center", marginTop: 8 }}>The DN number is generated automatically. Both driver and site must approve before it posts.</div>
+          </>)}
         </form>
       </Panel>
     </Wrap>
@@ -3002,7 +3970,7 @@ export function DeliveryApprovals({ me }) {
                   <span className="mono" style={{ fontWeight: 700, color: "var(--navy)" }}>{d.dnNo}</span>
                   <span className="mono" style={{ fontSize: 13 }}>{L(d.siteDip)} L {d.commodity}</span>
                 </div>
-                <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{d.site} · {d.truck || "—"}{d.tripNo ? " · " + d.tripNo : ""} · {d.date}</div>
+                <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{d.site} · {d.truck || "—"}{d.tripNo ? " · " + d.tripNo : ""} · {fmtD(d.date)}</div>
                 <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{d.approvals?.driver ? "✓ driver" : "◦ driver"} · {d.approvals?.site ? "✓ site" : "◦ site"} — tap to review</div>
               </button>
               {open === d.dnNo && (
@@ -3113,6 +4081,303 @@ export function ReconSubmit({ me }) {
   );
 }
 
+// Deliveries in progress — for managers/executives: every active trip with
+// per-drop offload progress. A trip stays here until fully delivered (then it
+// auto-closes) or it's cancelled.
+const DROP_TONE = { delivered: "#3C9A52", partial: "var(--amber)", pending: "var(--steel)" };
+const STAGE = { in_transit: ["In transit", "#2B3990"], scheduled: ["Scheduled", "#C07A00"], delivered: ["Delivered", "#3C9A52"] };
+// TripTrack — the GPS audit trail for one trip: last known position, per-drop
+// distance + ETA, stops (where + how long), and tracking gaps (GPS off = a flag).
+export function TripTrack({ tripNo }) {
+  const [t, setT] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
+  useEffect(() => { let live = true; setT(null); setErr(null); getTripTrack(tripNo).then((r) => { if (live) setT(r); }).catch((e) => { if (live) setErr(e.message); }); return () => { live = false; }; }, [tripNo, key]);
+  if (err) return <div style={{ fontSize: 12, color: "var(--red)", padding: "8px 2px" }}>Couldn't load the track. <button type="button" className="pill-ghost" style={{ padding: "4px 10px", marginLeft: 6 }} onClick={() => setKey((k) => k + 1)}>Retry</button></div>;
+  if (!t) return <div style={{ fontSize: 12, color: "var(--steel)", padding: "8px 2px" }}>Loading track…</div>;
+  if (!t.hasTrack) return <div style={{ fontSize: 12, color: "var(--steel)", padding: "8px 2px" }}>No GPS recorded yet — it starts once the driver confirms collection and moves.</div>;
+  const S = ({ label, value, tone }) => (
+    <div style={{ flex: "1 1 30%", textAlign: "center", padding: "8px 6px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10 }}>
+      <div className="mono" style={{ fontWeight: 700, fontSize: 15, color: tone || "var(--navy)" }}>{value}</div>
+      <div className="lbl" style={{ marginTop: 2 }}>{label}</div>
+    </div>
+  );
+  return (
+    <div style={{ padding: "4px 2px 2px" }}>
+      {/* last known position */}
+      <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 8 }}>
+        Last seen <b style={{ color: "var(--navy)" }}>{t.last ? new Date(t.last.at).toLocaleString() : "—"}</b>
+        {t.last?.speedKmh != null ? ` · ${t.last.speedKmh} km/h` : ""}
+        {t.last ? ` · ${t.last.lat.toFixed(4)}, ${t.last.lon.toFixed(4)}` : ""}
+      </div>
+      {/* per-drop distance + ETA */}
+      {(t.destinations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 10 }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Drops — distance &amp; ETA from last position</div>
+        {t.destinations.map((d, i, a) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "7px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
+            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{d.site} <span style={{ fontWeight: 400, color: "var(--steel)", fontSize: 11 }}>{full(d.delivered)}/{full(d.qty)} L</span></span>
+            <span className="mono" style={{ fontSize: 12, whiteSpace: "nowrap", color: d.distanceKm == null ? "#3C9A52" : "var(--navy)" }}>{d.distanceKm == null ? "delivered ✓" : `${d.distanceKm} km · ~${d.etaMin} min`}</span>
+          </div>))}
+      </div>}
+      {/* summary */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <S label="Distance" value={t.distanceKm + " km"} />
+        <S label="Duration" value={t.durationLabel} />
+        <S label="Moving" value={fmtDurMin(t.movingMin)} />
+        <S label="Stops" value={t.stopCount} />
+        <S label="Stopped" value={t.stoppedLabel} />
+        <S label="GPS gaps" value={t.gapCount} tone={t.gapCount > 0 ? "var(--red)" : undefined} />
+      </div>
+      {/* stops list */}
+      {(t.stops || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8 }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Stops</div>
+        {t.stops.map((s, i, a) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none", fontSize: 12 }}>
+            <span className="mono" style={{ color: "var(--steel)" }}>{s.lat.toFixed(4)}, {s.lon.toFixed(4)}</span>
+            <span style={{ whiteSpace: "nowrap" }}><b>{fmtDurMin(s.minutes)}</b> <span style={{ color: "var(--steel)" }}>from {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></span>
+          </div>))}
+      </div>}
+      {/* tracking gaps — GPS off / app killed: a red flag */}
+      {(t.gaps || []).length > 0 && <div className="card" style={{ padding: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>Tracking gaps — GPS off / app closed</div>
+        {t.gaps.map((g, i, a) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none", fontSize: 12 }}>
+            <span style={{ color: "var(--steel)" }}>{new Date(g.from).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} → {new Date(g.to).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            <b style={{ color: "var(--red)", whiteSpace: "nowrap" }}>{fmtDurMin(g.minutes)}</b>
+          </div>))}
+      </div>}
+    </div>
+  );
+}
+const fmtDurMin = (m) => { m = Math.round(m || 0); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
+
+export function DeliveriesInProgress() {
+  const [d, setD] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
+  const [trackFor, setTrackFor] = useState(null);   // tripNo whose GPS track is expanded
+  useEffect(() => { setD(null); setErr(null); getDeliveriesInProgress().then(setD).catch((e) => setErr(e.message)); }, [key]);
+  if (err) return <Panel><div style={{ color: "var(--red)", fontSize: 13 }}>Couldn't load deliveries in progress. <button type="button" className="pill-ghost" style={{ padding: "5px 12px", marginLeft: 8 }} onClick={() => setKey((k) => k + 1)}>Retry</button></div></Panel>;
+  if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading deliveries…</div></Panel>;
+
+  const started = d.trips.filter((t) => t.stage === "in_transit" || t.stage === "delivered");
+  const scheduled = d.trips.filter((t) => t.stage === "scheduled");
+  const dropChips = (t) => (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {t.drops.map((dr, i) => (
+        <span key={i} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 8, background: dr.status === "delivered" ? "#EDF7EE" : "#fff", border: `1px solid ${dr.status === "delivered" ? "#BFE3C2" : "var(--line)"}`, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 4, background: DROP_TONE[dr.status] }} />
+          <b style={{ color: "var(--navy)" }}>{dr.site}</b> <span style={{ color: "var(--steel)" }}>{full(dr.delivered)}/{full(dr.qty)} L</span>
+        </span>
+      ))}
+    </div>
+  );
+
+  return (
+    <Panel style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+        <span className="lbl">Deliveries</span>
+        <span style={{ fontSize: 11.5, color: "var(--steel)" }}><b style={{ color: "#2B3990" }}>{full(d.litresInTransit)} L</b> in transit · <b style={{ color: "#C07A00" }}>{full(d.litresScheduled)} L</b> awaiting collection</span>
+      </div>
+
+      {d.trips.length === 0 && <div style={{ color: "var(--steel)", fontSize: 13, marginTop: 10 }}>Nothing scheduled or on the road right now. 🚚</div>}
+
+      {/* IN TRANSIT — journey started (fuel collected) */}
+      {started.length > 0 && <>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#2B3990", margin: "12px 0 8px" }}>🚚 In transit · {started.length} on the road</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {started.map((t) => (
+            <div key={t.tripNo} style={{ border: "1px solid #C9D4F5", borderRadius: 12, padding: "11px 13px", background: "#FAFBFF" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>To: {t.drops.map((x) => x.site).join(", ")}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#2B3990", background: "#E7ECFF", padding: "2px 9px", borderRadius: 20 }}>{t.progress}% delivered</span>
+              </div>
+              {dropChips(t)}
+              <div style={{ height: 6, borderRadius: 5, background: "var(--line)", overflow: "hidden", margin: "8px 0 6px" }}>
+                <div style={{ width: `${t.progress}%`, height: "100%", background: "#2B3990" }} />
+              </div>
+              <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.remaining)} L still on truck · started {fmtD(t.tripDate)}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
+              <button type="button" className="pill-ghost" style={{ padding: "5px 12px", fontSize: 12, marginTop: 9 }} onClick={() => setTrackFor((v) => (v === t.tripNo ? null : t.tripNo))}>{trackFor === t.tripNo ? "Hide track ▲" : "📍 Track truck ▾"}</button>
+              {trackFor === t.tripNo && <div style={{ marginTop: 8, borderTop: "1px solid var(--line)", paddingTop: 8 }}><TripTrack tripNo={t.tripNo} /></div>}
+            </div>
+          ))}
+        </div>
+      </>}
+
+      {/* SCHEDULED — not collected yet (still at the depot) */}
+      {scheduled.length > 0 && <>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#C07A00", margin: "14px 0 8px" }}>📋 Scheduled · {scheduled.length} awaiting collection</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {scheduled.map((t) => (
+            <div key={t.tripNo} style={{ border: "1px solid #F3D48A", borderRadius: 12, padding: "11px 13px", background: "#FFFBF0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>To: {t.drops.map((x) => x.site).join(", ")}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#C07A00", background: "#F6E3B0", padding: "2px 9px", borderRadius: 20 }}>Not collected</span>
+              </div>
+              {dropChips(t)}
+              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 7 }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.qty)} L — driver hasn't collected from the depot yet</div>
+            </div>
+          ))}
+        </div>
+      </>}
+    </Panel>
+  );
+}
+
+// "Deliveries due" — the persistent task for a DRIVER or SITE supervisor. Each
+// drop stays here until its delivery note is filed AND both parties sign off.
+// onGo(tab) navigates to the delivery (driver) / sign-off (site) screen.
+const DUE_STATUS = {
+  collect: { label: "Confirm collected", tone: "#2B3990", tab: null },
+  awaiting_note: { label: "File delivery note", tone: "#C07A00", tab: "deliver" },
+  sign_off_yours: { label: "Sign off delivery note", tone: "#B23B3B", tab: "dapprove" },
+  sign_off_other: { label: "Awaiting other sign-off", tone: "var(--steel)", tab: "dapprove" },
+  rejected: { label: "Rejected — redo", tone: "#B23B3B", tab: "deliver" },
+};
+export function DeliveriesDue({ onGo }) {
+  const [d, setD] = useState(null); const [key, setKey] = useState(0); const [busy, setBusy] = useState(null);
+  useEffect(() => { let live = true; getDeliveriesDue().then((r) => { if (live) setD(r); }).catch(() => { if (live) setD({ pending: [], count: 0 }); }); return () => { live = false; }; }, [key]);
+  const onItem = async (p, s) => {
+    if (p.status === "collect") {   // driver confirms fuel collected from the depot → starts the journey + GPS
+      setBusy(p.tripNo);
+      try { await collectTrip(p.tripNo); try { await startTracking(p.tripNo); } catch { /* ignore */ } setKey((k) => k + 1); } catch { /* ignore */ } finally { setBusy(null); }
+      return;
+    }
+    if (onGo && s.tab) onGo(s.tab);
+  };
+  if (!d || !d.count) return null;   // nothing due → show nothing
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 16, border: "1px solid #F3D48A", background: "#FFFBF0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 16 }}>🚚</span>
+        <span style={{ fontWeight: 700, color: "var(--navy)" }}>Deliveries due</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#B4801F", background: "#F6E3B0", padding: "1px 8px", borderRadius: 20 }}>{d.count}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {d.pending.map((p, i) => {
+          // COLLECT — one big, plain-language card per trip: pick the whole load up
+          // from the warehouse once, then set off. Drops are listed for context.
+          if (p.status === "collect") {
+            const isBusy = busy === p.tripNo;
+            return (
+              <div key={i} style={{ padding: "13px 14px", borderRadius: 12, background: "#EEF2FF", border: "1px solid #C9D4F5" }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)" }}>Collect from {p.warehouse || p.site}</div>
+                <div className="mono" style={{ fontSize: 12.5, color: "var(--steel)", marginTop: 2 }}>{full(p.qty)} L {p.product} · {p.truck} · {p.tripNo}</div>
+                {(p.drops || []).length > 0 && (
+                  <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 6 }}>
+                    <span style={{ color: "var(--steel)" }}>Then deliver: </span>{p.drops.map((x) => `${x.site} ${full(x.qty)}L`).join(" · ")}
+                  </div>
+                )}
+                <button type="button" disabled={isBusy} onClick={() => onItem(p, {})} className="disp pill"
+                  style={{ width: "100%", marginTop: 11 }}>{isBusy ? "Saving…" : "✓ Confirm collected from warehouse"}</button>
+                <div style={{ fontSize: 10.5, color: "var(--steel)", textAlign: "center", marginTop: 6 }}>Tap once you've loaded and are ready to leave — this starts the trip.</div>
+              </div>
+            );
+          }
+          const s = DUE_STATUS[p.status] || DUE_STATUS.awaiting_note;
+          const clickable = onGo && s.tab;
+          return (
+            <div key={i} onClick={() => onItem(p, s)} role={clickable ? "button" : undefined}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 10, background: "#fff", border: "1px solid var(--line)", cursor: clickable ? "pointer" : "default" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{p.site} · {full(p.qty)} L {p.product}</div>
+                <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.tripNo} · {p.truck}</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: s.tone, whiteSpace: "nowrap" }}>{s.label + " ›"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Driver delivery performance — the driver's own summary + specific deliveries.
+// `driver` (optional) lets a manager view any driver's card. Uses the same
+// period ribbon (Today · Yesterday · Month · Year · Range) as the birds-eye view.
+export function DriverPerformance({ driver }) {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
+  const [d, setD] = useState(null); const [err, setErr] = useState(null);
+  useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getDriverPerformance(w.from, w.to, driver).then(setD).catch((e) => setErr(e.message)); }, [period, range, driver]);
+  const Stat3 = ({ label, value, sub, tone }) => (
+    <div className="card" style={{ padding: 12, textAlign: "center" }}>
+      <div className="mono" style={{ fontSize: "clamp(17px,4.6vw,22px)", fontWeight: 700, color: tone || "var(--navy)", whiteSpace: "nowrap" }}>{value}</div>
+      <div className="lbl" style={{ margin: "3px 0 0" }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: "var(--steel)", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+  const hasDel = d && (d.trips > 0 || (d.deliveries || []).length > 0);
+  const hasDrive = d && (d.km > 0 || d.kmpl != null);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <SectionHead icon="gauge" title="Performance" tint="#EAF0FA" accent="#2B3990" />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      {err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {!d && !err && <div className="card" style={{ padding: 16, color: "var(--steel)" }}>Loading…</div>}
+      {d && (!hasDel && !hasDrive
+        ? <div className="card" style={{ padding: 16, color: "var(--steel)", fontSize: 13 }}>No activity in this period.</div>
+        : <>
+          {/* delivery headline figures — only for drivers who actually deliver */}
+          {hasDel && <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 10 }}>
+            <Stat3 label="Trips" value={full(d.trips)} />
+            <Stat3 label="Delivered" value={full(d.delivered) + " L"} />
+            <Stat3 label="Loss" value={d.lossPct != null ? d.lossPct + "%" : "—"} sub={full(d.loss) + " L"} tone={d.lossPct > 1 ? "var(--red)" : d.lossPct > 0.5 ? "var(--amber)" : "#2E7D33"} />
+          </div>}
+          {/* driving figures — from fuel-card odometer legs; shown to every driver who drew fuel */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <Stat3 label="Distance driven" value={d.km ? full(d.km) + " km" : "—"} />
+            <Stat3 label="Efficiency" value={d.kmpl != null ? d.kmpl + " km/L" : "—"} tone="var(--blue)" />
+          </div>
+          {(d.deliveries || []).length > 0 && <div className="card" style={{ padding: 8 }}>
+            <div className="lbl" style={{ padding: "4px 6px 8px" }}>Deliveries · {(d.deliveries || []).length}</div>
+            {d.deliveries.slice(0, 30).map((x, i, a) => (
+              <div key={i} style={{ padding: "9px 8px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                  <span style={{ fontWeight: 600, fontSize: 13.5, color: "var(--navy)", minWidth: 0 }}>{x.to || x.from || "—"}</span>
+                  <span className="mono" style={{ fontSize: 12, whiteSpace: "nowrap", fontWeight: 700, color: x.lossPct > 1 ? "var(--red)" : x.lossPct > 0.5 ? "var(--amber)" : "#2E7D33" }}>{full(x.loss)} L · {x.lossPct}%</span>
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>{fmtD(x.date)} · {x.product}{x.truck ? " · " + x.truck : ""} · {full(x.loaded)}→{full(x.delivered)} L</div>
+              </div>))}
+          </div>}
+        </>)}
+    </div>
+  );
+}
+
+// Driver league table — managers rank drivers by delivery volume / loss / efficiency.
+export function DriverLeague() {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
+  const [d, setD] = useState(null); const [err, setErr] = useState(null);
+  const [sort, setSort] = useState("delivered");
+  useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getDriverLeague(w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range]);
+  const rows = (d?.drivers || []).filter((x) => x.trips >= 3)
+    .slice().sort((a, b) => (sort === "lossPct" ? (b.lossPct || 0) - (a.lossPct || 0) : sort === "trips" ? b.trips - a.trips : sort === "kmpl" ? (b.kmpl || 0) - (a.kmpl || 0) : b.delivered - a.delivered));
+  return (
+    <Wrap>
+      <SectionHead title="Driver league" sub="Delivery performance, ranked" />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      {d && <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "-4px 2px 10px" }}>{rows.length} drivers · {full(d.totals.delivered)} L delivered · {d.totals.lossPct}% loss overall. Rank by: {[["delivered", "Delivered"], ["trips", "Trips"], ["lossPct", "Loss %"], ["kmpl", "km/L"]].map(([k, t]) => <button key={k} type="button" onClick={() => setSort(k)} style={{ marginLeft: 6, border: "none", background: "none", cursor: "pointer", fontWeight: sort === k ? 700 : 400, color: sort === k ? "var(--blue)" : "var(--steel)", textDecoration: sort === k ? "underline" : "none" }}>{t}</button>)}</div>}
+      {err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && <Panel style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>#</Th><Th>Driver</Th><Th right>Trips</Th><Th right>Delivered</Th><Th right>Loss</Th><Th right>Loss %</Th><Th right>km/L</Th></tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={r.driver} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td style={{ color: "var(--steel)" }}>{i + 1}</Td>
+                <Td style={{ fontWeight: 600 }}>{r.driver}</Td>
+                <Td right>{r.trips}</Td>
+                <Td right>{full(r.delivered)}</Td>
+                <Td right>{full(r.loss)}</Td>
+                <Td right style={{ fontWeight: 700, color: r.lossPct > 1 ? "var(--red)" : r.lossPct > 0.5 ? "var(--amber)" : "#2E7D33" }}>{r.lossPct != null ? r.lossPct + "%" : "—"}</Td>
+                <Td right style={{ color: "var(--blue)" }}>{r.kmpl != null ? r.kmpl : "—"}</Td>
+              </tr>))}</tbody>
+          </table>
+        </div>
+      </Panel>}
+    </Wrap>
+  );
+}
+
 // Firm-wide inventory: warehouses → trucks → sites.
 export function InventoryView() {
   const [d, setD] = useState(null);
@@ -3162,13 +4427,13 @@ export function InventoryView() {
       {d && (
         <>
           <div style={{ marginBottom: 14 }}>
-            <Hero label="TOTAL FUEL ON HAND" value={compact(d.grandTotal)} unit="L"
-              sub={d.grandValue ? `≈ $${compact(d.grandValue)} working capital · at landed cost` : "depots + transit + sites"} />
+            <Hero label="TOTAL FUEL ON HAND" value={full(d.grandTotal)} unit="L"
+              sub={d.grandValue ? `≈ $${full(d.grandValue)} working capital · at FIFO cost` : "depots + transit + sites"} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
-            <Stat label="At depots" value={compact(d.warehouseTotal)} unit="L" sub={d.warehouseValue ? `$${compact(d.warehouseValue)} · ${d.warehouses.length} depots` : `${d.warehouses.length} warehouses`} />
-            <Stat label="In transit" value={compact(d.transitNow)} unit="L" tone="amber" sub={d.transitValue ? `$${compact(d.transitValue)} · on trucks` : "on trucks"} />
-            <Stat label="At sites" value={compact(d.sitesTotal)} unit="L" sub={d.sitesValue ? `$${compact(d.sitesValue)} · ${d.siteCount} sites` : `${d.siteCount} sites`} />
+            <Stat label="At depots" value={full(d.warehouseTotal)} unit="L" sub={d.warehouseValue ? `$${full(d.warehouseValue)} · ${d.warehouses.length} depots` : `${d.warehouses.length} warehouses`} />
+            <Stat label="In transit" value={full(d.transitNow)} unit="L" tone="amber" sub={d.transitValue ? `$${full(d.transitValue)} · on trucks` : "on trucks"} />
+            <Stat label="At sites" value={full(d.sitesTotal)} unit="L" sub={d.sitesValue ? `$${full(d.sitesValue)} · ${d.siteCount} sites` : `${d.siteCount} sites`} />
           </div>
           <Segmented value={tab} onChange={setTab} options={SECTIONS} />
           <BackBar prev={prev} options={SECTIONS} onBack={back} />
@@ -3176,21 +4441,21 @@ export function InventoryView() {
             <Panel style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
                 <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Warehouse</Th><Th right>Diesel</Th><Th right>Blend</Th><Th right>ULP</Th><Th right>In transit</Th><Th right>Total</Th></tr></thead>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Warehouse</Th><Th right>Blend</Th><Th right>Diesel</Th><Th right>ULP</Th><Th right>In transit</Th><Th right>Total</Th></tr></thead>
                   <tbody>{d.warehouses.map((w) => (
                     <Fragment key={w.name}>
                       <tr style={{ borderTop: "1px solid var(--line)" }}>
                         <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{w.name}</Td>
-                        <Td right>{L(w.products.Diesel)}</Td>
                         <Td right style={{ color: w.products.Blend < 0 ? "var(--red)" : undefined }}>{L(w.products.Blend)}</Td>
+                        <Td right>{L(w.products.Diesel)}</Td>
                         <Td right style={{ color: w.products.ULP < 0 ? "var(--red)" : undefined }}>{L(w.products.ULP)}</Td>
                         <Td right style={{ color: "var(--steel)" }}>{w.transit > 0 ? L(w.transit) : "—"}</Td>
                         <Td right style={{ fontWeight: 700, color: w.stock < 0 ? "var(--red)" : "var(--navy)" }}>{L(w.stock)}</Td>
                       </tr>
-                      {w.productAsOf && ["Diesel", "Blend", "ULP"].some((p) => w.productAsOf[p]) && (
+                      {w.productAsOf && ["Blend", "Diesel", "ULP"].some((p) => w.productAsOf[p]) && (
                         <tr><td colSpan={6} style={{ fontSize: 10.5, padding: "0 11px 7px 14px" }}>
                           <span style={{ color: "var(--steel)" }}>counted: </span>
-                          {["Diesel", "Blend", "ULP"].filter((p) => w.productAsOf[p]).map((p, i) => {
+                          {["Blend", "Diesel", "ULP"].filter((p) => w.productAsOf[p]).map((p, i) => {
                             const stale = (new Date() - new Date(w.productAsOf[p])) > 45 * 864e5;
                             return <span key={p} style={{ color: stale ? "var(--red)" : "var(--steel)", fontWeight: stale ? 700 : 400 }}>{i > 0 ? "  ·  " : ""}{p} {fmtD(w.productAsOf[p])}{stale ? " ⚠ stale" : ""}</span>;
                           })}
@@ -3248,21 +4513,101 @@ export function InventoryView() {
    truck + driver, and the sites to drop at with a quantity each. Scheduling the
    trip moves the fuel to goods-in-transit and puts a pending trip on the
    driver's profile. The system generates the trip number. */
+// Route planner for the schedule screen: resolves each stop to coordinates, draws
+// the journey on a Google map, and estimates distance / fuel / efficiency / ETA per
+// stop so logistics can sanity-check the drop order before committing the trip.
+// Figures are ESTIMATES — town-centre coordinates + a loaded-tanker road rate.
+const TANKER_KMPL = 2.5;      // loaded-tanker road estimate (fleet road median ~2.52)
+const AVG_SPEED_KMH = 55;     // open-road average for ETA
+function RouteSummary({ warehouse, drops, endPoint, product }) {
+  const [coords, setCoords] = useState(null);
+  const [route, setRoute] = useState(null);
+  useEffect(() => { getStationCoords().then((r) => { const m = {}; for (const s of (r.stations || [])) m[s.name.toLowerCase()] = s; setCoords(m); }).catch(() => setCoords({})); }, []);
+  const dropSites = drops.filter((d) => d.site).map((d) => d.site);
+  const stopNames = [warehouse, ...dropSites, endPoint].filter(Boolean);
+  const resolve = (n) => coords ? coords[String(n).toLowerCase()] : null;
+  const pts = coords ? stopNames.map(resolve).filter(Boolean) : [];
+  const missing = coords ? stopNames.filter((n) => !resolve(n)) : [];
+  const ready = coords && pts.length >= 2 && pts.length === stopNames.length;
+  const key = stopNames.join("|");
+  useEffect(() => {
+    if (!ready) { setRoute(null); return; }
+    let live = true; setRoute({ loading: true });
+    routeGoogle(pts.map((p) => ({ name: p.name, lat: p.lat, lon: p.lon })))
+      .then((r) => { if (live) setRoute(r && r.ok ? { km: r.km, legs: r.legs } : { error: true }); })
+      .catch(() => { if (live) setRoute({ error: true }); });
+    return () => { live = false; };
+  }, [key, ready]);   // eslint-disable-line
+
+  if (!coords) return <Panel style={{ marginBottom: 14 }}><div style={{ color: "var(--steel)", fontSize: 13 }}>Loading map…</div></Panel>;
+  if (stopNames.length < 2) return null;
+
+  const ll = (p) => `${p.lat},${p.lon}`;
+  const mid = pts.slice(1, -1).map((p) => "+to:" + ll(p)).join("");
+  const embed = ready ? `https://maps.google.com/maps?saddr=${ll(pts[0])}&daddr=${mid ? mid.slice(4) + "+to:" : ""}${ll(pts[pts.length - 1])}&output=embed` : null;
+
+  const legs = route && route.legs ? route.legs : null;        // per-leg km (road)
+  const hm = (mins) => { const h = Math.floor(mins / 60), m = Math.round(mins % 60); return h ? `${h}h ${m}m` : `${m}m`; };
+  let cumKm = 0, cumMin = 0, cumFuel = 0;
+  const rows = stopNames.map((name, i) => {
+    const legKm = i === 0 ? 0 : (legs ? legs[i - 1] : null);
+    if (i > 0 && legKm != null) { cumKm += legKm; cumMin += (legKm / AVG_SPEED_KMH) * 60; cumFuel += legKm / TANKER_KMPL; }
+    return { name, kind: i === 0 ? "Depot" : i === stopNames.length - 1 ? "Return" : "Drop",
+      legKm, cumKm: legKm != null ? cumKm : null, eta: i === 0 ? "departs" : (legKm != null ? "+" + hm(cumMin) : null),
+      fuel: legKm != null ? Math.round(cumFuel) : null };
+  });
+  const totalKm = legs ? legs.reduce((a, b) => a + b, 0) : null;
+  const totalFuel = totalKm != null ? Math.round(totalKm / TANKER_KMPL) : null;
+
+  return (
+    <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "11px 13px 8px", display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+        <span className="lbl" style={{ color: "var(--navy)" }}>Route plan &amp; ETA</span>
+        <span style={{ fontSize: 11, color: "var(--steel)" }}>{stopNames.length} stops · estimates</span>
+      </div>
+      {missing.length > 0 && <div style={{ margin: "0 13px 8px", fontSize: 12, color: "var(--amber)" }}>No coordinates yet for: <b>{missing.join(", ")}</b> — map &amp; distance skip these until surveyed.</div>}
+      {embed && <iframe title="Trip route" src={embed} width="100%" height="230" style={{ border: 0, display: "block", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />}
+      <div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>#</Th><Th>Stop</Th><Th right>Leg km</Th><Th right>Total km</Th><Th right>ETA</Th><Th right>Fuel L</Th></tr></thead>
+          <tbody>{rows.map((r, i) => (
+            <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+              <td style={{ padding: "7px 10px" }}><span className="mono" style={{ background: r.kind === "Depot" ? "var(--navy)" : r.kind === "Return" ? "var(--steel)" : "var(--amber)", color: "#fff", borderRadius: 6, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>{i + 1}</span></td>
+              <Td>{r.name} <span style={{ color: "var(--steel)", fontSize: 11 }}>· {r.kind}</span></Td>
+              <Td right>{r.legKm == null ? (route && route.loading ? "…" : "—") : full(r.legKm)}</Td>
+              <Td right>{r.cumKm == null ? "—" : full(r.cumKm)}</Td>
+              <Td right style={{ color: "var(--steel)" }}>{r.eta || "—"}</Td>
+              <Td right>{r.fuel == null ? "—" : full(r.fuel)}</Td>
+            </tr>))}</tbody>
+          {totalKm != null && (
+            <tfoot><tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA", fontWeight: 700 }}>
+              <td></td><Td>TOTAL · {product} · {full(TANKER_KMPL)} km/L est.</Td><Td right>{full(totalKm)}</Td><Td right>{full(totalKm)}</Td><Td right>{hm((totalKm / AVG_SPEED_KMH) * 60)}</Td><Td right>{full(totalFuel)}</Td>
+            </tr></tfoot>
+          )}
+        </table>
+      </div>
+      {route && route.error && <div style={{ padding: "8px 13px", fontSize: 12, color: "var(--steel)" }}>Road distance unavailable right now — the map still shows the journey.</div>}
+      <div style={{ padding: "8px 13px", fontSize: 11, color: "var(--steel)" }}>Estimates: town-centre coordinates, loaded-tanker road rate ({full(TANKER_KMPL)} km/L), {full(AVG_SPEED_KMH)} km/h average. ETA is drive time from departure. Reorder the drops above if the sequence doesn&rsquo;t make sense.</div>
+    </Panel>
+  );
+}
+
 export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
   const [sites, setSites] = useState([]);
   const [trips, setTrips] = useState([]);
   const [bal, setBal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "" });
+  const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "", endPoint: "" });
   const [drops, setDrops] = useState([{ site: "", qty: "" }]);
   const [editing, setEditing] = useState(null);   // tripNo being edited, or null
   const [cancelling, setCancelling] = useState(null); // tripNo being cancelled
+  const [tab, setTab] = useState("new");           // "new" = schedule form · "review" = trip list
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
-  const resetForm = () => { setEditing(null); setF({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "" }); setDrops([{ site: "", qty: "" }]); };
+  const resetForm = () => { setEditing(null); setF({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "", endPoint: "" }); setDrops([{ site: "", qty: "" }]); };
   const startEdit = (t) => {
-    setMsg(null); setEditing(t.tripNo);
-    setF({ warehouse: t.warehouse, product: t.product, tripDate: t.date || todayISO(), driverCard: t.driverCard || "", truckName: t.truck || "", truckReg: t.truckReg || "", trailer: t.trailer || "" });
+    setMsg(null); setEditing(t.tripNo); setTab("new");
+    setF({ warehouse: t.warehouse, product: t.product, tripDate: t.date || todayISO(), driverCard: t.driverCard || "", truckName: t.truck || "", truckReg: t.truckReg || "", trailer: t.trailer || "", endPoint: t.endPoint || "" });
     setDrops((t.drops && t.drops.length ? t.drops : [{ site: "", qty: "" }]).map((d) => ({ site: d.site, qty: String(d.qty) })));
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -3308,16 +4653,21 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
     finally { setBusy(false); }
   };
   const STAT = { scheduled: ["#C07A00", "#FEF4E6"], in_progress: ["#2B3990", "#EAEEFB"], delivered: ["#4C9E2A", "#EBF6E7"] };
+  const activeCount = trips.filter((t) => t.status === "scheduled" || t.status === "in_progress").length;
   return (
     <Wrap>
-      <SectionHead title="Schedule delivery" sub="Set up a trip — the driver sees it as a pending job" />
+      <SectionHead title="Deliveries" sub="Schedule trips and track the schedule" />
+      <div style={{ marginBottom: 14 }}>
+        <Segmented options={[["new", "Schedule new trip"], ["review", `Review trips${activeCount ? ` · ${activeCount}` : ""}`]]} value={tab} onChange={setTab} />
+      </div>
+      {tab === "new" && (
       <Panel style={{ marginBottom: 14 }}>
         <form onSubmit={send}>
           {editing && <Note tone="blue" title={`Editing ${editing}`}>Change anything below and save. <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={resetForm}>Cancel edit</button></Note>}
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Diesel", "Blend", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "ULP"]} /></Field></div>
           </div>
           {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b>{overStock ? " — drops exceed this" : ""}</div>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -3339,13 +4689,23 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           ))}
           <button type="button" className="pill-ghost" style={{ width: "100%", marginBottom: 12 }} onClick={() => setDrops((ds) => [...ds, { site: "", qty: "" }])}>+ Add drop</button>
           <div className="mono" style={{ fontSize: 13, textAlign: "right", marginBottom: 10, color: "var(--navy)" }}>Load total: <b>{L(dropTotal)} L</b></div>
+          {/* full trip mapping: where the truck ends up (returns to park) */}
+          <Field label="Ends at — where the truck returns to">
+            <Picker value={f.endPoint} onChange={set("endPoint")} placeholder="e.g. DA Yard…" title="Trip end point"
+              options={["DA Yard", "Msasa", "Feruka", ...sites.map((s) => s.name)]} />
+          </Field>
+          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>Map the full trip — the driver just collects and delivers; drops and the return point are set here.</div>
+          <RouteSummary warehouse={f.warehouse} drops={drops} endPoint={f.endPoint} product={f.product} />
           <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? (editing ? "Saving…" : "Scheduling…") : (editing ? "Save changes" : "Schedule trip")}</button>
         </form>
       </Panel>
-      {/* recent trips */}
+      )}
+      {/* review scheduled trips */}
+      {tab === "review" && (<>
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <Panel style={{ padding: 0, overflow: "hidden" }}>
-        <div className="lbl" style={{ padding: "12px 14px 6px" }}>Recent trips</div>
-        {trips.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>No trips scheduled yet.</div> :
+        <div className="lbl" style={{ padding: "12px 14px 6px" }}>Scheduled &amp; in-progress trips</div>
+        {trips.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>No trips yet. <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px", fontSize: 12 }} onClick={() => setTab("new")}>Schedule one</button></div> :
           trips.map((t) => {
             const c = STAT[t.status] || STAT.scheduled;
             return (
@@ -3355,9 +4715,9 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
                   <span className="disp" style={{ fontSize: 11, fontWeight: 700, color: c[0], background: c[1], padding: "2px 8px", borderRadius: 100 }}>{t.status.replace("_", " ")}</span>
                 </div>
                 <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>
-                  {t.date} · {t.warehouse} → {L(t.qty)}L {t.product} · {t.driver || "—"}{t.truck ? " · " + t.truck : ""}
+                  {fmtD(t.date)} · {t.warehouse} → {L(t.qty)}L {t.product} · {t.driver || "—"}{t.truck ? " · " + t.truck : ""}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
+                <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}{t.endPoint ? ` · ↩ returns to ${t.endPoint}` : ""}</div>
                 {/* logistics can amend/cancel a trip until deliveries start */}
                 {t.status === "scheduled" && (
                   <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
@@ -3369,6 +4729,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
             );
           })}
       </Panel>
+      </>)}
     </Wrap>
   );
 }
@@ -3415,7 +4776,7 @@ function depotDetail(w, imports) {
   return () => (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-        {["Diesel", "Blend", "ULP"].map((p) => <Stat key={p} label={p} value={L(w.products[p])} unit="L" />)}
+        {["Blend", "Diesel", "ULP"].map((p) => <Stat key={p} label={p} value={L(w.products[p])} unit="L" />)}
       </div>
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div className="lbl" style={{ padding: "12px 14px 6px" }}>Recent imports here</div>
@@ -3425,7 +4786,7 @@ function depotDetail(w, imports) {
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
             <tbody>{mine.map((r, i) => (
               <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td>{r.date}</Td><Td>{r.product}</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
+                <Td>{fmtD(r.date)}</Td><Td>{r.product}</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>
             ))}</tbody>
           </table>
@@ -3479,9 +4840,9 @@ export function WarehouseImports({ me }) {
               style={{ padding: "13px 15px", cursor: "pointer", position: "relative" }}>
               <span aria-hidden style={{ position: "absolute", top: 10, right: 12, color: "var(--steel)", opacity: .5 }}>›</span>
               <div className="lbl" style={{ marginBottom: 3 }}>{w.name}</div>
-              <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: w.stock < 0 ? "var(--red)" : "var(--navy)", lineHeight: 1 }}>{compact(w.stock)}<span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>L</span></div>
+              <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: w.stock < 0 ? "var(--red)" : "var(--navy)", lineHeight: 1 }}>{full(w.stock)}<span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>L</span></div>
               <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
-                {["Diesel", "Blend", "ULP"].map((p) => <span key={p} className="mono" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 100, background: "#F4F6FA", color: PROD_COL[p] }}>{compact(w.products[p])}</span>)}
+                {["Blend", "Diesel", "ULP"].map((p) => <span key={p} className="mono" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 100, background: "#F4F6FA", color: PROD_COL[p] }}>{full(w.products[p])}</span>)}
               </div>
             </div>
           ))}
@@ -3493,7 +4854,7 @@ export function WarehouseImports({ me }) {
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Diesel", "Blend", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "ULP"]} /></Field></div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Supplier"><Picker value={f.supplier} onChange={set("supplier")} title="Supplier" options={SUP} /></Field></div>
@@ -3532,7 +4893,7 @@ export function WarehouseImports({ me }) {
             <tbody>{bal.recentImports.map((r, i) => (
               <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r) })}
                 style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
-                <Td>{r.date}</Td><Td>{r.warehouse}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
+                <Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>
             ))}</tbody>
           </table>
@@ -3553,7 +4914,7 @@ function LineGroup({ title, rows, setRows, cols, make }) {
         <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
           {cols.map(([k, ph, type]) => type === "product" ? (
             <select key={k} style={{ flex: 1 }} value={r[k]} onChange={(e) => set(i, k, e.target.value)}>
-              {["Petrol", "Diesel", "Ethanol", "Blend"].map((p) => <option key={p}>{p}</option>)}
+              {["Blend", "Diesel", "Ethanol", "Petrol"].map((p) => <option key={p}>{p}</option>)}
             </select>
           ) : (
             <input key={k} style={{ flex: 1 }} inputMode={type === "num" ? "decimal" : "text"} placeholder={ph} value={r[k]} onChange={(e) => set(i, k, e.target.value)} />
@@ -3627,13 +4988,15 @@ export function LogisticsDashboard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [which, setWhich] = useState("deliveries");
+  const [tab, setTab] = useState("live");          // section tabs (birds-eye style): live · summary · trucks · list
+  const [q, setQ] = useState("");
   const [period, setPeriod] = useState("year");   // delivery analysis is retrospective — default to the full picture
   const [range, setRange] = useState(defaultRange);
   const [drill, setDrill] = useState(null);
   const load = useCallback(() => {
     if (period === "range" && !(range.from && range.to)) return;
     const w = periodWindow(period, range);
-    setData(null); setErr(null); getHaulage(w.days).then(setData).catch((e) => setErr(e.message));
+    setData(null); setErr(null); getHaulage(w.days, w.from, w.to).then(setData).catch((e) => setErr(e.message));
   }, [period, range.from, range.to]);
   useEffect(() => { load(); }, [load]);
 
@@ -3658,82 +5021,95 @@ export function LogisticsDashboard() {
     return Object.values(m).map((p) => ({ ...p, lossPct: p.loaded > 0 ? +((p.loss / p.loaded) * 100).toFixed(2) : null })).sort((a, b) => b.loaded - a.loaded);
   }, [data]);
 
+  const TABS = [["live", "Live loads"], ["summary", "Summary"], ["trucks", "By truck"], ["list", "Deliveries"]];
   return (
     <Wrap>
-      <SectionHead title="Deliveries" sub="Delivery performance — worst first" />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
-        <div style={{ flex: "1 1 240px" }}><PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} /></div>
-        {data && <ExportBtn onClick={() => exportHaulage("deliveries", data)} />}
-      </div>
-      <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
-      {err && <Note tone="red" title="Could not load">{err}</Note>}
-      {!data && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
-      {data && (
-        data.deliveries.length === 0 ? <Note tone="blue" title="No delivery notes in this period" /> : <>
-          {/* performance summary */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 14 }}>
-            <CountPill n={perf.count} label="Deliveries" />
-            <CountPill n={L(perf.loaded)} label="Litres" />
-            <CountPill n={perf.lossPct == null ? "—" : perf.lossPct + "%"} label="Loss" tone={perf.lossPct != null && perf.lossPct > 0.3 ? "red" : "ok"} />
-            <CountPill n={perf.flagged} label="Flagged" tone={perf.flagged ? "red" : "ok"} />
-          </div>
-          {perf.flagged > 0 && <Note tone="red" title={`${perf.flagged} deliveries over the 0.3% benchmark — shown first`} />}
-          {/* open / overdue trips — scheduled but not yet closed off */}
-          {(data.openTrips || []).length > 0 && (
-            <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden", borderLeft: "4px solid var(--amber)" }}>
-              <div className="lbl" style={{ padding: "12px 14px 8px" }}>Open trips — scheduled, not yet closed ({data.openTrips.length})</div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trip</Th><Th>Truck</Th><Th>Route</Th><Th right>Litres</Th><Th right>Open</Th></tr></thead>
-                  <tbody>{data.openTrips.slice(0, 12).map((t) => (
-                    <tr key={t.tripNo} style={{ borderTop: "1px solid var(--line)" }}>
-                      <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.tripNo}</Td>
-                      <Td style={{ color: "var(--steel)" }}>{t.truck || t.driver || "—"}</Td>
-                      <Td style={{ color: "var(--steel)" }}>{t.warehouse} → {t.drops.join(", ")}</Td>
-                      <Td right>{L(t.qty)}</Td>
-                      <Td right style={{ fontWeight: 700, color: t.daysOpen >= 2 ? "var(--red)" : "var(--amber)" }}>{t.daysOpen}d</Td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Trips still active past their date — chase the delivery note or cancel.</div>
-            </Panel>
-          )}
-          {/* delivered + loss, split by product */}
-          <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
-            <div className="lbl" style={{ padding: "12px 14px 8px" }}>Delivered &amp; loss — by product</div>
-            {deliveriesProductTable(byProduct)}
-          </Panel>
-          {/* loss league by truck + driver — high-loss first */}
-          {(data.transporterLeague || []).length > 0 && (
+      <SectionHead title="Deliveries" sub="Live loads and delivery performance" />
+      <div style={{ marginBottom: 12 }}><Segmented options={TABS} value={tab} onChange={setTab} /></div>
+
+      {/* LIVE — scheduled / in transit / delivered (operational, no period filter) */}
+      {tab === "live" && <DeliveriesInProgress />}
+
+      {/* The performance tabs share the period ribbon + loaded data */}
+      {tab !== "live" && <>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ flex: "1 1 240px" }}><PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} /></div>
+          {data && <ExportBtn onClick={() => exportHaulage("deliveries", data)} />}
+        </div>
+        <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
+        {err && <Note tone="red" title="Could not load">{err}</Note>}
+        {!data && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+        {data && (data.deliveries.length === 0 ? <Note tone="blue" title="No delivery notes in this period" /> : <>
+
+          {/* SUMMARY — headline figures, flagged note, open trips, by-product */}
+          {tab === "summary" && <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 14 }}>
+              <CountPill n={perf.count} label="Deliveries" />
+              <CountPill n={L(perf.loaded)} label="Litres" />
+              <CountPill n={perf.lossPct == null ? "—" : perf.lossPct + "%"} label="Loss" tone={perf.lossPct != null && perf.lossPct > 0.3 ? "red" : "ok"} />
+              <CountPill n={perf.flagged} label="Flagged" tone={perf.flagged ? "red" : "ok"} />
+            </div>
+            {perf.flagged > 0 && <Note tone="amber" title={`${perf.flagged} deliveries over the 0.3% benchmark`}>See the <b>Deliveries</b> tab — flagged ones are shown first.</Note>}
+            {(data.openTrips || []).length > 0 && (
+              <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden", borderLeft: "4px solid var(--amber)" }}>
+                <div className="lbl" style={{ padding: "12px 14px 8px" }}>Open trips — scheduled, not yet closed ({data.openTrips.length})</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trip</Th><Th>Truck</Th><Th>Route</Th><Th right>Litres</Th><Th right>Open</Th></tr></thead>
+                    <tbody>{data.openTrips.slice(0, 12).map((t) => (
+                      <tr key={t.tripNo} style={{ borderTop: "1px solid var(--line)" }}>
+                        <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.tripNo}</Td>
+                        <Td style={{ color: "var(--steel)" }}>{t.truck || t.driver || "—"}</Td>
+                        <Td style={{ color: "var(--steel)" }}>{t.warehouse} → {t.drops.join(", ")}</Td>
+                        <Td right>{L(t.qty)}</Td>
+                        <Td right style={{ fontWeight: 700, color: t.daysOpen >= 2 ? "var(--red)" : "var(--amber)" }}>{t.daysOpen}d</Td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Trips still active past their date — chase the delivery note or cancel.</div>
+              </Panel>
+            )}
             <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 14px 8px" }}>
-                <div className="lbl" style={{ marginBottom: 0 }}>Loss by truck &amp; driver — worst first</div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{data.transporterLeague.filter((t) => t.highLoss).length} high-loss</div>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Driver</Th><Th right>Loads</Th><Th right>Loss</Th><Th right>%</Th></tr></thead>
-                  <tbody>{data.transporterLeague.slice(0, 30).map((t) => (
-                    <tr key={t.transporter} style={{ borderTop: "1px solid var(--line)", background: t.highLoss ? "#FDECEA" : "#fff" }}>
-                      <Td>{t.highLoss ? "⚠ " : ""}{t.transporter}</Td>
-                      <Td style={{ color: "var(--steel)" }}>{t.driver || "—"}</Td>
-                      <Td right>{t.loads}</Td>
-                      <Td right>{L(t.loss)}</Td>
-                      <Td right style={{ fontWeight: 700, color: t.lossPct != null && t.lossPct > 0.3 ? "var(--red)" : "var(--ok)" }}>{t.lossPct != null ? t.lossPct + "%" : "—"}</Td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>High-loss = average loss over the 0.3% benchmark for the period. Driver = the truck's most frequent driver.</div>
+              <div className="lbl" style={{ padding: "12px 14px 8px" }}>Delivered &amp; loss — by product</div>
+              {deliveriesProductTable(byProduct)}
             </Panel>
-          )}
-          <Panel style={{ padding: 0, overflow: "hidden" }}>
+          </>}
+
+          {/* BY TRUCK — loss league by truck + driver */}
+          {tab === "trucks" && <FilterBox value={q} onChange={setQ} placeholder="Filter by truck or driver…" />}
+          {tab === "trucks" && ((data.transporterLeague || []).length > 0
+            ? <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 14px 8px" }}>
+                  <div className="lbl" style={{ marginBottom: 0 }}>Loss by truck &amp; driver — worst first</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{data.transporterLeague.filter((t) => t.highLoss).length} high-loss</div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Driver</Th><Th right>Loads</Th><Th right>Loss</Th><Th right>%</Th></tr></thead>
+                    <tbody>{data.transporterLeague.filter((t) => rowMatches({ truck: t.transporter, driver: t.driver }, q)).slice(0, 40).map((t) => (
+                      <tr key={t.transporter} style={{ borderTop: "1px solid var(--line)", background: t.highLoss ? "#FDECEA" : "#fff" }}>
+                        <Td>{t.highLoss ? "⚠ " : ""}{t.transporter}</Td>
+                        <Td style={{ color: "var(--steel)" }}>{t.driver || "—"}</Td>
+                        <Td right>{t.loads}</Td>
+                        <Td right>{L(t.loss)}</Td>
+                        <Td right style={{ fontWeight: 700, color: t.lossPct != null && t.lossPct > 0.3 ? "var(--red)" : "var(--ok)" }}>{t.lossPct != null ? t.lossPct + "%" : "—"}</Td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>High-loss = average loss over the 0.3% benchmark for the period. Driver = the truck's most frequent driver.</div>
+              </Panel>
+            : <Note tone="blue" title="No truck-level data in this period" />)}
+
+          {/* LIST — every delivery note */}
+          {tab === "list" && <FilterBox value={q} onChange={setQ} placeholder="Filter by DN, route or product…" />}
+          {tab === "list" && <Panel style={{ padding: 0, overflow: "hidden" }}>
             <div className="lbl" style={{ padding: "12px 14px 8px" }}>Deliveries — tap a row for the full note ({perf.sorted.length})</div>
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>DN</Th><Th>Product</Th><Th>Route</Th><Th right>Loaded</Th><Th right>Site dip</Th><Th right>Loss</Th><Th right>%</Th></tr></thead>
-                <tbody>{perf.sorted.map((d) => (
+                <tbody>{perf.sorted.filter((d) => rowMatches({ dn: d.id, product: d.commodity, from: d.loadedFrom, to: d.deliveredTo }, q)).map((d) => (
                   <tr key={d.seq} onClick={() => setDrill({ title: `${d.id} · ${d.commodity || "—"}`, sub: `${d.loadedFrom || "?"} → ${d.deliveredTo || "?"}`, render: deliveryDetail(d) })}
                     style={{ borderTop: "1px solid var(--line)", background: d.flagged ? "#FDECEA" : undefined, cursor: "pointer" }}>
                     <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{d.flagged ? "⚠ " : ""}{d.id}</Td>
@@ -3747,9 +5123,9 @@ export function LogisticsDashboard() {
                 ))}</tbody>
               </table>
             </div>
-          </Panel>
-        </>
-      )}
+          </Panel>}
+        </>)}
+      </>}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
   );
@@ -3843,7 +5219,7 @@ export function LubeSales() {
                   <tbody>{d.sales.map((s) => (
                     <tr key={s.ref} style={{ borderTop: "1px solid var(--line)" }}>
                       <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{s.ref}</Td>
-                      <Td style={{ color: "var(--steel)" }}>{new Date(s.at).toLocaleDateString()}</Td>
+                      <Td style={{ color: "var(--steel)" }}>{fmtD(s.at)}</Td>
                       <Td style={{ color: "var(--steel)" }}>{s.payment}</Td>
                       <Td style={{ color: "var(--steel)" }}>{(s.items || []).map((i) => `${i.qty}× ${i.name}`).join(", ")}</Td>
                       <Td right style={{ fontWeight: 700 }}>${s.total.toFixed(2)}</Td>
@@ -3876,16 +5252,34 @@ export function YardWorkshop({ me }) {
   const [tab, setTab] = useState("open"); // open list vs new
   const load = useCallback(() => { getYard().then(setData).catch((e) => setErr(e.message)); getYardVehicles().then((r) => setVehicles(r.vehicles)).catch(() => {}); }, []);
   useEffect(() => { load(); }, [load]);
+  // Trucks the "D. A Truck faults" WhatsApp group reports in the workshop but that
+  // have no formal app case yet — surfaced here so this list reconciles with Fleet
+  // status and the "In workshop" count.
+  const caseCodes = new Set((data?.openCases || []).map((c) => String(c.vehicle)));
+  const groupOnly = (vehicles || []).filter((v) => v.yardStatus === "workshop" && !caseCodes.has(String(v.code)));
+  const workshopCount = (data?.openCases.length || 0) + groupOnly.length;
   return (
     <Wrap>
       <SectionHead title="Yard workshop" sub="Log repairs, post morning & evening updates" />
       {me && <ReminderBar me={me} />}
-      <Segmented options={[["open", `In workshop${data ? ` (${data.counts.workshop})` : ""}`], ["new", "Log a truck in"]]} value={tab} onChange={setTab} />
+      <Segmented options={[["open", `In workshop${data ? ` (${workshopCount})` : ""}`], ["new", "Log a truck in"]]} value={tab} onChange={setTab} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {tab === "new" && <YardOpenForm vehicles={vehicles} onSaved={() => { load(); setTab("open"); }} />}
       {tab === "open" && (!data ? <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel> :
-        data.openCases.length === 0 ? <Note tone="ok" title="No trucks in the workshop" /> :
-        data.openCases.map((c) => <YardCase key={c.ref} c={c} onChanged={load} />))}
+        workshopCount === 0 ? <Note tone="ok" title="No trucks in the workshop" /> :
+        <>
+          {data.openCases.map((c) => <YardCase key={c.ref} c={c} onChanged={load} />)}
+          {groupOnly.map((v) => (
+            <Panel key={v.code} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                <div style={{ fontWeight: 700, color: "var(--navy)" }}>{v.code}{v.description ? <span style={{ fontWeight: 400, color: "var(--steel)" }}> · {v.description}</span> : ""}</div>
+                <span className="pill" style={{ padding: "1px 9px", fontSize: 11, background: "var(--red)", color: "#fff", borderRadius: 100, boxShadow: "none" }}>workshop</span>
+              </div>
+              {v.yardStatusDetail && <div style={{ fontSize: 13, color: "var(--ink)", marginTop: 6 }}>{v.yardStatusDetail}</div>}
+              <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 6 }}>From the truck-faults group{v.yardStatusAt ? ` · ${new Date(v.yardStatusAt).toLocaleString()}` : ""} · use “Log a truck in” to open a formal case</div>
+            </Panel>
+          ))}
+        </>)}
     </Wrap>
   );
 }
@@ -3957,7 +5351,7 @@ function YardCase({ c, onChanged }) {
       <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 12px", fontSize: 12 }} onClick={() => setOpen((o) => !o)}>{open ? "Hide" : `History (${c.entries.length})`}</button>
       {open && <div style={{ marginTop: 8 }}>{c.entries.slice().reverse().map((e, i) => (
         <div key={i} className="mono" style={{ fontSize: 11, color: "var(--steel)", padding: "4px 0", borderTop: "1px solid var(--line)" }}>
-          <b style={{ color: "var(--navy)" }}>{e.type}</b> · {new Date(e.at).toLocaleDateString()} · {e.note} <span style={{ opacity: .7 }}>— {e.by}</span>
+          <b style={{ color: "var(--navy)" }}>{e.type}</b> · {fmtD(e.at)} · {e.note} <span style={{ opacity: .7 }}>— {e.by}</span>
         </div>))}</div>}
     </Panel>
   );
@@ -3973,10 +5367,17 @@ export function TruckStatus() {
   const openVehicle = (v) => {
     const c = d.openCases.find((x) => String(x.vehicle) === String(v.code) || String(x.vehicle).includes(v.code));
     if (v.inWorkshop && c) return openCase(c);
-    setDrill({ title: v.code, sub: v.inWorkshop ? `In workshop · ${v.days}d` : "Active", render: () => (
-      v.inWorkshop
-        ? <Panel><div className="lbl" style={{ marginBottom: 4 }}>Fault</div><div style={{ fontSize: 14 }}>{v.fault || "In the workshop — no detail recorded."}</div><div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 8 }}>{v.days} days in workshop</div></Panel>
-        : <Note tone="ok" title="Ready to run">This truck is active and not in the workshop.</Note>
+    const groupWs = v.yardStatus === "workshop";
+    const when = v.yardStatusAt ? new Date(v.yardStatusAt).toLocaleString() : null;
+    setDrill({ title: v.code, sub: v.inWorkshop ? `In workshop · ${v.days}d` : (groupWs ? "In workshop" : "Ready"), render: () => (
+      <>
+        {v.inWorkshop
+          ? <Panel><div className="lbl" style={{ marginBottom: 4 }}>Fault</div><div style={{ fontSize: 14 }}>{v.fault || "In the workshop — no detail recorded."}</div><div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 8 }}>{v.days} days in workshop</div></Panel>
+          : groupWs
+            ? <Note tone="red" title="In the workshop">{v.yardStatusDetail || "Reported in the workshop."}</Note>
+            : <Note tone="ok" title="Ready to run">This truck is active and not in the workshop.</Note>}
+        {v.yardStatus && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Yard report: {v.yardStatus}{when ? ` · ${when}` : ""}</div>}
+      </>
     ) });
   };
   return (
@@ -4010,13 +5411,15 @@ export function TruckStatus() {
           )}
           <Panel style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(64px,1fr))", gap: 6, padding: 10 }}>
-              {d.vehicles.map((v) => (
-                <div key={v.code} title={v.fault || "Active"} role="button" tabIndex={0} onClick={() => openVehicle(v)}
+              {d.vehicles.map((v) => {
+                const ws = v.inWorkshop || v.yardStatus === "workshop";   // workshop = app case OR the yard group
+                return (
+                <div key={v.code} title={v.fault || v.yardStatusDetail || (v.yardStatus || "Active")} role="button" tabIndex={0} onClick={() => openVehicle(v)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openVehicle(v); } }}
-                  style={{ textAlign: "center", padding: "8px 4px", borderRadius: 10, background: v.inWorkshop ? "#FDECEA" : "#EBF6E7", border: `1px solid ${v.inWorkshop ? "var(--red)" : "var(--ok)"}`, cursor: "pointer" }}>
+                  style={{ textAlign: "center", padding: "8px 4px", borderRadius: 10, background: ws ? "#FDECEA" : "#EBF6E7", border: `1px solid ${ws ? "var(--red)" : "var(--ok)"}`, cursor: "pointer" }}>
                   <div className="mono" style={{ fontWeight: 700, fontSize: 13 }}>{v.code}</div>
-                  <div style={{ fontSize: 11, color: v.inWorkshop ? "var(--red)" : "var(--ok)" }}>{v.inWorkshop ? `${v.days}d` : "ready"}</div>
-                </div>))}
+                  <div style={{ fontSize: 11, color: ws ? "var(--red)" : "var(--ok)" }}>{v.inWorkshop ? `${v.days}d` : (v.yardStatus === "workshop" ? "workshop" : "ready")}</div>
+                </div>);})}
             </div>
           </Panel>
           {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
