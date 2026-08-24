@@ -1535,7 +1535,7 @@ export function ExecutiveDashboard() {
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   const { tab, setTab, back, prev } = useNavStack("overview");
-  const SECTIONS = [["overview", "Overview"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["midday", "Midday dip"], ["sales", "Sales"], ["prices", "Prices"], ["supply", "Inventory"], ["losses", "Losses"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["outflows", "Outflows"]];
+  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["outflows", "Outflows"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
   // Drill-down that lands on the EXACT section: switch tab, then scroll that
   // section (by id) into view once it renders. Use goTo(tab, sectionId).
   const [focusSec, setFocusSec] = useState(null);
