@@ -576,8 +576,8 @@ function PricesForm({ choice, site, config, date, onSaved, isManager }) {
 // (FileMaker) against where the takings went — banked, to HQ, card swipe,
 // ecocash/mobile, or still on hand.
 const CASH_LEGS = [
-  { key: "banked", label: "Banked", hint: "USD cash deposited", tone: "#2B3990" },
   { key: "sentToHq", label: "Sent to HQ", hint: "cash handed to head office", tone: "#22345C" },
+  { key: "banked", label: "Banked", hint: "USD cash deposited", tone: "#2B3990" },
   { key: "swipe", label: "Card swipe", hint: "POS / bank card", tone: "#6BC048" },
   { key: "ecocash", label: "EcoCash / mobile", hint: "mobile money", tone: "#4FA45B" },
   { key: "cashOnHand", label: "Cash on hand", hint: "float / not yet moved", tone: "#C8A24B" },
