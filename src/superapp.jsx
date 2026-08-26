@@ -3103,7 +3103,7 @@ export function CashOffice({ readOnly = false } = {}) {
                     <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Open days</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Still short</Th></tr></thead>
                       <tbody>{bySite.map((g) => (
-                        <tr key={g.siteId} onClick={() => setSiteDrill(g)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
+                        <tr key={g.siteId} onClick={() => g.days.length === 1 ? setDrill(g.days[0]) : setSiteDrill(g)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
                           <Td>{g.site}<span style={{ color: "var(--steel)" }}> ›</span><div style={{ fontSize: 10, color: "var(--steel)" }}>oldest {fmtD(g.oldest)}</div></Td>
                           <Td right>{g.openDays}</Td>
                           <Td right style={{ fontWeight: 700 }}>{$(g.expected)}</Td>
@@ -3171,6 +3171,7 @@ export function CashOffice({ readOnly = false } = {}) {
 function CashOfficeDay({ row, onDone, readOnly = false }) {
   const [deposits, setDeposits] = useState(row.deposits);
   const [cashReceived, setCashReceived] = useState(row.received != null ? String(row.received) : "");
+  const [receiptNo, setReceiptNo] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [slip, setSlip] = useState(null);   // {seq, url|null}
@@ -3191,7 +3192,7 @@ function CashOfficeDay({ row, onDone, readOnly = false }) {
     if (!(Number(cashReceived) >= 0) || cashReceived === "") { setMsg({ tone: "amber", title: "Enter cash received", body: "Type the actual cash received from the site (0 or more)." }); return; }
     setBusy(true);
     try {
-      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), closed: true });
+      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), receiptNo: receiptNo.trim() || null, closed: true });
       setMsg({ tone: "ok", title: "Day closed", body: `${row.site} · ${row.date} reconciled and closed.` });
       setTimeout(onDone, 800);
     } catch (e) { setMsg({ tone: "red", title: "Not closed", body: e.message }); }
@@ -3238,6 +3239,7 @@ function CashOfficeDay({ row, onDone, readOnly = false }) {
         ) : (
           <>
             <Field label="Actual cash received from the site (US$)"><Num value={cashReceived} onChange={setCashReceived} /></Field>
+            <Field label="Receipt number"><input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} placeholder="receipt / reference no." style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontSize: 14 }} /></Field>
             {shortfall != null && (
               <div style={{ fontSize: 12, color: shortfall > 0 ? "var(--red)" : shortfall < 0 ? "var(--amber)" : "var(--steel)", marginBottom: 10 }}>
                 {shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}
