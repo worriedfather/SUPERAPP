@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
 import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM } from "./data";
 import { resumeTracking, startTracking } from "./tripTracker.js";
-import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp } from "./device";
+import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
@@ -823,8 +823,10 @@ function App() {
     getHealth().then((h) => {
       if (!h || h.__offline) return;
       // NATIVE: hard update gate — block with an "update required" screen when this
-      // app is below the minimum build the server accepts (user updates via the store).
-      if (isNative()) { if (Number(h.minBuild) > APP_BUILD) setMustUpdate(true); return; }
+      // app is below the minimum build the server accepts. ANDROID ONLY: it sideloads,
+      // so the gate hands over a working APK. iOS is EXEMPT — Apple forbids in-app
+      // store links, so iOS updates through TestFlight/App Store, never a gate button.
+      if (isNative()) { if (!isIOS() && Number(h.minBuild) > APP_BUILD) setMustUpdate(true); return; }
       // WEB: silently self-update a stale tab. `build` is the latest deployed web
       // build; index.html is served no-store, so a reload fetches the current bundle.
       // sessionStorage guard prevents a reload loop if an update can't complete.

@@ -3,6 +3,9 @@ import { Geolocation } from "@capacitor/geolocation";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 
 export const isNative = () => Capacitor.isNativePlatform();
+// iOS updates come ONLY through TestFlight / the App Store — Apple forbids in-app
+// store links — so the force-update gate is Android-only. iOS relies on TestFlight.
+export const isIOS = () => { try { return Capacitor.getPlatform() === "ios"; } catch { return false; } };
 
 // True in any packaged MOBILE app — the Capacitor build (Android) OR the iOS
 // WebView shell (which tags its user-agent "DAOPSMobile" and sets window
