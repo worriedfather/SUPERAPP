@@ -62,10 +62,11 @@ workflows:
           # Every TestFlight upload needs a unique, increasing build number. Codemagic's
           # $BUILD_NUMBER auto-increments per build, so uploads never collide (fallback 1).
           put CFBundleVersion string "${BUILD_NUMBER:-1}"
-          # Marketing version — read the app's release version from config.js so the
-          # TestFlight build reads e.g. "1.5.89 (10)" instead of the Xcode default "1.0".
-          VER=$(grep -oE 'APP_VERSION = "[^"]+"' ../../src/config.js | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          put CFBundleShortVersionString string "${VER:-1.0}"
+          # Keep the MARKETING version STABLE ("1.0") on purpose: external TestFlight
+          # needs Beta App Review only when the version STRING changes. Fixing it means
+          # one review, then every later build (new build NUMBER, same version) reaches
+          # external testers automatically. The real app version shows in-app (APP_BUILD).
+          put CFBundleShortVersionString string "1.0"
           put NSCameraUsageDescription string "DA OPS uses the camera to photograph the fuel tank and odometer for each request."
           put NSPhotoLibraryUsageDescription string "DA OPS attaches a photo of the fuel tank or odometer to a request."
           put NSPhotoLibraryAddUsageDescription string "DA OPS can save a captured fuel or odometer photo to your library."
