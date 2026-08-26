@@ -36,8 +36,11 @@ export async function initPush(onOpenTab) {
     PN.addListener("registration", (t) => { if (t?.value) registerPush(t.value, "android").catch(() => {}); });
     PN.addListener("registrationError", () => { /* Firebase not configured yet — silent */ });
     PN.addListener("pushNotificationActionPerformed", (a) => {
-      const tab = a?.notification?.data?.tab;
-      if (tab && typeof onOpenTab === "function") onOpenTab(tab);
+      const data = a?.notification?.data || {};
+      // Forward the WHOLE payload, not just the tab — data.ref/trip/dn identify the
+      // specific request / trip / delivery note so the tap lands on THAT item, not a
+      // generic list. (See App.jsx: it focuses the item from these fields.)
+      if (data.tab && typeof onOpenTab === "function") onOpenTab(data.tab, data);
     });
 
     await PN.register();   // throws if google-services.json/FCM isn't set up — caught below

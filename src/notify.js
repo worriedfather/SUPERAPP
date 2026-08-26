@@ -64,7 +64,7 @@ export async function checkAlerts({ notify = true } = {}) {
             id: 200 + (typeof it.type === "string" ? it.type.length + i : i),
             title: it.title, body: it.body,
             schedule: { at: new Date(Date.now() + 800 + i * 400) },
-            extra: { tab: it.tab },
+            extra: { tab: it.tab, ref: it.ref, trip: it.trip, dn: it.dn, site: it.site },
           })) });
         }
       } catch { /* ignore */ }
@@ -75,6 +75,22 @@ export async function checkAlerts({ notify = true } = {}) {
   const next = {}; items.forEach((it) => { next[it.type] = it.count || 0; });
   try { localStorage.setItem(SEEN, JSON.stringify(next)); } catch { /* ignore */ }
   return { count: a?.count || 0, items };
+}
+
+// Deep-link a TAPPED local reminder to its screen + item (mirrors the FCM push tap
+// handler in push.js). Without this, tapping a scheduled reminder does nothing.
+let lnTapWired = false;
+export async function initLocalNotificationTaps(onOpenTab) {
+  if (lnTapWired) return;
+  const L = await ln();
+  if (!L) return;
+  lnTapWired = true;
+  try {
+    L.addListener("localNotificationActionPerformed", (e) => {
+      const extra = (e && e.notification && e.notification.extra) || {};
+      if (extra.tab && typeof onOpenTab === "function") onOpenTab(extra.tab, extra);
+    });
+  } catch { /* plugin without the listener API → no-op */ }
 }
 
 export async function requestPermission() {

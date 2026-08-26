@@ -6,11 +6,11 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
-  getWatchSnoozes, postWatchSnooze,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
-  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, routeGoogle, getStationCoords,
+  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
   getApprovalHistory, getApprovalDetail, downloadApprovalsCsv, getBankOutflows, getOutflowTxns,
@@ -335,12 +335,26 @@ export function SiteSubmit({ me }) {
           <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"]]} value={which} onChange={setWhich} />
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
           {cfgErr && <Note tone="red" title="Couldn't load this site">{cfgErr} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={loadCfg}>Retry</button></Note>}
-          {config && which === "readings" && <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={loadCfg} isManager={isManager} />}
-          {config && which === "dip" && <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} />}
-          {config && which === "prices" && <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={loadCfg} isManager={isManager} />}
-          {which === "cash" && (shift === "night"
-            ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />
-            : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>)}
+          {/* All four forms stay MOUNTED and are shown/hidden with CSS, so switching
+              tabs never wipes what was typed on the previous one (audit: state loss). */}
+          {config && <>
+            <div style={{ display: which === "readings" ? "block" : "none" }}>
+              <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={loadCfg} isManager={isManager}
+                onNext={() => setWhich(shift === "night" ? "cash" : "prices")} nextLabel={shift === "night" ? "Next: record cash" : "Next: prices"} />
+            </div>
+            <div style={{ display: which === "dip" ? "block" : "none" }}>
+              <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} />
+            </div>
+            <div style={{ display: which === "prices" ? "block" : "none" }}>
+              <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={loadCfg} isManager={isManager}
+                onNext={shift === "night" ? () => setWhich("cash") : undefined} nextLabel="Next: record cash" />
+            </div>
+            <div style={{ display: which === "cash" ? "block" : "none" }}>
+              {shift === "night"
+                ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />
+                : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>}
+            </div>
+          </>}
         </>
       )}
     </Wrap>
@@ -352,7 +366,7 @@ export function SiteSubmit({ me }) {
 // a mistake (a re-submit writes a correction; the latest reading wins).
 // canEdit gates the Edit button: once a SITE submits it's LOCKED — only a manager
 // can reopen and correct it (managers pass canEdit=true). Supervisors see a note.
-function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true }) {
+function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next }) {
   const c = tone === "amber"
     ? { bg: "#FEF7E6", fg: "#8A6D1E", ic: "!" }
     : { bg: "#EAF7EC", fg: "#2E7D33", ic: "✓" };
@@ -363,9 +377,12 @@ function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)" }}>{title}</div>
           {body && <div style={{ fontSize: 13, color: "var(--steel)", marginTop: 3 }}>{body}</div>}
-          {canEdit
-            ? <button type="button" className="pill-ghost" style={{ marginTop: 12, padding: "8px 16px" }} onClick={onEdit}>Edit submission</button>
-            : <div style={{ marginTop: 10, fontSize: 12, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>🔒 Locked. If something needs changing, ask a manager to edit it.</div>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+            {next && next.onNext && <button type="button" className="pill" style={{ padding: "8px 16px" }} onClick={next.onNext}>{next.label || "Next"} ›</button>}
+            {canEdit
+              ? <button type="button" className="pill-ghost" style={{ padding: "8px 16px" }} onClick={onEdit}>Edit submission</button>
+              : <div style={{ fontSize: 12, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>🔒 Locked. If something needs changing, ask a manager to edit it.</div>}
+          </div>
         </div>
       </div>
     </Panel>
@@ -374,7 +391,7 @@ function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true }) {
 
 // Stock (per tank) + sales in one submission. Tanks and the previous readings
 // are preloaded; the user changes only what moved.
-function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager }) {
+function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
   const [sales, setSales] = useState({ blendSales: "", dieselSales: "", ulpSales: "", cashSales: "", petroSales: "", daCardSales: "" });
@@ -387,8 +404,10 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager })
 
   // the site's own DA pump price → a total-sales-value target the split should reconcile to
   const daP = (fuel) => { const l = (config.lastPrice || []).find((x) => x.isDA && x.fuelType === fuel && x.price > 0); return l ? Number(l.price) : null; };
-  const blendPrice = daP("Petrol"), dieselPrice = daP("Diesel");
-  const salesValue = (blendPrice ? n(sales.blendSales) * blendPrice : 0) + (dieselPrice ? n(sales.dieselSales) * dieselPrice : 0);
+  const blendPrice = daP("Petrol"), dieselPrice = daP("Diesel"), ulpPrice = daP("ULP") || daP("Unleaded");
+  const salesValue = (blendPrice ? n(sales.blendSales) * blendPrice : 0)
+    + (dieselPrice ? n(sales.dieselSales) * dieselPrice : 0)
+    + (hasULP && ulpPrice ? n(sales.ulpSales) * ulpPrice : 0);
   const split = n(sales.cashSales) + n(sales.petroSales) + n(sales.daCardSales);
   const hasSplit = split > 0;
   const litresEntered = n(sales.blendSales) > 0 || n(sales.dieselSales) > 0;
@@ -409,7 +428,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager })
     finally { setBusy(false); }
   };
 
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -436,7 +455,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager })
         </div>
         {config.lastSales && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 4 }}>Last: {L(config.lastSales.blend_sales)} blend · {L(config.lastSales.diesel_sales)} diesel sold</div>}
         {litresEntered && salesValue > 0 && (
-          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}</div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}{hasULP && ulpPrice ? ` · ULP $${ulpPrice}` : ""}{hasULP && !ulpPrice ? " · ⚠ no ULP pump price set — ULP value not counted" : ""}</div>
         )}
 
         {/* Split the sales by tender — the CASH portion is what the Cash tab reconciles */}
@@ -504,7 +523,7 @@ function DipForm({ choice, site, config, date, isManager }) {
 
 // Price survey — the site's competitor list is preloaded, prices default to
 // yesterday's; the user changes only what moved and can add a competitor.
-function PricesForm({ choice, site, config, date, onSaved, isManager }) {
+function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, nextLabel }) {
   const last = config.lastPrice || [];
   const priceOf = (station, fuel) => { const l = last.find((x) => x.station === station && x.fuelType === fuel); return l ? l.price : ""; };
   const daName = `DA ${site}`;
@@ -537,7 +556,7 @@ function PricesForm({ choice, site, config, date, onSaved, isManager }) {
     finally { setBusy(false); }
   };
 
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -591,7 +610,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
   const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  const HQ_DENOMS = [100, 20, 10, 5, 2, 1];   // US$ note denominations counted for HQ
+  const HQ_DENOMS = [100, 50, 20, 10, 5, 2, 1];   // US$ note denominations counted for HQ
   const hqTotal = HQ_DENOMS.reduce((a, d) => a + d * n(hqDenoms[String(d)]), 0);
   const hqCount = HQ_DENOMS.reduce((a, d) => a + n(hqDenoms[String(d)]), 0);
 
@@ -615,18 +634,19 @@ function CashForm({ choice, site, date, shift, isManager }) {
     e.preventDefault(); setMsg(null);
     if (accounted === 0) { setMsg({ tone: "amber", title: "Nothing to submit", body: "Record how at least one part of the cash was handled." }); return; }
     if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
+    if (n(f.banked) > 0 && !String(f.bank || "").trim()) { setMsg({ tone: "amber", title: "Which bank?", body: "Name the bank the deposit went to — it flows straight to the cash office to confirm." }); return; }
     setBusy(true);
     try {
       const r = await postCash({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
-        banked: n(f.banked), bankRef: f.bankRef || null, sentToHq: hqTotal,
+        banked: n(f.banked), bankRef: f.bankRef || null, bank: f.bank || null, sentToHq: hqTotal,
         hqDenoms: HQ_DENOMS.reduce((o, d) => { const c = n(hqDenoms[String(d)]); if (c > 0) o[String(d)] = c; return o; }, {}),
         swipe: n(f.swipe), ecocash: n(f.ecocash), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
         expected, deviceTime: new Date().toISOString(),
       });
       const tail = expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ tone: variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}` });
+      setDone({ tone: variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
@@ -698,7 +718,11 @@ function CashForm({ choice, site, date, shift, isManager }) {
         </div>
         {n(f.banked) > 0 && (
           <div style={{ marginTop: 4 }}>
-            <Field label="Deposit ref"><input value={f.bankRef} onChange={(e) => set("bankRef", e.target.value)} placeholder="slip no. (required when banking)" /></Field>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 150px" }}><Field label="Bank"><input value={f.bank || ""} onChange={(e) => set("bank", e.target.value)} placeholder="which bank" /></Field></div>
+              <div style={{ flex: "1 1 150px" }}><Field label="Deposit ref"><input value={f.bankRef} onChange={(e) => set("bankRef", e.target.value)} placeholder="slip no." /></Field></div>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 2 }}>🔗 This deposit goes straight to the cash office to confirm — no need to re-enter it there.</div>
           </div>
         )}
 
@@ -1581,7 +1605,11 @@ export function ExecutiveDashboard() {
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   const { tab, setTab, back, prev } = useNavStack("overview");
-  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["outflows", "Outflows"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
+  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["outflows", "Outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
+  // These tabs embed self-fetching views that own their OWN period — the top period
+  // ribbon does not drive them, so we hide it there rather than show a control that
+  // does nothing (audit: misleading ribbon).
+  const SELF_PERIOD = ["losses", "midday", "nightshift", "dayshift"];
   // Drill-down that lands on the EXACT section: switch tab, then scroll that
   // section (by id) into view once it renders. Use goTo(tab, sectionId).
   const [focusSec, setFocusSec] = useState(null);
@@ -1623,9 +1651,9 @@ export function ExecutiveDashboard() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Bird's-eye view</h2>
-          {asOfLabel && <div className="mono" style={{ fontSize: 11, color: d?.asOf?.isPartial && period === "today" ? "var(--amber)" : "var(--steel)", marginTop: 3 }}>Showing {pLabel.toLowerCase()} · {asOfLabel}</div>}
+          {asOfLabel && !SELF_PERIOD.includes(tab) && <div className="mono" style={{ fontSize: 11, color: d?.asOf?.isPartial && period === "today" ? "var(--amber)" : "var(--steel)", marginTop: 3 }}>Showing {pLabel.toLowerCase()} · {asOfLabel}</div>}
         </div>
-        <div style={{ minWidth: 240, flex: "0 1 340px" }}>
+        <div style={{ minWidth: 240, flex: "0 1 340px", display: SELF_PERIOD.includes(tab) ? "none" : undefined }}>
           <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["month", "Month"], ["year", "Year"], ["range", "Range"]]} value={period} onChange={setPeriod} />
           {period === "range" && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1915,6 +1943,10 @@ export function ExecutiveDashboard() {
                 <span style={{ opacity: 0.7 }}>· split by leg distance (approx)</span>
               </div>
             )}
+            {/* Approver over/under-allocation vs the system estimate — recorded daily. */}
+            <div style={{ borderTop: "1px solid var(--line)", margin: "6px 0 14px" }} />
+            <AllocationReport />
+            <div style={{ borderTop: "1px solid var(--line)", margin: "18px 0 14px" }} />
             {/* Bird's-eye: fleet health at a glance — tap any card for the full detail. */}
             {(d.fleet?.vehicles || []).length > 0 && (() => {
               const fleetTable = (title, note, rows, cols) => () => (
@@ -2052,15 +2084,17 @@ export function ExecutiveDashboard() {
    come later from the FileMaker retail export. Ported to match the bot exactly —
    DAY = day-shift sales vs the previous day shift; NIGHT = the trading day's
    total (MAX of the cumulative day/night readings) vs the previous day. */
-function KpiCard({ label, value, tone }) {
+function KpiCard({ label, value, tone, sub, subColor }) {
   return (
     <div style={{ background: tone === "bad" ? "#FDECEC" : tone === "good" ? "#EDF7EE" : "#fff", border: `1px solid ${tone === "bad" ? "#F3C0C0" : tone === "good" ? "#BFE3C2" : "var(--line)"}`, borderRadius: 14, padding: "14px 16px", textAlign: "center" }}>
       <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: tone === "bad" ? "#B23B3B" : tone === "good" ? "#2E7D33" : "var(--navy)", letterSpacing: "-.01em" }}>{value}</div>
       <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".03em" }}>{label}</div>
+      {sub != null && sub !== "" && <div className="mono" style={{ fontSize: 11.5, marginTop: 4, fontWeight: 700, color: subColor || "var(--steel)" }}>{sub}</div>}
     </div>
   );
 }
 const coverTxt = (c) => c == null ? "—" : c > 30 ? ">30s" : `${c}s`;
+const dCover = (c) => c == null ? "—" : c > 60 ? ">60d" : `${c}d`;   // days-of-cover formatter
 function ShiftReportView({ shift }) {
   const [d, setD] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
   const isNight = shift === "night";
@@ -2087,23 +2121,40 @@ function ShiftReportView({ shift }) {
 
       {/* KPI cards — like the PDF header */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
-        <KpiCard label="Total sales" value={L(t.totalSales)} />
-        <KpiCard label="Sites reported" value={`${t.sitesReported}/${t.sitesTotal}`} tone={t.sitesReported >= t.sitesTotal ? "good" : undefined} />
-        <KpiCard label="Blend sales" value={L(t.blendSales)} />
-        <KpiCard label="Diesel sales" value={L(t.dieselSales)} />
-        {t.hasUlp && <KpiCard label="ULP sales" value={L(t.ulpSales)} />}
-        <KpiCard label="Total stock" value={L(t.totalStock)} />
+        <KpiCard label="Total sales" value={L(t.totalSales)}
+          sub={t.salesDiffPct != null ? `${arrow(t.salesDiffPct)} ${Math.abs(t.salesDiffPct)}% vs prev day` : (t.prevTotalSales == null ? "no prev day" : "")}
+          subColor={dTone(t.salesDiffPct)} />
+        <KpiCard label="Sites reported" value={`${t.sitesReported}/${t.sitesTotal}`} tone={t.sitesReported >= t.sitesTotal ? "good" : undefined}
+          sub={t.sitesReported < t.sitesTotal ? `${t.sitesTotal - t.sitesReported} outstanding` : "all in"} />
+        <KpiCard label="Blend sales" value={L(t.blendSales)} sub={t.blendCover != null ? `${coverTxt(t.blendCover)} cover` : ""} />
+        <KpiCard label="Diesel sales" value={L(t.dieselSales)} sub={t.dieselCover != null ? `${coverTxt(t.dieselCover)} cover` : ""} />
+        {t.hasUlp && <KpiCard label="ULP sales" value={L(t.ulpSales)} sub={t.ulpCover != null ? `${coverTxt(t.ulpCover)} cover` : ""} />}
+        <KpiCard label="Total stock" value={L(t.totalStock)} sub={t.cover != null ? `${coverTxt(t.cover)} network cover` : ""}
+          subColor={t.cover != null && t.cover < 2 ? "var(--red)" : "var(--steel)"} />
         <KpiCard label="Low stock sites" value={t.lowStockCount} tone={t.lowStockCount > 0 ? "bad" : "good"} />
       </div>
+
+      {/* Stock cover by product — how long the network's stock lasts at the current rate */}
+      {(t.blendCover != null || t.dieselCover != null || t.ulpCover != null) && (
+        <Panel style={{ marginBottom: 14 }}>
+          <span className="lbl">Stock cover by product <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· shifts of cover at the current sales rate</span></span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
+            <KpiCard label="Blend" value={coverTxt(t.blendCover)} sub={`${L(t.blendStock)} in tank`} tone={t.blendCover != null && t.blendCover < 2 ? "bad" : undefined} />
+            <KpiCard label="Diesel" value={coverTxt(t.dieselCover)} sub={`${L(t.dieselStock)} in tank`} tone={t.dieselCover != null && t.dieselCover < 2 ? "bad" : undefined} />
+            {t.hasUlp && <KpiCard label="ULP" value={coverTxt(t.ulpCover)} sub={`${L(t.ulpStock)} in tank`} tone={t.ulpCover != null && t.ulpCover < 2 ? "bad" : undefined} />}
+            <KpiCard label="Network" value={coverTxt(t.cover)} sub={`${L(t.totalStock)} total`} tone="good" />
+          </div>
+        </Panel>
+      )}
 
       {/* Tender split (US$) — how the shift's takings were tendered */}
       {(t.tenderTotal > 0) && (
         <Panel style={{ marginBottom: 14 }}>
           <span className="lbl">Split of sales by tender (US$)</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
-            <KpiCard label="Cash" value={"$" + full(t.cashTender)} />
-            <KpiCard label="Petrotrade" value={"$" + full(t.petroTender)} />
-            <KpiCard label="DA card" value={"$" + full(t.dacardTender)} />
+            <KpiCard label="Cash" value={"$" + full(t.cashTender)} sub={t.cashPctOfTender != null ? `${t.cashPctOfTender}% of takings` : ""} />
+            <KpiCard label="Petrotrade" value={"$" + full(t.petroTender)} sub={t.tenderTotal > 0 ? `${Math.round((t.petroTender / t.tenderTotal) * 100)}%` : ""} />
+            <KpiCard label="DA card" value={"$" + full(t.dacardTender)} sub={t.tenderTotal > 0 ? `${Math.round((t.dacardTender / t.tenderTotal) * 100)}%` : ""} />
             <KpiCard label="Total tendered" value={"$" + full(t.tenderTotal)} tone="good" />
           </div>
         </Panel>
@@ -2157,7 +2208,7 @@ function ShiftReportView({ shift }) {
           )}
           {d.missingShift.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#B4801F", marginBottom: 4 }}>{isNight ? "Partial (one shift only)" : "Day shift missing"} ({d.missingShift.length})</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#B4801F", marginBottom: 4 }}>{isNight ? "Night shift not submitted" : "Day shift not submitted"} ({d.missingShift.length})</div>
               <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.7 }}>{d.missingShift.join(" · ")}</div>
             </div>
           )}
@@ -2391,6 +2442,68 @@ const FilterBox = ({ value, onChange, placeholder }) => (
 // Losses and Prices (the executive screens managers asked to also see).
 // Midday dip — standalone view (executive dashboard). Same read as the manager
 // Bird's-eye midday tab, self-fetching the latest snapshot.
+// Fleet allocation vs the system estimate: the system calculates an estimate; the approver
+// can allocate higher (over) or lower (under). This records and reports that variance daily.
+export function AllocationReport() {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
+  useEffect(() => {
+    setD(null); setErr(null);
+    const to = todayISO(); const from = new Date(Date.now() - (days - 1) * 864e5).toISOString().slice(0, 10);
+    getFleetAllocation(from, to).then(setD).catch((e) => setErr(e.message));
+  }, [days]);
+  const vColor = (v) => (v > 0 ? "var(--red)" : v < 0 ? "#C77A15" : "var(--steel)");
+  const vTxt = (v) => (v > 0 ? "+" : "") + L(v);
+  if (err) return <Note tone="red" title="Couldn't load the allocation report">{err}</Note>;
+  if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading allocation report…</div></Panel>;
+  const t = d.totals;
+  return (<>
+    <Note tone="blue" title="Allocation vs system estimate">The app calculates an estimated allocation from the route and the truck&rsquo;s efficiency. The approver can allocate higher (<b style={{ color: "var(--red)" }}>over</b>) or lower (<b style={{ color: "#C77A15" }}>under</b>). This is the daily record of that variance across the fleet.</Note>
+    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+      {[7, 30, 90].map((n) => <button key={n} onClick={() => setDays(n)} className={days === n ? "pill" : "pill-ghost"} style={{ padding: "6px 14px", fontSize: 12 }}>{n}d</button>)}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))", gap: 12, marginBottom: 12 }}>
+      <Hero label="ESTIMATED" value={compact(t.estimated)} unit="L" accent="#8FB8FF" />
+      <Hero label="ALLOCATED" value={compact(t.allocated)} unit="L" />
+      <Hero label="NET VARIANCE" value={vTxt(t.variance)} unit="L" sub={t.estimated ? `${((t.variance / t.estimated) * 100).toFixed(1)}%` : ""} accent={t.variance > 0 ? "#E5604D" : t.variance < 0 ? "#C77A15" : "#6BC048"} />
+      <Hero label="OVER-ALLOCATED" value={t.overCount} sub={`+${compact(t.overLitres)} L`} accent="#E5604D" />
+      <Hero label="UNDER-ALLOCATED" value={t.underCount} sub={`${compact(t.underLitres)} L`} accent="#C77A15" />
+    </div>
+    {(!d.daily || !d.daily.length) && <Note tone="amber" title="No fleet approvals to compare">No approved fleet fuel request carried a system estimate in the last {days} days.</Note>}
+    {d.daily && d.daily.length > 0 && (<>
+      <div className="lbl" style={{ marginBottom: 6 }}>Daily</div>
+      <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}><div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th right>Reqs</Th><Th right>Estimated</Th><Th right>Allocated</Th><Th right>Variance</Th><Th right>Over</Th><Th right>Under</Th></tr></thead>
+          <tbody>{d.daily.map((r) => (
+            <tr key={r.day} style={{ borderTop: "1px solid var(--line)" }}>
+              <Td>{fmtD(r.day)}</Td><Td right>{r.requests}</Td><Td right>{full(r.estimated)}</Td><Td right>{full(r.allocated)}</Td>
+              <Td right style={{ fontWeight: 700, color: vColor(r.variance) }}>{vTxt(r.variance)}</Td>
+              <Td right style={{ color: r.over ? "var(--red)" : "var(--steel)" }}>{r.over || "—"}</Td>
+              <Td right style={{ color: r.under ? "#C77A15" : "var(--steel)" }}>{r.under || "—"}</Td>
+            </tr>))}</tbody>
+        </table>
+      </div></Panel>
+      <div className="lbl" style={{ marginBottom: 6 }}>Over / under-allocations · biggest first</div>
+      <FilterBox value={q} onChange={setQ} />
+      <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th>Driver</Th><Th>Truck</Th><Th right>Est.</Th><Th right>Alloc.</Th><Th right>Variance</Th><Th>Approver</Th></tr></thead>
+          <tbody>{(d.deviations || []).filter((x) => rowMatches(x, q)).slice(0, 200).map((x) => (
+            <tr key={x.ref} style={{ borderTop: "1px solid var(--line)" }} title={x.note || ""}>
+              <Td style={{ color: "var(--steel)" }}>{fmtD(x.day)}</Td>
+              <Td>{x.driver}</Td><Td style={{ color: "var(--steel)" }}>{x.truck}</Td>
+              <Td right>{full(x.estimated)}</Td><Td right>{full(x.allocated)}</Td>
+              <Td right style={{ fontWeight: 700, color: vColor(x.variance) }}>{vTxt(x.variance)}{x.pct != null ? ` (${x.pct > 0 ? "+" : ""}${x.pct}%)` : ""}</Td>
+              <Td style={{ color: "var(--steel)" }}>{x.approver}</Td>
+            </tr>))}</tbody>
+        </table>
+      </div></Panel>
+      {!d.deviations?.length && <div style={{ fontSize: 12, color: "var(--ok)", padding: "8px 2px" }}>Every fleet allocation matched the system estimate exactly in this window.</div>}
+    </>)}
+  </>);
+}
+
 export function MiddayDipView() {
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
   useEffect(() => { const to = todayISO(); const from = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", from, to).then(setD).catch((e) => setErr(e.message)); }, []);
@@ -2398,12 +2511,19 @@ export function MiddayDipView() {
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
   if (!Array.isArray(d.sites) || !d.sites.length) return <Note tone="amber" title="No midday dip yet">No site has submitted a midday tank dip for this window.</Note>;
   return (<>
-    <Note tone="blue" title={`Midday dip · ${d.date ? fmtD(d.date) : "—"}`}>Stock-only snapshot taken between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
+    <Note tone="blue" title="Midday dip · latest available stock">Showing the <b>latest available site stock figures</b> — most sites as at {d.date ? fmtD(d.date) : "—"}. Today&rsquo;s midday dip is due around midday and may not be in yet; each site&rsquo;s own dip date is in the <b>At</b> column. Stock-only snapshot between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
       <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF" />
-      <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" />
+      <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" sub={d.totals.daysCover != null ? `${dCover(d.totals.daysCover)} network cover` : ""} accent={d.totals.daysCover != null && d.totals.daysCover < 2 ? "#E5604D" : undefined} />
       <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"} />
     </div>
+    {(d.totals.blendCover != null || d.totals.dieselCover != null) && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 12, marginBottom: 12 }}>
+        <Hero label="BLEND COVER" value={dCover(d.totals.blendCover)} sub={`${compact(d.totals.blendStock)} L`} accent={d.totals.blendCover != null && d.totals.blendCover < 2 ? "#E5604D" : "#6BC048"} />
+        <Hero label="DIESEL COVER" value={dCover(d.totals.dieselCover)} sub={`${compact(d.totals.dieselStock)} L`} accent={d.totals.dieselCover != null && d.totals.dieselCover < 2 ? "#E5604D" : "#6BC048"} />
+        {d.hasUlp && <Hero label="ULP COVER" value={dCover(d.totals.ulpCover)} sub={`${compact(d.totals.ulpStock)} L`} accent={d.totals.ulpCover != null && d.totals.ulpCover < 2 ? "#E5604D" : "#6BC048"} />}
+      </div>
+    )}
     <FilterBox value={q} onChange={setQ} />
     <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
       <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
@@ -2423,7 +2543,7 @@ export function MiddayDipView() {
   </>);
 }
 
-export function ManagerBirdsEye() {
+export function ManagerBirdsEye({ me } = {}) {
   const [tab, setTab] = useState("scorecard");
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
@@ -2432,6 +2552,7 @@ export function ManagerBirdsEye() {
   const [siteSel, setSiteSel] = useState("");
   const [q, setQ] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [drill, setDrill] = useState(null);   // a site drilled into → day-end reconciliation sheet
   const w = periodWindow(period, range);
   const ANALYTIC = ["scorecard", "dayend", "tanktrends", "statustrends", "midday"];
   useEffect(() => {
@@ -2442,7 +2563,10 @@ export function ManagerBirdsEye() {
   }, [tab, w.from, w.to, reloadKey]);
   useEffect(() => { if (tab === "prices" && !ex) getExecutive("month").then(setEx).catch(() => {}); }, [tab, ex]);
 
-  const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["dayshift", "Day shift"], ["nightshift", "Night shift"], ["losses", "Losses"], ["cash", "Cash banked"], ["prices", "Prices"]];
+  // Logistics-managers (Ranga, Kuda) get an operational bird's-eye without the finance
+  // detail tabs (day-end reconciliation, tank/status trends, cash banking).
+  const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash"]) : new Set();
+  const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));
   const $ = (v) => "$" + full(v);
   const lossCol = (s) => (s === "critical" ? "var(--red)" : s === "watch" ? "var(--amber)" : "var(--ok)");
 
@@ -2478,8 +2602,8 @@ export function ManagerBirdsEye() {
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Revenue</Th><Th right>Volume</Th><Th right>Delivery</Th><Th right>Site loss</Th><Th right>Total loss</Th><Th right>Loss %</Th><Th right>Cash %</Th><Th right>Short</Th></tr></thead>
             <tbody>{d.sites.filter((s) => rowMatches(s, q)).map((s) => (
-              <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
-                <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}</Td>
+              <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
+                <Td>{s.status === "critical" ? "⚠ " : ""}{s.site} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></Td>
                 <Td right>{$(s.revenue)}</Td><Td right>{full(s.volume)}</Td>
                 <Td right style={{ color: s.deliveryLoss > 0 ? "var(--red)" : "var(--steel)" }}>{full(s.deliveryLoss)}</Td>
                 <Td right style={{ color: s.siteLoss > 0 ? "var(--red)" : "var(--steel)" }}>{full(s.siteLoss)}</Td>
@@ -2499,8 +2623,8 @@ export function ManagerBirdsEye() {
               <Th>Site</Th><Th>Date</Th><Th right>Total sales</Th><Th right>Coupons</Th><Th right>Cards</Th><Th right>Swipe</Th><Th right>Banking</Th><Th right>Petty</Th><Th right>Expected cash</Th><Th right>Actual banked</Th><Th right>Variance</Th><Th right>% Banked</Th><Th right>Δ</Th>
             </tr></thead>
             <tbody>{d.rows.filter((r) => rowMatches(r, q)).slice(0, 400).map((r, i) => (
-              <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td>{r.site}</Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
+              <tr key={i} onClick={() => setDrill(r.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                <Td>{r.site} <span style={{ color: "var(--steel)" }}>›</span></Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
                 <Td right>{$(r.total)}</Td>
                 <Td right style={{ color: "var(--steel)" }}>{r.coupons ? $(r.coupons) : "—"}</Td>
                 <Td right style={{ color: "var(--steel)" }}>{r.cards ? $(r.cards) : "—"}</Td>
@@ -2587,11 +2711,14 @@ export function ManagerBirdsEye() {
       })()}
 
       {tab === "midday" && d && Array.isArray(d.sites) && (<>
-        <Note tone="blue" title={`Midday dip · ${d.date ? fmtD(d.date) : "—"}`}>Stock-only snapshot taken between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
+        <Note tone="blue" title="Midday dip · latest available stock">Showing the <b>latest available site stock figures</b> — most sites as at {d.date ? fmtD(d.date) : "—"}. Today&rsquo;s midday dip is due around midday and may not be in yet; each site&rsquo;s own dip date is in the <b>At</b> column. Stock-only snapshot between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
           <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF" />
-          <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" />
+          <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" sub={d.totals.daysCover != null ? `${dCover(d.totals.daysCover)} network cover` : ""} accent={d.totals.daysCover != null && d.totals.daysCover < 2 ? "#E5604D" : undefined} />
           <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"} />
+          {d.totals.blendCover != null && <Hero label="BLEND COVER" value={dCover(d.totals.blendCover)} sub={`${compact(d.totals.blendStock)} L`} accent={d.totals.blendCover < 2 ? "#E5604D" : "#6BC048"} />}
+          {d.totals.dieselCover != null && <Hero label="DIESEL COVER" value={dCover(d.totals.dieselCover)} sub={`${compact(d.totals.dieselStock)} L`} accent={d.totals.dieselCover < 2 ? "#E5604D" : "#6BC048"} />}
+          {d.hasUlp && d.totals.ulpCover != null && <Hero label="ULP COVER" value={dCover(d.totals.ulpCover)} sub={`${compact(d.totals.ulpStock)} L`} accent={d.totals.ulpCover < 2 ? "#E5604D" : "#6BC048"} />}
         </div>
         <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
@@ -2616,6 +2743,7 @@ export function ManagerBirdsEye() {
       {tab === "losses" && <WetstockView />}
       {tab === "cash" && <CashOffice readOnly />}
       {tab === "prices" && (ex ? <ExecPrices prices={ex.prices} onDrill={() => {}} /> : <Panel><div style={{ color: "var(--steel)" }}>Loading prices…</div></Panel>)}
+      {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
     </Wrap>
   );
 }
@@ -2784,14 +2912,31 @@ export function CashView() {
   useEffect(() => {
     if (period === "range" && !(range.from && range.to)) return;
     const w = periodWindow(period, range);
-    setD(null); setErr(null); getCash(w.days).then(setD).catch((e) => setErr(e.message));
+    setD(null); setErr(null);
+    // Derive expected/confirmed/variance from the SAME per-day rows as the banking-
+    // reconciliation screen, so the two views ALWAYS land on the same conclusion.
+    // getCash is used only for the tender-mix panel.
+    Promise.all([getCashRecon(w.days, w.from, w.to), getCash(w.days).catch(() => null)])
+      .then(([rec, cash]) => {
+        const bySite = {};
+        for (const r of (rec.rows || [])) {
+          const g = bySite[r.siteId] || (bySite[r.siteId] = { site: r.site, expectedCash: 0, confirmedReceived: 0 });
+          g.expectedCash += r.expected || 0;
+          g.confirmedReceived += r.received || 0;
+        }
+        const sites = Object.values(bySite).map((g) => ({ ...g, cashDiff: g.expectedCash - g.confirmedReceived }));
+        const expectedCash = sites.reduce((a, s) => a + s.expectedCash, 0);
+        const receivedCash = sites.reduce((a, s) => a + s.confirmedReceived, 0);
+        setD({ days: w.days, sites, expectedCash, receivedCash, cashDiff: expectedCash - receivedCash, tender: cash?.tender });
+      })
+      .catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
   const $ = (v) => "$" + full(v);
   const [drill, setDrill] = useState(null);
   return (
     <Wrap>
-      <SectionHead title="Cash collections" sub="Takings, tender mix & till variance per site — from the day-end report" />
+      <SectionHead title="Cash collections" sub="Expected cash vs received cash, per site — from the day-end report" />
       <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
       <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
@@ -2802,28 +2947,22 @@ export function CashView() {
       {d && (d.sites || []).length > 0 && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={$(d.expected)} label={`Takings · ${d.days}d`} tone="ok" />
-            <CountPill n={$(Math.abs(d.cashVarTotal))} label={`Till ${d.cashVarTotal >= 0 ? "short" : "over"}`} tone={Math.abs(d.cashVarTotal) > d.expected * 0.005 ? "amber" : "ok"} />
-            <CountPill n={$(d.couponFloat)} label="Coupon float" tone="ok" />
-            <CountPill n={$(Math.abs(d.unaccounted))} label="Unaccounted" tone={d.critical ? "red" : d.watch ? "amber" : "ok"} />
-            {d.bankingTracked && <CountPill n={$(d.unbankedTotal)} label="Cash unbanked" tone={d.unbankedTotal > 0 ? "amber" : "ok"} />}
+            <CountPill n={$(d.expectedCash)} label={`Expected cash · ${d.days}d`} tone="ok" />
+            <CountPill n={$(d.receivedCash)} label="Confirmed at HQ" tone="ok" />
+            <CountPill n={$(d.cashDiff)} label="Variance" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"} />
           </div>
           {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
           <Panel style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                  <Th>Site</Th><Th right>Expected</Th><Th right>Cash</Th><Th right>DA card</Th><Th right>Coupons</Th><Th right>Received</Th><Th right>Variance</Th><Th right>Till +/−</Th></tr></thead>
-                <tbody>{d.sites.map((s) => (
-                  <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
-                    <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                    <Td right style={{ fontWeight: 700 }}>{$(s.expected)}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{$(s.cashSale)}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{$(s.daCard)}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{$(s.coupons)}</Td>
-                    <Td right style={{ fontWeight: 600, color: s.received != null ? "var(--navy)" : "var(--steel)" }} title={s.received != null ? "Cash office confirmed: cash + banking" : "Cash office hasn't confirmed yet"}>{s.received != null ? $(s.received) : "—"}</Td>
-                    <Td right style={{ fontWeight: 700, color: s.variance == null ? "var(--steel)" : Math.abs(s.variance) < 1 ? "var(--ok)" : s.variance > 0 ? "var(--red)" : "var(--ok)" }} title={s.variance == null ? "awaiting confirmation" : s.variance > 0 ? "short — received less than expected" : "over"}>{s.variance == null ? "—" : (s.variance > 0 ? "−" : s.variance < 0 ? "+" : "") + $(Math.abs(s.variance))}</Td>
-                    <Td right style={{ color: Math.abs(s.cashVar) > 50 ? "var(--amber)" : "var(--steel)" }}>{s.cashVar ? "$" + compact(Math.abs(s.cashVar)) : "—"}</Td>
+                  <Th>Site</Th><Th right>Expected cash</Th><Th right>Confirmed at HQ</Th><Th right>Variance</Th></tr></thead>
+                <tbody>{[...d.sites].sort((a, b) => (b.cashDiff || 0) - (a.cashDiff || 0)).map((s) => (
+                  <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (s.cashDiff || 0) > 50 ? "#FFF7E6" : "#fff" }}>
+                    <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                    <Td right style={{ fontWeight: 700 }}>{s.expectedCash != null ? $(s.expectedCash) : "—"}</Td>
+                    <Td right style={{ fontWeight: 600, color: s.confirmedReceived != null ? "var(--navy)" : "var(--steel)" }}>{s.confirmedReceived != null ? $(s.confirmedReceived) : "—"}</Td>
+                    <Td right style={{ fontWeight: 700, color: s.cashDiff == null ? "var(--steel)" : s.cashDiff > 50 ? "var(--red)" : s.cashDiff < -50 ? "var(--ok)" : "var(--steel)" }} title={s.cashDiff > 0 ? "cash short" : s.cashDiff < 0 ? "cash over" : "square"}>{s.cashDiff == null ? "—" : s.cashDiff === 0 ? "$0" : (s.cashDiff > 0 ? $(s.cashDiff) : `(${$(Math.abs(s.cashDiff))})`)}</Td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -2914,11 +3053,29 @@ export function CashOffice({ readOnly = false } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [drill, setDrill] = useState(null);
+  const [siteDrill, setSiteDrill] = useState(null);
   const [onlyOpen, setOnlyOpen] = useState(true);
   useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
   const $ = (v) => "$" + full(v);
   const rows = d ? (onlyOpen ? d.openItems : d.rows) : [];
+  // Open view: one line per site — the accumulated still-open exposure — instead of
+  // one line per site-day (which runs to hundreds of rows). Tap a site to see its days.
+  const bySite = (() => {
+    const m = new Map();
+    for (const r of (d && onlyOpen ? d.openItems : [])) {
+      let g = m.get(r.siteId);
+      if (!g) { g = { siteId: r.siteId, site: r.site, days: [], openDays: 0, expected: 0, received: 0, banked: 0, unbanked: 0, oldest: r.date, recvNull: false }; m.set(r.siteId, g); }
+      g.days.push(r);
+      g.openDays++;
+      g.expected += r.expected || 0;
+      g.banked += r.depConfirmed || 0;
+      if (r.received == null) g.recvNull = true; else g.received += r.received;
+      g.unbanked += (r.unbanked == null ? Math.max(0, (r.expected || 0) - (r.depConfirmed || 0)) : r.unbanked);
+      if (r.date < g.oldest) g.oldest = r.date;
+    }
+    return [...m.values()].sort((a, b) => b.unbanked - a.unbanked);
+  })();
   return (
     <Wrap>
       <SectionHead title="Cash office — banking reconciliation" sub={readOnly ? "Banked vs expected, by site and day — view only" : "Confirm site deposits, record the cash received, and close each day"} />
@@ -2929,38 +3086,82 @@ export function CashOffice({ readOnly = false } = {}) {
       {d && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <CountPill n={$(d.summary.expected)} label="Expected cash" tone="ok" />
+            <CountPill n={$(d.summary.received)} label="Received cash" tone="ok" />
+            <CountPill n={$(d.summary.shortfall)} label="Still short (open)" tone={d.summary.shortfall > 0 ? "red" : "ok"} />
             <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"} />
-            <CountPill n={d.summary.pendingDeposits} label="Deposits to confirm" tone={d.summary.pendingDeposits ? "amber" : "ok"} />
-            <CountPill n={$(d.summary.unbanked)} label="Cash unbanked" tone={d.summary.unbanked > 0 ? "amber" : "ok"} />
-            <CountPill n={$(d.summary.shortfall)} label="Cash short" tone={d.summary.shortfall > 0 ? "red" : "ok"} />
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
           </div>
-          {rows.length === 0 && <Note tone="ok" title={onlyOpen ? "Nothing open" : "No days in window"}>{onlyOpen ? "Every day in this window is closed." : "No cash days found for this window."}</Note>}
-          {rows.length > 0 && (
-            <Panel style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ overflowX: "auto" }}>
-                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Day</Th><Th right>Expected</Th><Th right>Received</Th><Th right>Banked</Th><Th right>Unbanked</Th><Th>Status</Th></tr></thead>
-                  <tbody>{rows.map((r) => (
-                    <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.status === "open" ? "#FFF7E6" : "#fff" }}>
-                      <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                      <Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
-                      <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
-                      <Td right>{r.received == null ? "—" : $(r.received)}</Td>
-                      <Td right style={{ color: "var(--steel)" }}>{$(r.depConfirmed)}{r.pendingCount ? ` +${r.pendingCount}?` : ""}</Td>
-                      <Td right style={{ color: r.unbanked > 0 ? "var(--amber)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
-                      <Td>{r.status === "open" ? <span style={{ color: "var(--amber)", fontWeight: 700 }}>OPEN</span> : <span style={{ color: "var(--ok)" }}>closed</span>}</Td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </Panel>
+          {onlyOpen ? (
+            bySite.length === 0
+              ? <Note tone="ok" title="Nothing open">Every day in this window is closed.</Note>
+              : (
+                <Panel style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Open days</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Still short</Th></tr></thead>
+                      <tbody>{bySite.map((g) => (
+                        <tr key={g.siteId} onClick={() => setSiteDrill(g)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
+                          <Td>{g.site}<span style={{ color: "var(--steel)" }}> ›</span><div style={{ fontSize: 10, color: "var(--steel)" }}>oldest {fmtD(g.oldest)}</div></Td>
+                          <Td right>{g.openDays}</Td>
+                          <Td right style={{ fontWeight: 700 }}>{$(g.expected)}</Td>
+                          <Td right>{$(g.received)}{g.recvNull ? "+" : ""}</Td>
+                          <Td right style={{ color: g.unbanked > 0 ? "var(--red)" : "var(--steel)", fontWeight: 700 }}>{$(g.unbanked)}</Td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </Panel>
+              )
+          ) : (
+            rows.length === 0
+              ? <Note tone="ok" title="No days in window">No cash days found for this window.</Note>
+              : (
+                <Panel style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Day</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Short</Th><Th>Status</Th></tr></thead>
+                      <tbody>{rows.map((r) => (
+                        <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.status === "open" ? "#FFF7E6" : "#fff" }}>
+                          <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                          <Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
+                          <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
+                          <Td right>{r.received == null ? "—" : $(r.received)}</Td>
+                          <Td right style={{ color: r.unbanked > 0 ? "var(--red)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
+                          <Td>{r.status === "open" ? <span style={{ color: "var(--red)", fontWeight: 700 }}>SHORT</span> : <span style={{ color: "var(--ok)" }}>received</span>}</Td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </Panel>
+              )
           )}
         </>
       )}
-      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} readOnly={readOnly} onDone={() => { setDrill(null); reload(); }} /></DetailSheet>}
+      {siteDrill && !drill && <DetailSheet title={siteDrill.site} sub={`${siteDrill.openDays} open ${siteDrill.openDays === 1 ? "day" : "days"} · $${full(siteDrill.unbanked)} still open`} onClose={() => setSiteDrill(null)}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <CountPill n={$(siteDrill.expected)} label="Expected" tone="ok" />
+          <CountPill n={$(siteDrill.banked)} label="Banked" tone="ok" />
+          <CountPill n={$(siteDrill.unbanked)} label="Still open" tone={siteDrill.unbanked > 0 ? "amber" : "ok"} />
+        </div>
+        <div className="lbl" style={{ marginBottom: 6 }}>Open days — tap one to reconcile</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Short</Th></tr></thead>
+            <tbody>{siteDrill.days.map((r) => (
+              <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
+                <Td>{fmtD(r.date)}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
+                <Td right>{r.received == null ? "—" : $(r.received)}</Td>
+                <Td right style={{ color: r.unbanked > 0 ? "var(--red)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </DetailSheet>}
+      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} readOnly={readOnly} onDone={() => { setDrill(null); setSiteDrill(null); reload(); }} /></DetailSheet>}
     </Wrap>
   );
 }
@@ -3443,9 +3644,17 @@ function ComplianceBoard({ rows }) {
   const bar = (n) => <span style={{ color: n >= days ? "var(--ok)" : n === 0 ? "var(--red)" : "var(--amber)" }}>{n}/{days}</span>;
   const [drill, setDrill] = useState(null);
   const cell = (ok, k) => <td key={k} style={{ textAlign: "center", padding: "4px 2px", color: ok ? "var(--ok)" : "var(--red)", fontWeight: 700 }}>{ok ? "✓" : "✕"}</td>;
+  const SHIFT_LBL = { night: "Night", midday: "Midday", day: "Day" };
+  const overdueChips = (r) => (r.outstanding && r.outstanding.length)
+    ? <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>{r.outstanding.map((s) => (
+        <span key={s} style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#C0392B", padding: "1px 6px", borderRadius: 10 }}>{SHIFT_LBL[s] || s}</span>
+      ))}</span>
+    : <span style={{ color: "var(--ok)" }}>✓</span>;
+  const overdueCount = rows.filter((r) => r.outstanding && r.outstanding.length).length;
   return (
     <>
-      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <CountPill n={overdueCount} label="Overdue now" tone={overdueCount ? "red" : "ok"} />
         <CountPill n={avg + "%"} label={`Avg compliance · ${days}d`} tone={avg >= 80 ? "ok" : "amber"} />
         <CountPill n={rows.filter((r) => r.pct === 0).length} label="Never reported" tone={rows.some((r) => r.pct === 0) ? "red" : "ok"} />
         <CountPill n={rows.filter((r) => r.pct < 50).length} label="Under 50%" tone="amber" />
@@ -3453,10 +3662,11 @@ function ComplianceBoard({ rows }) {
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Score</Th><Th right>Sales</Th><Th right>Stock</Th><Th right>Price</Th></tr></thead>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Overdue now</Th><Th right>Score</Th><Th right>Sales</Th><Th right>Stock</Th><Th right>Price</Th></tr></thead>
             <tbody>{rows.map((r) => (
-              <tr key={r.site} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
-                <Td>{r.pct < 50 ? "⚠ " : ""}{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+              <tr key={r.site} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (r.outstanding && r.outstanding.length) ? "#FDECEA" : r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
+                <Td>{(r.outstanding && r.outstanding.length) ? "⚠ " : ""}{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                <Td right>{overdueChips(r)}</Td>
                 <Td right style={{ fontWeight: 700, color: r.pct >= 80 ? "var(--ok)" : r.pct === 0 ? "var(--red)" : "var(--amber)" }}>{r.pct}%</Td>
                 <Td right>{bar(r.salesDays)}</Td><Td right>{bar(r.stockDays)}</Td><Td right>{bar(r.priceDays)}</Td>
               </tr>
@@ -3793,7 +4003,7 @@ const vcf = (tempC, commodity) => {
   return Math.exp(-a * dT * (1 + 0.8 * a * dT));
 };
 
-export function DeliverySubmit({ me }) {
+export function DeliverySubmit({ me, initial, onLeave }) {
   const emptyTank = { tank: "", product: "", openMm: "", openL: "", closeMm: "", closeL: "", temp: "" };
   const [f, setF] = useState({ dnDate: todayISO(), tripNo: "", site: "", commodity: "Diesel", density: "", qtyLoaded: "", truckReg: "", truckName: "", trailer: "", note: "" });
   const [sites, setSites] = useState([]);
@@ -3812,7 +4022,7 @@ export function DeliverySubmit({ me }) {
   }, []);
   const confirmCollect = async (tripNo) => {
     setCollecting(true); setMsg(null);
-    try { await collectTrip(tripNo); await reloadTrips(); }
+    try { await collectTrip(tripNo); try { await startTracking(tripNo); } catch { /* tracking is best-effort */ } await reloadTrips(); }
     catch (e) { setMsg({ tone: "red", title: "Couldn't confirm", body: e.message }); }
     finally { setCollecting(false); }
   };
@@ -3852,19 +4062,44 @@ export function DeliverySubmit({ me }) {
   // temperature-corrected loss preview
   const preview = useMemo(() => {
     if (!qtyLoaded || !siteDip) return null;
-    const siteTemps = tanks.map((t) => num(t.temp)).filter(Boolean);
-    const st = siteTemps.length ? siteTemps.reduce((a, b) => a + b, 0) / siteTemps.length : 20;
-    const siteCorr = Math.round(siteDip * vcf(st, f.commodity));
-    const raw = +(qtyLoaded - siteDip).toFixed(1), adj = +(qtyLoaded - siteCorr).toFixed(1);
-    return { raw, rawPct: +((raw / qtyLoaded) * 100).toFixed(2), adj, adjPct: +((adj / qtyLoaded) * 100).toFixed(2) };
-  }, [qtyLoaded, siteDip, tanks, f.commodity]);
+    const avgT = (xs) => { const v = xs.map(num).filter(Boolean); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 20; };
+    const truckT = avgT(comps.map((c) => c.temp)), siteT = avgT(tanks.map((t) => t.temp));
+    // Correct BOTH the truck's arrival dip and the site receipt to 20°C, then split the
+    // loss: dispatched→arrived (loading + road) and arrived→received (the discharge handover).
+    const truckCorr = truckDip ? Math.round(truckDip * vcf(truckT, f.commodity)) : 0;
+    const siteCorr = Math.round(siteDip * vcf(siteT, f.commodity));
+    const before = truckCorr ? +(qtyLoaded - truckCorr).toFixed(1) : null;
+    const discharge = truckCorr ? +(truckCorr - siteCorr).toFixed(1) : null;
+    const total = +(qtyLoaded - siteCorr).toFixed(1), raw = +(qtyLoaded - siteDip).toFixed(1);
+    const pct = (x) => +((x / qtyLoaded) * 100).toFixed(2);
+    return { truckCorr, siteCorr, truckT, siteT, before, discharge, total, raw,
+             totalPct: pct(total), beforePct: truckCorr ? pct(before) : null, dischargePct: truckCorr ? pct(discharge) : null };
+  }, [qtyLoaded, truckDip, siteDip, comps, tanks, f.commodity]);
 
   const trip = trips.find((t) => t.tripNo === f.tripNo);
   const tripDrops = trip?.drops || [];
+  // Deep-linked from a specific trip (Deliveries due / notification): the note is
+  // bound to THAT trip — the driver can't swap to a different one.
+  const [freed, setFreed] = useState(false);   // "New delivery note" releases the deep-link lock
+  const locked = !!(initial && initial.tripNo) && !freed;
   const pickDrop = (siteName) => {
     const d = tripDrops.find((x) => x.site === siteName);
     setF((s) => ({ ...s, site: siteName, ...(d && d.qty ? { qtyLoaded: String(d.qty) } : {}) }));
   };
+  // Deep-link from "Deliveries due": pre-select the trip + drop so the driver lands
+  // straight on the note for the trip they tapped — no re-selecting.
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || !initial || !initial.tripNo) return;
+    const t = trips.find((x) => x.tripNo === initial.tripNo);
+    if (!t) return;                       // wait until this driver's trips have loaded
+    pickTrip(initial.tripNo);
+    if (initial.site) pickDrop(initial.site);
+    setPrefilled(true);
+  }, [initial, trips, prefilled]);   // eslint-disable-line
+  // Leaving the screen clears the deep-link so the trip lock doesn't stick to a stale
+  // trip the next time the Delivery tab is opened manually.
+  useEffect(() => () => { onLeave && onLeave(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const valid = f.tripNo && f.site && f.density && tanks.some((t) => t.closeL !== "" && t.openL !== "");
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
@@ -3892,7 +4127,7 @@ export function DeliverySubmit({ me }) {
       <Panel>
         <Note tone="ok" title={`Delivery note ${done.dnNo} captured`}>It's recorded and awaiting sign-off. Both the driver and the receiving site must approve it before it posts.</Note>
         {done.vcf && <div className="mono" style={{ fontSize: 13, color: "var(--steel)", marginBottom: 12 }}>Combined loss {L(done.vcf.combinedLoss)} L · temp-corrected {done.vcf.adjustedLossPct}%</div>}
-        <button className="pill" style={{ width: "100%" }} onClick={() => { setDone(null); setF((s) => ({ ...s, tripNo: "", qtyLoaded: "", note: "" })); setTanks((ts) => ts.map((t) => ({ ...emptyTank, tank: t.tank, product: t.product }))); setComps([{ comp: "1", mm: "", litres: "", temp: "" }]); }}>New delivery note</button>
+        <button className="pill" style={{ width: "100%" }} onClick={() => { setDone(null); setFreed(true); setPrefilled(true); setF((s) => ({ ...s, tripNo: "", qtyLoaded: "", note: "" })); setTanks((ts) => ts.map((t) => ({ ...emptyTank, tank: t.tank, product: t.product }))); setComps([{ comp: "1", mm: "", litres: "", temp: "" }]); }}>New delivery note</button>
       </Panel>
     </Wrap>
   );
@@ -3905,8 +4140,10 @@ export function DeliverySubmit({ me }) {
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           {trips.length === 0
             ? <Note tone="amber" title="No scheduled trips">A delivery must be planned first. Logistics schedules the trip, then it appears here to deliver against.</Note>
-            : <Field label="Scheduled trip"><Picker value={f.tripNo} onChange={pickTrip} placeholder="Select the trip…" title="Scheduled trip"
-                options={trips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L ${t.product}` }))} /></Field>}
+            : locked
+              ? <Field label="Scheduled trip"><div className="mono" style={{ padding: "10px 12px", borderRadius: 10, background: "#F4F6FA", color: "var(--navy)", fontWeight: 700 }}>🔒 {f.tripNo}{trip ? ` — ${trip.warehouse} ${L(trip.qty)}L ${trip.product}` : ""}</div></Field>
+              : <Field label="Scheduled trip"><Picker value={f.tripNo} onChange={pickTrip} placeholder="Select the trip…" title="Scheduled trip"
+                  options={trips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L ${t.product}` }))} /></Field>}
           {/* trip context — pre-populated from the schedule, not re-entered */}
           {trip && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 12px" }}>
@@ -3932,7 +4169,11 @@ export function DeliverySubmit({ me }) {
           </div>
           {/* quantity loaded — at the top */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 150px" }}><Field label="Quantity loaded at depot (L)"><Num value={f.qtyLoaded} onChange={set("qtyLoaded")} placeholder="litres" /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Quantity loaded at depot (L)">
+              {f.tripNo
+                ? <div className="mono" style={{ padding: "10px 12px", borderRadius: 10, background: "#F4F6FA", color: "var(--navy)", fontWeight: 700 }}>🔒 {L(num(f.qtyLoaded))} L <span style={{ fontWeight: 400, color: "var(--steel)", fontSize: 11 }}>· set by logistics</span></div>
+                : <Num value={f.qtyLoaded} onChange={set("qtyLoaded")} placeholder="litres" />}
+            </Field></div>
             <div style={{ flex: "1 1 100px" }}><Field label="Density"><Num value={f.density} onChange={set("density")} placeholder="0.836" /></Field></div>
           </div>
 
@@ -3971,8 +4212,18 @@ export function DeliverySubmit({ me }) {
               </div>))}
           <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--navy)", margin: "2px 0 10px" }}>Delivered (site dip): <b>{L(siteDip)} L</b></div>
           {preview && (
-            <Note tone={preview.adjPct > 0.3 ? "red" : "ok"} title={`Loss ${L(preview.adj)} L · ${preview.adjPct}% (temp-corrected)`}>
-              Raw {L(preview.raw)} L ({preview.rawPct}%) → corrected to 20 °C using density {f.density || "—"}. {preview.adjPct > 0.3 ? "Above the 0.3% benchmark — will be flagged." : "Within benchmark."}
+            <Note tone={preview.totalPct > 0.3 ? "red" : "ok"} title={`Loss ${L(preview.total)} L · ${preview.totalPct}% (at 20 °C)`}>
+              <div className="mono" style={{ fontSize: 12.5, lineHeight: 1.8 }}>
+                Dispatched <b>{L(qtyLoaded)} L</b><br />
+                Truck arrived with <b>{L(preview.truckCorr || 0)} L</b>
+                {preview.before != null && <span style={{ color: preview.before > 0.5 ? "var(--red)" : "var(--steel)" }}> · {preview.before > 0 ? "−" : "+"}{L(Math.abs(preview.before))} L before arrival <span style={{ color: "var(--steel)" }}>(loading + road)</span></span>}<br />
+                Site received <b>{L(preview.siteCorr)} L</b>
+                {preview.discharge != null && <span style={{ color: preview.discharge > 0.5 ? "var(--red)" : "var(--steel)" }}> · {preview.discharge > 0 ? "−" : "+"}{L(Math.abs(preview.discharge))} L at discharge</span>}
+              </div>
+              <div style={{ marginTop: 7, fontSize: 11.5, color: "var(--steel)" }}>
+                Both truck-arrival and site dips corrected to 20 °C (truck {preview.truckT.toFixed(0)}°, site {preview.siteT.toFixed(0)}°; density {f.density || "—"}). Raw span {L(preview.raw)} L. {preview.totalPct > 0.3 ? "Above the 0.3% benchmark — will be flagged." : "Within benchmark."}
+                {!preview.truckCorr && <><br />Enter the truck compartment dip + °C to split loading/road loss from discharge loss.</>}
+              </div>
             </Note>
           )}
           <Field label="Notes (optional)"><input value={f.note} onChange={(e) => set("note")(e.target.value)} /></Field>
@@ -3987,14 +4238,26 @@ export function DeliverySubmit({ me }) {
 
 /* Dual approval — driver and receiving site each sign off a delivery note
    before it posts. Shows the full note (tank dips, losses) for review. */
-export function DeliveryApprovals({ me }) {
+export function DeliveryApprovals({ me, initial, onLeave }) {
   const [list, setList] = useState(null);
   const [open, setOpen] = useState(null);   // dnNo expanded
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState(null);
   const [loadErr, setLoadErr] = useState(null);
+  const [prefilled, setPrefilled] = useState(false);
   const load = useCallback(() => { setLoadErr(null); getPendingDeliveries().then((r) => setList(r.deliveries || [])).catch((e) => { setList(null); setLoadErr(e.message || "Couldn't load the approval queue."); }); }, []);
   useEffect(() => { load(); }, [load]);
+  // clear the deep-link prefill when the user leaves this screen
+  useEffect(() => () => { onLeave && onLeave(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Deep-link from a notification / "Sign off delivery note": expand the EXACT note.
+  useEffect(() => {
+    if (prefilled || !initial || !list || !list.length) return;
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const m = list.find((d) => (initial.dn && d.dnNo === initial.dn)
+      || (initial.tripNo && d.tripNo === initial.tripNo && (!initial.site || norm(d.site) === norm(initial.site))));
+    if (m) setOpen(m.dnNo);
+    setPrefilled(true);
+  }, [initial, list, prefilled]);
   const act = async (dn, outcome) => {
     setBusy(dn + outcome); setMsg(null);
     try { await approveDelivery(dn, { outcome }); setMsg({ tone: outcome === "approved" ? "ok" : "amber", title: outcome === "approved" ? `${dn} approved` : `${dn} sent back` }); load(); setOpen(null); }
@@ -4215,6 +4478,34 @@ export function DeliveriesInProgress() {
     </div>
   );
 
+  // The load's journey as three measured points: what was LOADED at depot, what the
+  // truck DIPPED on arrival (did it still say it had the fuel?), what the site RECEIVED.
+  // The gaps localise any loss — before arrival (transit) vs at offload (discharge).
+  const flowStrip = (t) => {
+    const step = (label, val, sub, tone) => (
+      <div style={{ flex: 1, minWidth: 88, textAlign: "center" }}>
+        <div style={{ fontSize: 9.5, textTransform: "uppercase", letterSpacing: 0.4, color: "var(--steel)" }}>{label}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: tone || "var(--navy)" }}>{val}</div>
+        {sub && <div style={{ fontSize: 9.5, color: tone === "#C0392B" ? "#C0392B" : "var(--steel)" }}>{sub}</div>}
+      </div>
+    );
+    const arrow = <div style={{ color: "var(--steel)", fontSize: 13, alignSelf: "center" }}>→</div>;
+    const dipped = t.truckDip > 0, anyDel = t.delivered > 0;
+    return (
+      <div style={{ display: "flex", alignItems: "stretch", gap: 2, margin: "8px 0", padding: "8px 4px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10 }}>
+        {step("Loaded", `${full(t.qty)} L`, "at depot")}
+        {arrow}
+        {step("Truck dip", dipped ? `${full(t.truckDip)} L` : "—",
+          dipped ? (t.transitLoss > 0 ? `−${full(t.transitLoss)} L transit` : "no transit loss") : (t.collected ? "awaiting arrival" : "awaiting collection"),
+          dipped ? (t.transitLoss > 0 ? "#C0392B" : "var(--navy)") : "var(--steel)")}
+        {arrow}
+        {step("Site received", anyDel ? `${full(t.delivered)} L` : "—",
+          dipped && t.dischargeLoss > 0 ? `−${full(t.dischargeLoss)} L discharge` : (anyDel ? "received" : "not offloaded yet"),
+          anyDel ? (dipped && t.dischargeLoss > 0 ? "#C0392B" : "#1E7A3D") : "var(--steel)")}
+      </div>
+    );
+  };
+
   return (
     <Panel style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
@@ -4235,6 +4526,7 @@ export function DeliveriesInProgress() {
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#2B3990", background: "#E7ECFF", padding: "2px 9px", borderRadius: 20 }}>{t.progress}% delivered</span>
               </div>
               {dropChips(t)}
+              {flowStrip(t)}
               <div style={{ height: 6, borderRadius: 5, background: "var(--line)", overflow: "hidden", margin: "8px 0 6px" }}>
                 <div style={{ width: `${t.progress}%`, height: "100%", background: "#2B3990" }} />
               </div>
@@ -4257,6 +4549,7 @@ export function DeliveriesInProgress() {
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#C07A00", background: "#F6E3B0", padding: "2px 9px", borderRadius: 20 }}>Not collected</span>
               </div>
               {dropChips(t)}
+              {flowStrip(t)}
               <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 7 }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.qty)} L — driver hasn't collected from the depot yet</div>
             </div>
           ))}
@@ -4282,10 +4575,12 @@ export function DeliveriesDue({ onGo }) {
   const onItem = async (p, s) => {
     if (p.status === "collect") {   // driver confirms fuel collected from the depot → starts the journey + GPS
       setBusy(p.tripNo);
-      try { await collectTrip(p.tripNo); try { await startTracking(p.tripNo); } catch { /* ignore */ } setKey((k) => k + 1); } catch { /* ignore */ } finally { setBusy(null); }
+      try { await collectTrip(p.tripNo); try { await startTracking(p.tripNo); } catch { /* tracking best-effort */ } setKey((k) => k + 1); }
+      catch (e) { window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't confirm collection — " + (e.message || "try again.") })); }
+      finally { setBusy(null); }
       return;
     }
-    if (onGo && s.tab) onGo(s.tab);
+    if (onGo && s.tab) onGo(s.tab, { tripNo: p.tripNo, site: p.site });
   };
   if (!d || !d.count) return null;   // nothing due → show nothing
   return (
@@ -4481,6 +4776,29 @@ export function InventoryView() {
             <Stat label="In transit" value={full(d.transitNow)} unit="L" tone="amber" sub={d.transitValue ? `$${full(d.transitValue)} · on trucks` : "on trucks"} />
             <Stat label="At sites" value={full(d.sitesTotal)} unit="L" sub={d.sitesValue ? `$${full(d.sitesValue)} · ${d.siteCount} sites` : `${d.siteCount} sites`} />
           </div>
+          {d.costParts && (
+            <Panel style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                <span className="lbl">Unit cost · weighted-average on FIFO basis</span>
+                <span style={{ fontSize: 11, color: "var(--steel)" }}>import + duty + distribution · to {d.costAsOf}</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Product</Th><Th right>Import / L</Th><Th right>Duty / L</Th><Th right>Distribution / L</Th><Th right>Landed / L</Th></tr></thead>
+                  <tbody>{["Diesel", "Blend", "ULP"].filter((k) => d.costParts[k]).map((k) => (
+                    <tr key={k} style={{ borderTop: "1px solid var(--line)" }}>
+                      <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{k}</Td>
+                      <Td right>${d.costParts[k].base.toFixed(4)}</Td>
+                      <Td right>${d.costParts[k].duties.toFixed(4)}</Td>
+                      <Td right style={{ color: "var(--steel)" }}>${d.costParts[k].distribution.toFixed(4)}</Td>
+                      <Td right style={{ fontWeight: 700 }}>${d.cost[k].toFixed(4)}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--steel)", marginTop: 6 }}>Both import and duty are weighted-averaged across the actual dated purchase lots making up the on-hand stock (newest consignments first, FIFO). Moves as each consignment lands and stock turns.</div>
+            </Panel>
+          )}
           <Segmented value={tab} onChange={setTab} options={SECTIONS} />
           <BackBar prev={prev} options={SECTIONS} onBack={back} />
           {tab === "warehouses" && (
@@ -4733,12 +5051,15 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
   const whStock = bal?.warehouses.find((w) => w.name === f.warehouse)?.products?.[f.product] ?? null;
   const overStock = whStock != null && dropTotal > whStock;
   const setDrop = (i, k, v) => setDrops((ds) => ds.map((d, j) => (j === i ? { ...d, [k]: v } : d)));
-  const valid = f.driverCard && drops.some((d) => d.site && Number(d.qty) > 0) && !overStock;
+  const valid = f.driverCard && drops.some((d) => d.site && Number(d.qty) > 0) && !overStock && String(f.endPoint || "").trim() && dropTotal >= 5000 && dropTotal <= 50000;
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
     if (!f.driverCard) return setMsg({ tone: "amber", title: "Almost there", body: "Pick the driver for this trip." });
     if (!drops.some((d) => d.site && Number(d.qty) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Add at least one drop site with litres." });
+    if (dropTotal < 5000) return setMsg({ tone: "amber", title: "Load too small", body: `The load is ${L(dropTotal)} L — a trip must carry at least 5,000 L.` });
+    if (dropTotal > 50000) return setMsg({ tone: "amber", title: "Load too large", body: `The load is ${L(dropTotal)} L — a truck carries at most 50,000 L.` });
+    if (!String(f.endPoint || "").trim()) return setMsg({ tone: "amber", title: "End point required", body: "Set where the truck returns to. Logistics maps the full trip so the driver only collects and delivers." });
     if (overStock) return setMsg({ tone: "amber", title: "Not enough stock", body: `The drops (${L(dropTotal)} L) exceed ${f.warehouse} ${f.product} available (${L(whStock)} L).` });
     setBusy(true);
     try {
@@ -4785,12 +5106,14 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
                 setF((s) => ({ ...s, driverCard: card, ...(last ? { truckName: last.truck || s.truckName, truckReg: last.truckReg || s.truckReg, trailer: (h && h.trailer) || last.trailer || s.trailer } : {}) }));
               }}
               options={drivers.map((d) => ({ value: d.card, label: d.name }))} /></Field></div>
-            <div style={{ flex: "1 1 120px" }}><Field label="Truck"><Picker value={f.truckName} title="Truck" placeholder="Truck…"
-              onChange={(v) => { const h = horses.find((x) => x.code === v); setF((s) => ({ ...s, truckName: v, trailer: h?.trailer || s.trailer })); }}
-              options={horses.map((h) => h.code)} /></Field></div>
+            {/* Logistics identify trucks by TRAILER number (T-codes) — pick the trailer;
+                the horse (for the fuel estimate) is resolved from master data behind it. */}
+            <div style={{ flex: "1 1 120px" }}><Field label="Trailer"><Picker value={f.trailer} title="Trailer" placeholder="Trailer…"
+              onChange={(v) => { const h = horses.find((x) => x.trailer === v); setF((s) => ({ ...s, trailer: v, truckName: (h && h.code) || s.truckName })); }}
+              options={[...new Set(horses.map((h) => h.trailer).filter(Boolean))].sort((a, b) => (parseInt(String(a).replace(/\D/g, ""), 10) || 0) - (parseInt(String(b).replace(/\D/g, ""), 10) || 0))} /></Field></div>
             <div style={{ flex: "1 1 120px" }}><Field label="Trip date"><input type="date" value={f.tripDate} onChange={(e) => set("tripDate")(e.target.value)} /></Field></div>
           </div>
-          {f.truckName && f.trailer && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>{f.truckName} · trailer {f.trailer} <span style={{ color: "#9AA6B8" }}>(from master data)</span></div>}
+          {f.trailer && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>trailer {f.trailer}{f.truckName ? ` · horse ${f.truckName}` : ""} <span style={{ color: "#9AA6B8" }}>(from master data)</span></div>}
           {/* drops */}
           <div className="lbl" style={{ marginBottom: 6 }}>Drops — site &amp; litres</div>
           {drops.map((d, i) => (
@@ -5058,9 +5381,9 @@ function deliveryDetail(d) {
     <>
       <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{d.loadedFrom || "?"} → {d.deliveredTo || "?"} · {d.date || ""}{d.truckReg ? " · " + d.truckReg : ""}</div>
       {grp("Quantities", <>
-        {row("Loaded at depot", n(d.qtyLoaded))}
-        {row("Truck dip", n(d.truckDip))}
-        {row("Site dip (received)", n(d.siteDip))}
+        {row("Dispatched (ordered load)", n(d.qtyLoaded))}
+        {row("Truck dip on arrival", n(d.truckDip))}
+        {row("Site received", n(d.siteDip))}
         {d.density != null && row("Density", d.density + " kg/L")}
       </>)}
       {(d.truckTemp != null || d.siteTemp != null || d.truckCorrected != null) && grp("Temperature correction (ASTM D1250)", <>
@@ -5073,10 +5396,10 @@ function deliveryDetail(d) {
         <div className="lbl" style={{ padding: "12px 14px 6px" }}>Loss</div>
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><tbody>
-            {row("In transit", n(d.transitLoss))}
-            {row("On discharge", n(d.dischargeLoss))}
+            {row("Before arrival (loading + road)", n(d.transitLoss))}
+            {row("At discharge (handover)", n(d.dischargeLoss))}
             {row("Combined (raw)", n(d.combinedLoss) + (d.lossPct != null ? ` (${d.lossPct}%)` : ""), { fontWeight: 700 })}
-            {d.adjustedLoss != null && row("Temp-adjusted", n(d.adjustedLoss) + (d.adjustedLossPct != null ? ` (${d.adjustedLossPct}%)` : ""), { fontWeight: 700, color: d.flagged ? "var(--red)" : "var(--ok)" })}
+            {d.adjustedLoss != null && row("Total @ 20°C", n(d.adjustedLoss) + (d.adjustedLossPct != null ? ` (${d.adjustedLossPct}%)` : ""), { fontWeight: 700, color: d.flagged ? "var(--red)" : "var(--ok)" })}
           </tbody></table>
         </div>
         <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>{d.flagged ? "Above the 0.3% benchmark on the temperature-corrected figure — worth a look." : "Within the 0.3% benchmark — a hot load isn't a real loss."}</div>
@@ -5595,3 +5918,118 @@ export function SiteManagerCreate() {
 const Th = ({ children, right }) => <th style={{ padding: "9px 11px", textAlign: right ? "right" : "left", fontFamily: "'Barlow Condensed',sans-serif", fontSize: 12, letterSpacing: ".04em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{children}</th>;
 // numbers (right-aligned cells) use tabular figures so columns line up like a ledger
 const Td = ({ children, right, style, colSpan }) => <td colSpan={colSpan} style={{ padding: "8px 11px", textAlign: right ? "right" : "left", ...(right ? { fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } : null), ...style }}>{children}</td>;
+
+// ---- STAFF ASSIGNMENT -------------------------------------------------------
+// Retail managers rotate supervisors between sites (drives their Cash/Losses scope);
+// fleet/logistics map drivers to a horse (the trailer follows). One screen, two
+// sections, each editable only by the role that owns it (enforced server-side too).
+export function StaffAssignment() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [qSup, setQSup] = useState(""), [qDrv, setQDrv] = useState("");
+  const [busy, setBusy] = useState(null), [msg, setMsg] = useState(null);
+  useEffect(() => { setD(null); setErr(null); getStaff().then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const reload = () => setReloadKey((k) => k + 1);
+
+  const saveSup = async (actorId, siteId) => {
+    setBusy("s" + actorId); setMsg(null);
+    try { await assignSupervisorSite(actorId, siteId || null); setMsg({ tone: "ok", title: "Supervisor reassigned", body: "Their site access updates on next sign-in." }); reload(); }
+    catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); } finally { setBusy(null); }
+  };
+  const saveDrv = async (driverId, horse) => {
+    setBusy("d" + driverId); setMsg(null);
+    try { await assignDriverHorse(driverId, horse || null); setMsg({ tone: "ok", title: "Driver mapped", body: "Truck & trailer updated." }); reload(); }
+    catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); } finally { setBusy(null); }
+  };
+
+  if (err) return <Wrap><SectionHead title="Staff assignment" /><Note tone="red" title="Couldn't load">{err}</Note></Wrap>;
+  if (!d) return <Wrap><SectionHead title="Staff assignment" /><Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel></Wrap>;
+  const sup = d.supervisors.filter((s) => !qSup || (s.name || "").toLowerCase().includes(qSup.toLowerCase()) || (s.site || "").toLowerCase().includes(qSup.toLowerCase()));
+  const drv = d.drivers.filter((s) => !qDrv || (s.name || "").toLowerCase().includes(qDrv.toLowerCase()) || (s.card || "").includes(qDrv) || (s.horse || "").toLowerCase().includes(qDrv.toLowerCase()));
+  const unassignedSup = d.supervisors.filter((s) => !s.siteId).length;
+  const unmappedDrv = d.drivers.filter((s) => !s.horse).length;
+
+  return (
+    <Wrap>
+      <SectionHead title="Staff assignment" sub="Rotate supervisors between sites · map drivers to trucks" />
+      <RefreshBar data={d} onRefresh={reload} />
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+
+      {d.canAssignSupervisors && (<>
+        <div style={{ display: "flex", gap: 10, margin: "6px 0 10px", flexWrap: "wrap" }}>
+          <CountPill n={d.supervisors.length} label="Supervisors" tone="ok" />
+          <CountPill n={unassignedSup} label="Unassigned" tone={unassignedSup ? "amber" : "ok"} />
+        </div>
+        <FilterBox value={qSup} onChange={setQSup} placeholder="Find a supervisor or site…" />
+        <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Supervisor</Th><Th>Assigned site</Th><Th /></tr></thead>
+              <tbody>{sup.map((s) => (
+                <SupRow key={s.actorId} s={s} sites={d.sites} busy={busy === "s" + s.actorId} onSave={saveSup} />
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      </>)}
+
+      {d.canAssignDrivers && (<>
+        <div style={{ display: "flex", gap: 10, margin: "6px 0 10px", flexWrap: "wrap" }}>
+          <CountPill n={d.drivers.length} label="Drivers" tone="ok" />
+          <CountPill n={unmappedDrv} label="No truck" tone={unmappedDrv ? "amber" : "ok"} />
+        </div>
+        <FilterBox value={qDrv} onChange={setQDrv} placeholder="Find a driver, card or truck…" />
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Driver</Th><Th>Card</Th><Th>Truck (horse)</Th><Th right>Trailer</Th><Th /></tr></thead>
+              <tbody>{drv.map((s) => (
+                <DrvRow key={s.driverId} s={s} horses={d.horses} busy={busy === "d" + s.driverId} onSave={saveDrv} />
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      </>)}
+    </Wrap>
+  );
+}
+
+function SupRow({ s, sites, busy, onSave }) {
+  const [v, setV] = useState(s.siteId || "");
+  const dirty = (v || "") !== (s.siteId || "");
+  return (
+    <tr style={{ borderTop: "1px solid var(--line)", background: !s.siteId ? "#FFF7E6" : "#fff" }}>
+      <Td><b style={{ color: "var(--navy)" }}>{s.name}</b><div style={{ fontSize: 10.5, color: "var(--steel)" }}>{s.login}</div></Td>
+      <Td>
+        <select value={v} onChange={(e) => setV(e.target.value)} style={selStyle}>
+          <option value="">— unassigned —</option>
+          {sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+      </Td>
+      <Td right><button className="disp" disabled={!dirty || busy} onClick={() => onSave(s.actorId, v)} style={saveBtn(dirty && !busy)}>{busy ? "…" : "Save"}</button></Td>
+    </tr>
+  );
+}
+
+function DrvRow({ s, horses, busy, onSave }) {
+  const [v, setV] = useState(s.horse || "");
+  const dirty = (v || "") !== (s.horse || "");
+  const trailer = horses.find((h) => h.code === v)?.trailer;
+  return (
+    <tr style={{ borderTop: "1px solid var(--line)", background: !s.horse ? "#FFF7E6" : "#fff" }}>
+      <Td><b style={{ color: "var(--navy)" }}>{s.name}</b></Td>
+      <Td style={{ color: "var(--steel)" }}>{s.card || "—"}</Td>
+      <Td>
+        <select value={v} onChange={(e) => setV(e.target.value)} style={selStyle}>
+          <option value="">— none —</option>
+          {horses.map((h) => <option key={h.code} value={h.code}>{h.code}{h.trailer ? ` · ${h.trailer}` : ""}</option>)}
+        </select>
+      </Td>
+      <Td right style={{ fontWeight: 700 }}>{trailer || s.trailer || "—"}</Td>
+      <Td right><button className="disp" disabled={!dirty || busy} onClick={() => onSave(s.driverId, v)} style={saveBtn(dirty && !busy)}>{busy ? "…" : "Save"}</button></Td>
+    </tr>
+  );
+}
+
+const selStyle = { border: "1px solid var(--line)", borderRadius: 8, padding: "6px 8px", fontSize: 12, background: "#fff", color: "var(--navy)", maxWidth: 220 };
+const saveBtn = (on) => ({ border: "1px solid " + (on ? "var(--navy)" : "var(--line)"), background: on ? "var(--navy)" : "#fff", color: on ? "#fff" : "var(--steel)", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: on ? "pointer" : "default" });

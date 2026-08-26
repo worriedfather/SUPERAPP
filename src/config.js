@@ -12,12 +12,15 @@ export const GOOGLE_MAPS_KEY =
 /* This build's Android versionCode. Keep it in step with android/app/build.gradle
    `versionCode` on every release — the server compares its MIN_BUILD to this to
    force old apps to update. */
-export const APP_BUILD = 110;
-export const APP_VERSION = "1.5.88";
+export const APP_BUILD = 111;
+export const APP_VERSION = "1.5.89";
 export const PLAY_URL = "https://play.google.com/store/apps/details?id=zw.co.damotors.fuel";
 /* Direct APK download — DA OPS is sideloaded, not on Play, so the force-update
    screen points here (the server hosts the latest signed APK at this path). */
 export const APK_URL = "https://fuel.dasuperapp.com/download/latest.apk";
+/* iOS can't install an APK. Until a TestFlight/App Store build is live, iPhone
+   users get the always-current web app (PWA) — Add to Home Screen for full-screen. */
+export const IOS_URL = "https://fuel.dasuperapp.com";
 
 /* Google Sign-In client ID (public — it only names the OAuth audience). Create a
    "Web application" OAuth client in Google Cloud Console with authorized origin

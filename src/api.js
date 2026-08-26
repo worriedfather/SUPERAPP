@@ -123,18 +123,25 @@ export async function flushOutbox() {
   let list = outboxAll();
   if (!list.length || !token) return;
   flushing = true;
+  let sent = 0;
   try {
     while (list.length) {
       const item = list[0];
       try {
         await call(item.path, { method: item.method, body: item.body, _replay: true });
+        sent++;
       } catch (e) {
         if (e && e.offline) break;   // still offline → keep the queue, try again later
         // else: server rejected it — drop so it doesn't wedge the queue
       }
       list = outboxAll(); list.shift(); outboxSave(list);
     }
-  } finally { flushing = false; }
+  } finally {
+    flushing = false;
+    // Tell the app a queued write actually landed, so the on-screen read-model refreshes
+    // and the user sees their offline submission appear (no manual pull-to-refresh).
+    if (sent > 0 && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("da-synced", { detail: sent }));
+  }
 }
 // Drain automatically when the device regains connectivity.
 if (typeof window !== "undefined") window.addEventListener("online", () => flushOutbox());
@@ -291,6 +298,7 @@ export const getExpectedCash = ({ site, date, shift } = {}) => {
 // Banking reconciliation & day-close (module A)
 export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
+export const getCashShortfall = () => call('/api/cash/shortfall');
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
 export const getSignals = (days = 30, from = null, to = null) => call(`/api/signals?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const reviewDeposit = (seq, outcome, note) => call(`/api/cash/deposit/${seq}/review`, { method: "POST", body: { outcome, note } });
@@ -307,9 +315,14 @@ export const getSiteDayend = (site, days = 14) => call(`/api/site-dayend?site=${
 export const getShiftReport = (shift = "night", date) => call(`/api/executive/shift?shift=${shift}${date ? `&date=${date}` : ""}`);
 // Manager birds-eye analytics sections (scorecard | dayend | tanktrends | statustrends)
 export const getSiteAnalytics = (section, from, to) => call(`/api/manager/analytics?section=${section}&from=${from}&to=${to}`);
+// Fleet allocation vs system estimate — daily over/under-allocation report
+export const getFleetAllocation = (from, to) => call(`/api/manager/allocation?from=${from}&to=${to}`);
 export const getWatchSnoozes = () => call("/api/watchlist/snoozes");
 export const postWatchSnooze = (b) => call("/api/watchlist/snooze", { method: "POST", body: b });
 export const addSiteManager = (b) => call("/api/site-managers", { method: "POST", body: b });
+export const getStaff = () => call("/api/staff");
+export const assignSupervisorSite = (actorId, siteId) => call("/api/staff/supervisor-site", { method: "POST", body: { actorId, siteId } });
+export const assignDriverHorse = (driverId, horse) => call("/api/staff/driver-horse", { method: "POST", body: { driverId, horse } });
 export const postDecision = (ref, body) =>
   call(`/api/requests/${encodeURIComponent(ref)}/decision`, { method: "POST", body });
 // ---- approver history: search, drill-down, Excel export ----
@@ -356,3 +369,36 @@ export const getEfficiency = () => call("/api/efficiency");
 // Intelligence answers can take a while (Claude reasoning) — give it room.
 export const askIntelligence = (question, history) =>
   call("/api/intelligence", { method: "POST", body: { question, history }, timeoutMs: 90000 });
+
+/* ---- Databricks (BizTracker retail via the warehouse) --------------------
+   A second read source, separate from the Postgres-backed dashboards above.
+   These can be slow on the first call of the day while a serverless warehouse
+   starts, so they get the same long timeout as Intelligence rather than the
+   default — a cold-start abort looks identical to "no data" on screen, and
+   that is exactly the kind of unlabelled figure we don't ship.
+
+   Responses carry `source: "databricks"`. Screens must show that: a number off
+   the warehouse is BizTracker's, not ours, and the two can legitimately
+   disagree until the field mapping is confirmed. */
+export const getDatabricksHealth = (probe = false) =>
+  call(`/api/databricks/health${probe ? "?probe=1" : ""}`, { timeoutMs: 90000 });
+
+// Which named queries this signed-in actor may run.
+export const getDatabricksQueries = () => call("/api/databricks/queries");
+
+// Run one by key. `params` are the names the registry entry declares
+// (e.g. { months: 6, site: "Msasa" }); anything else is dropped server-side.
+export const runDatabricksQuery = (key, params = {}) => {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "")
+  ).toString();
+  return call(`/api/databricks/query/${encodeURIComponent(key)}${qs ? `?${qs}` : ""}`, { timeoutMs: 90000 });
+};
+
+// Schema discovery (admin). Call with nothing for catalogs, then narrow.
+export const discoverDatabricks = ({ catalog, schema, table } = {}) => {
+  const qs = new URLSearchParams(
+    Object.entries({ catalog, schema, table }).filter(([, v]) => v)
+  ).toString();
+  return call(`/api/databricks/discover${qs ? `?${qs}` : ""}`, { timeoutMs: 90000 });
+};
