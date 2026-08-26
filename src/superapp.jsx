@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
-  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse,
+  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords,
@@ -1605,7 +1605,7 @@ export function ExecutiveDashboard() {
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   const { tab, setTab, back, prev } = useNavStack("overview");
-  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["outflows", "Outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
+  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["outflows", "Cash outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
   // These tabs embed self-fetching views that own their OWN period — the top period
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).
@@ -2066,6 +2066,7 @@ export function ExecutiveDashboard() {
 
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
+          {tab === "inflows" && <div id="inflows" style={{ scrollMarginTop: 8 }}><CashInflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
 
           {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
@@ -2916,18 +2917,27 @@ export function CashView() {
     // Derive expected/confirmed/variance from the SAME per-day rows as the banking-
     // reconciliation screen, so the two views ALWAYS land on the same conclusion.
     // getCash is used only for the tender-mix panel.
-    Promise.all([getCashRecon(w.days, w.from, w.to), getCash(w.days).catch(() => null)])
+    // The story reads left-to-right: SALES → the cash portion EXPECTED → what was
+    // RECEIVED → the VARIANCE. Expected/received come from the SAME per-day rows as
+    // the banking-reconciliation screen so both views land on the same conclusion;
+    // sales (takings) and the tender mix come from the day-end report on the SAME window.
+    Promise.all([getCashRecon(w.days, w.from, w.to), getCash(w.days, w.from, w.to).catch(() => null)])
       .then(([rec, cash]) => {
         const bySite = {};
         for (const r of (rec.rows || [])) {
-          const g = bySite[r.siteId] || (bySite[r.siteId] = { site: r.site, expectedCash: 0, confirmedReceived: 0 });
+          const g = bySite[r.siteId] || (bySite[r.siteId] = { siteId: r.siteId, site: r.site, sales: 0, expectedCash: 0, petty: 0, confirmedReceived: 0, cashDiff: 0 });
           g.expectedCash += r.expected || 0;
+          g.petty += r.petty || 0;
           g.confirmedReceived += r.received || 0;
+          g.cashDiff += r.variance || 0;   // finance's variance, verbatim — never recomputed
         }
-        const sites = Object.values(bySite).map((g) => ({ ...g, cashDiff: g.expectedCash - g.confirmedReceived }));
-        const expectedCash = sites.reduce((a, s) => a + s.expectedCash, 0);
-        const receivedCash = sites.reduce((a, s) => a + s.confirmedReceived, 0);
-        setD({ days: w.days, sites, expectedCash, receivedCash, cashDiff: expectedCash - receivedCash, tender: cash?.tender });
+        for (const s of (cash?.sites || [])) {
+          const g = bySite[s.siteId] || (bySite[s.siteId] = { siteId: s.siteId, site: s.site, sales: 0, expectedCash: 0, petty: 0, confirmedReceived: 0, cashDiff: 0 });
+          g.sales += s.expected || 0;   // total takings (all tenders) from the day-end report
+        }
+        const sites = Object.values(bySite);
+        const sum = (k) => sites.reduce((a, s) => a + (s[k] || 0), 0);
+        setD({ days: w.days, sites, sales: sum("sales"), expectedCash: sum("expectedCash"), petty: sum("petty"), receivedCash: sum("confirmedReceived"), cashDiff: sum("cashDiff"), tender: cash?.tender });
       })
       .catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
@@ -2947,8 +2957,9 @@ export function CashView() {
       {d && (d.sites || []).length > 0 && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={$(d.expectedCash)} label={`Expected cash · ${d.days}d`} tone="ok" />
-            <CountPill n={$(d.receivedCash)} label="Confirmed at HQ" tone="ok" />
+            <CountPill n={$(d.sales)} label={`Sales · ${d.days}d`} tone="ok" />
+            <CountPill n={$(d.expectedCash)} label="Expected cash" tone="ok" />
+            <CountPill n={$(d.receivedCash)} label="Received cash" tone="ok" />
             <CountPill n={$(d.cashDiff)} label="Variance" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"} />
           </div>
           {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
@@ -2956,10 +2967,11 @@ export function CashView() {
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                  <Th>Site</Th><Th right>Expected cash</Th><Th right>Confirmed at HQ</Th><Th right>Variance</Th></tr></thead>
+                  <Th>Site</Th><Th right>Sales</Th><Th right>Expected cash</Th><Th right>Received cash</Th><Th right>Variance</Th></tr></thead>
                 <tbody>{[...d.sites].sort((a, b) => (b.cashDiff || 0) - (a.cashDiff || 0)).map((s) => (
                   <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (s.cashDiff || 0) > 50 ? "#FFF7E6" : "#fff" }}>
                     <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                    <Td right style={{ color: "var(--steel)" }}>{s.sales ? $(s.sales) : "—"}</Td>
                     <Td right style={{ fontWeight: 700 }}>{s.expectedCash != null ? $(s.expectedCash) : "—"}</Td>
                     <Td right style={{ fontWeight: 600, color: s.confirmedReceived != null ? "var(--navy)" : "var(--steel)" }}>{s.confirmedReceived != null ? $(s.confirmedReceived) : "—"}</Td>
                     <Td right style={{ fontWeight: 700, color: s.cashDiff == null ? "var(--steel)" : s.cashDiff > 50 ? "var(--red)" : s.cashDiff < -50 ? "var(--ok)" : "var(--steel)" }} title={s.cashDiff > 0 ? "cash short" : s.cashDiff < 0 ? "cash over" : "square"}>{s.cashDiff == null ? "—" : s.cashDiff === 0 ? "$0" : (s.cashDiff > 0 ? $(s.cashDiff) : `(${$(Math.abs(s.cashDiff))})`)}</Td>
@@ -3285,6 +3297,65 @@ const OUTFLOW_CAT_COLOR = {
   "DA Site": "#2B3990", Shareholder: "#7A5AF0", Supplier: "#2E9E5B", Utility: "#E0860E",
   Bank: "#C8A24B", Payroll: "#6BC048", Opex: "#8FB8FF", Other: "#5B6B84",
 };
+// Cash INFLOWS — full money received from sites (cash counted + card/POS swipe + banked).
+export function CashInflows({ embedded = false, from = null, to = null } = {}) {
+  const [days, setDays] = useState(90);
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
+  const effTo = embedded ? to : todayISO();
+  const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  useEffect(() => {
+    if (embedded && !(effFrom && effTo)) return;
+    setD(null); setErr(null);
+    getCashInflows(days, effFrom, effTo).then(setD).catch((e) => setErr(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, from, to, embedded, reloadKey]);
+  const $ = (v) => "$" + full(v);
+  const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
+  const PRESETS = [[30, "30d"], [90, "90d"], [180, "6mo"], [365, "1y"]];
+  const sites = d?.sites || [];
+  const filtered = q ? sites.filter((s) => s.site.toLowerCase().includes(q.toLowerCase())) : sites;
+  return (
+    <Shell>
+      {!embedded && <SectionHead title="Cash inflows" sub="Full cash received from sites — cash counted + card/POS swipe + banked" />}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
+        <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: embedded ? "auto" : undefined, border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+      </div>
+      {err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && d.total === 0 && (
+        <Note tone="amber" title="No inflow data for this window yet">The finance Revenue &amp; Cash workbook is keyed up to <b>{d.asOf ? fmtD(d.asOf) : "—"}</b>. Days after that haven&rsquo;t been captured by finance yet — pick an earlier day or a wider window.</Note>
+      )}
+      {d && d.total > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
+            <Hero label="TOTAL CASH IN" value={$(d.total)} accent="#2E9E5B" />
+            <Hero label="CASH COUNTED" value={$(d.cash)} accent="#57C57E" />
+            <Hero label="CARD / SWIPE" value={$(d.swipe)} accent="#8FB8FF" />
+            <Hero label="BANKED" value={$(d.banked)} accent="#6BC048" />
+          </div>
+          <FilterBox value={q} onChange={setQ} />
+          <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Cash</Th><Th right>Card / swipe</Th><Th right>Banked</Th><Th right>Total in</Th></tr></thead>
+              <tbody>{filtered.map((s) => (
+                <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td>{s.site}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.cash)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.swipe)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.banked)}</Td>
+                  <Td right style={{ fontWeight: 700 }}>{$(s.total)}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div></Panel>
+        </>
+      )}
+    </Shell>
+  );
+}
+
 const ZIG_RATE = 31;   // ZWL-book amounts ÷ this = ZiG
 export function CashOutflows({ embedded = false, from = null, to = null } = {}) {
   const [days, setDays] = useState(90);
@@ -5933,9 +6004,9 @@ export function StaffAssignment() {
   useEffect(() => { setD(null); setErr(null); getStaff().then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
 
-  const saveSup = async (actorId, siteId) => {
+  const saveSup = async (actorId, siteId, siteId2) => {
     setBusy("s" + actorId); setMsg(null);
-    try { await assignSupervisorSite(actorId, siteId || null); setMsg({ tone: "ok", title: "Supervisor reassigned", body: "Their site access updates on next sign-in." }); reload(); }
+    try { await assignSupervisorSite(actorId, siteId || null, siteId2 || null); setMsg({ tone: "ok", title: "Supervisor reassigned", body: "Their site access updates on next sign-in." }); reload(); }
     catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); } finally { setBusy(null); }
   };
   const saveDrv = async (driverId, horse) => {
@@ -5966,7 +6037,7 @@ export function StaffAssignment() {
         <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Supervisor</Th><Th>Assigned site</Th><Th /></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Supervisor</Th><Th>Primary site</Th><Th>Secondary site</Th><Th /></tr></thead>
               <tbody>{sup.map((s) => (
                 <SupRow key={s.actorId} s={s} sites={d.sites} busy={busy === "s" + s.actorId} onSave={saveSup} />
               ))}</tbody>
@@ -5998,7 +6069,8 @@ export function StaffAssignment() {
 
 function SupRow({ s, sites, busy, onSave }) {
   const [v, setV] = useState(s.siteId || "");
-  const dirty = (v || "") !== (s.siteId || "");
+  const [v2, setV2] = useState(s.siteId2 || "");
+  const dirty = (v || "") !== (s.siteId || "") || (v2 || "") !== (s.siteId2 || "");
   return (
     <tr style={{ borderTop: "1px solid var(--line)", background: !s.siteId ? "#FFF7E6" : "#fff" }}>
       <Td><b style={{ color: "var(--navy)" }}>{s.name}</b><div style={{ fontSize: 10.5, color: "var(--steel)" }}>{s.login}</div></Td>
@@ -6008,7 +6080,13 @@ function SupRow({ s, sites, busy, onSave }) {
           {sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </Td>
-      <Td right><button className="disp" disabled={!dirty || busy} onClick={() => onSave(s.actorId, v)} style={saveBtn(dirty && !busy)}>{busy ? "…" : "Save"}</button></Td>
+      <Td>
+        <select value={v2} onChange={(e) => setV2(e.target.value)} style={selStyle} disabled={!v}>
+          <option value="">— none —</option>
+          {sites.filter((x) => x.id !== v).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+      </Td>
+      <Td right><button className="disp" disabled={!dirty || busy} onClick={() => onSave(s.actorId, v, v2)} style={saveBtn(dirty && !busy)}>{busy ? "…" : "Save"}</button></Td>
     </tr>
   );
 }

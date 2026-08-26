@@ -285,7 +285,7 @@ export const getRetail = (date) => call(`/api/retail?date=${encodeURIComponent(d
 const rangeQS = (days, from, to) => (from && to ? `from=${from}&to=${to}` : `days=${days}`);
 export const getHaulage = (days = 14, from = null, to = null) => call(`/api/haulage?${rangeQS(days, from, to)}`);
 export const getWetstock = (days = 30, from = null, to = null) => call(`/api/wetstock?${rangeQS(days, from, to)}`);
-export const getCash = (days = 30) => call(`/api/cash?days=${days}`);
+export const getCash = (days = 30, from = null, to = null) => call(`/api/cash?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const postCash = (b) => call("/api/cash", { method: "POST", body: b });
 // Expected cash for a shift, derived from the site's sales submission (litres × DA price)
 export const getExpectedCash = ({ site, date, shift } = {}) => {
@@ -299,6 +299,7 @@ export const getExpectedCash = ({ site, date, shift } = {}) => {
 export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashShortfall = () => call('/api/cash/shortfall');
+export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/cash/inflows?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
 export const getSignals = (days = 30, from = null, to = null) => call(`/api/signals?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const reviewDeposit = (seq, outcome, note) => call(`/api/cash/deposit/${seq}/review`, { method: "POST", body: { outcome, note } });
@@ -321,7 +322,7 @@ export const getWatchSnoozes = () => call("/api/watchlist/snoozes");
 export const postWatchSnooze = (b) => call("/api/watchlist/snooze", { method: "POST", body: b });
 export const addSiteManager = (b) => call("/api/site-managers", { method: "POST", body: b });
 export const getStaff = () => call("/api/staff");
-export const assignSupervisorSite = (actorId, siteId) => call("/api/staff/supervisor-site", { method: "POST", body: { actorId, siteId } });
+export const assignSupervisorSite = (actorId, siteId, siteId2 = null) => call("/api/staff/supervisor-site", { method: "POST", body: { actorId, siteId, siteId2 } });
 export const assignDriverHorse = (driverId, horse) => call("/api/staff/driver-horse", { method: "POST", body: { driverId, horse } });
 export const postDecision = (ref, body) =>
   call(`/api/requests/${encodeURIComponent(ref)}/decision`, { method: "POST", body });
