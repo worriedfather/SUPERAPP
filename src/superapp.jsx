@@ -1620,7 +1620,8 @@ export function ExecutiveDashboard() {
   // These tabs embed self-fetching views that own their OWN period — the top period
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).
-  const SELF_PERIOD = ["losses", "midday", "nightshift", "dayshift"];
+  const SELF_PERIOD = [];   // every section follows the ONE standard ribbon at the top
+  const pw = periodWindow(period, range);
   // Drill-down that lands on the EXACT section: switch tab, then scroll that
   // section (by id) into view once it renders. Use goTo(tab, sectionId).
   const [focusSec, setFocusSec] = useState(null);
@@ -2073,7 +2074,7 @@ export function ExecutiveDashboard() {
           </>}
 
           {/* ---------------- LOSSES — the wet-stock losses screen, embedded ---------------- */}
-          {tab === "losses" && <div id="losses" style={{ scrollMarginTop: 8 }}><WetstockView /></div>}
+          {tab === "losses" && <div id="losses" style={{ scrollMarginTop: 8 }}><WetstockView extWindow={pw} /></div>}
 
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
@@ -2081,9 +2082,9 @@ export function ExecutiveDashboard() {
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
 
           {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
-          {tab === "dayshift" && <div id="dayshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="day" /></div>}
-          {tab === "nightshift" && <div id="nightshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="night" /></div>}
-          {tab === "midday" && <div id="midday" style={{ scrollMarginTop: 8 }}><MiddayDipView /></div>}
+          {tab === "dayshift" && <div id="dayshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="day" date={["today", "yesterday"].includes(period) ? pw.date : null} /></div>}
+          {tab === "nightshift" && <div id="nightshift" style={{ scrollMarginTop: 8 }}><ShiftReportView shift="night" date={["today", "yesterday"].includes(period) ? pw.date : null} /></div>}
+          {tab === "midday" && <div id="midday" style={{ scrollMarginTop: 8 }}><MiddayDipView from={pw.from} to={pw.to} /></div>}
         </>
       )}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
@@ -2107,10 +2108,12 @@ function KpiCard({ label, value, tone, sub, subColor }) {
 }
 const coverTxt = (c) => c == null ? "—" : c > 30 ? ">30s" : `${c}s`;
 const dCover = (c) => c == null ? "—" : c > 60 ? ">60d" : `${c}d`;   // days-of-cover formatter
-function ShiftReportView({ shift }) {
+function ShiftReportView({ shift, date = null }) {
   const [d, setD] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
   const isNight = shift === "night";
-  useEffect(() => { setD(null); setErr(null); getShiftReport(shift).then(setD).catch((e) => setErr(e.message)); }, [shift, key]);
+  // date comes from the screen's standard ribbon (Today/Yesterday pick a day; the
+  // wider periods anchor to their end day). Null = latest day with data for this shift.
+  useEffect(() => { setD(null); setErr(null); getShiftReport(shift, date || undefined).then(setD).catch((e) => setErr(e.message)); }, [shift, date, key]);
 
   if (err) return <Note tone="red" title="Could not load">{err} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={() => setKey((k) => k + 1)}>Retry</button></Note>;
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
@@ -2517,9 +2520,9 @@ export function AllocationReport() {
   </>);
 }
 
-export function MiddayDipView() {
+export function MiddayDipView({ from = null, to = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
-  useEffect(() => { const to = todayISO(); const from = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", from, to).then(setD).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { const t = to || todayISO(); const f = from || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", f, t).then(setD).catch((e) => setErr(e.message)); }, [from, to]);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
   if (!Array.isArray(d.sites) || !d.sites.length) return <Note tone="amber" title="No midday dip yet">No site has submitted a midday tank dip for this window.</Note>;
@@ -2574,7 +2577,7 @@ export function ManagerBirdsEye({ me } = {}) {
     getSiteAnalytics(tab, w.from, w.to).then((r) => { if (live) setD(r); }).catch((e) => { if (live) setErr(e.message); });
     return () => { live = false; };
   }, [tab, w.from, w.to, reloadKey]);
-  useEffect(() => { if (tab === "prices" && !ex) getExecutive("month").then(setEx).catch(() => {}); }, [tab, ex]);
+  useEffect(() => { if (tab !== "prices") return; setEx(null); getExecutive(period === "range" ? "range" : period, w.from, w.to).then(setEx).catch(() => {}); }, [tab, period, w.from, w.to]);
 
   // Logistics-managers (Ranga, Kuda) get an operational bird's-eye without the finance
   // detail tabs (day-end reconciliation, tank/status trends, cash banking).
@@ -2590,9 +2593,8 @@ export function ManagerBirdsEye({ me } = {}) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Bird's-eye view</h2>
-          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Site analytics — the finance workbook, live{ANALYTIC.includes(tab) ? ` · ${w.label}` : ""}</div>
         </div>
-        {ANALYTIC.includes(tab) && (
+        {tab !== "deliveries" && (
           <div style={{ minWidth: 240, flex: "0 1 360px" }}>
             <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} showLabel={false} />
           </div>
@@ -2751,25 +2753,25 @@ export function ManagerBirdsEye({ me } = {}) {
       </>)}
 
       {tab === "deliveries" && <DeliveriesInProgress />}
-      {tab === "dayshift" && <ShiftReportView shift="day" />}
-      {tab === "nightshift" && <ShiftReportView shift="night" />}
-      {tab === "losses" && <WetstockView />}
-      {tab === "inflows" && <CashInflows />}
-      {tab === "cash" && <CashOffice readOnly />}
+      {tab === "dayshift" && <ShiftReportView shift="day" date={["today", "yesterday"].includes(period) ? w.date : null} />}
+      {tab === "nightshift" && <ShiftReportView shift="night" date={["today", "yesterday"].includes(period) ? w.date : null} />}
+      {tab === "losses" && <WetstockView extWindow={w} />}
+      {tab === "inflows" && <CashInflows embedded from={w.from} to={w.to} />}
+      {tab === "cash" && <CashOffice readOnly extWindow={w} />}
       {tab === "prices" && (ex ? <ExecPrices prices={ex.prices} onDrill={() => {}} /> : <Panel><div style={{ color: "var(--steel)" }}>Loading prices…</div></Panel>)}
       {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
     </Wrap>
   );
 }
 
-export function WetstockView() {
+export function WetstockView({ extWindow = null } = {}) {
   const [period, setPeriod] = useState("year");   // loss analysis is retrospective — default to the full picture; narrow with the selector
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
-    if (period === "range" && !(range.from && range.to)) return;
-    const w = periodWindow(period, range);
+    if (!extWindow && period === "range" && !(range.from && range.to)) return;
+    const w = extWindow || periodWindow(period, range);
     setD(null); setErr(null); getWetstock(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
@@ -2777,7 +2779,7 @@ export function WetstockView() {
   return (
     <Wrap>
       <SectionHead title="High-loss sites" sub="Delivery + wet-stock losses per site — worst first" />
-      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      {!extWindow && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
       <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
       {d && d.sites && d.sites.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><ExportBtn onClick={() => exportWetstock(d)} /></div>}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
@@ -3072,7 +3074,7 @@ export function SiteDeposit({ me }) {
 }
 
 // The cash office view: open days, deposits to confirm, cash unbanked/short.
-export function CashOffice({ readOnly = false } = {}) {
+export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
@@ -3080,7 +3082,7 @@ export function CashOffice({ readOnly = false } = {}) {
   const [drill, setDrill] = useState(null);
   const [siteDrill, setSiteDrill] = useState(null);
   const [onlyOpen, setOnlyOpen] = useState(true);
-  useEffect(() => { setD(null); setErr(null); const w = periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, reloadKey]);
+  useEffect(() => { setD(null); setErr(null); const w = extWindow || periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, extWindow && extWindow.from, extWindow && extWindow.to, reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
   const $ = (v) => "$" + full(v);
   const rows = d ? (onlyOpen ? d.openItems : d.rows) : [];
@@ -3104,7 +3106,7 @@ export function CashOffice({ readOnly = false } = {}) {
   return (
     <Wrap>
       <SectionHead title="Cash office — banking reconciliation" sub={readOnly ? "Banked vs expected, by site and day — view only" : "Confirm site deposits, record the cash received, and close each day"} />
-      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      {!extWindow && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
       <RefreshBar data={d} busy={!d && !err} onRefresh={reload} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
@@ -3330,7 +3332,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   const filtered = q ? sites.filter((s) => s.site.toLowerCase().includes(q.toLowerCase())) : sites;
   return (
     <Shell>
-      {!embedded && <SectionHead title="Cash inflows" sub="Full cash received from sites — cash counted + card/POS swipe + banked" />}
+      {!embedded && <SectionHead title="Cash inflows" />}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
         <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: embedded ? "auto" : undefined, border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
