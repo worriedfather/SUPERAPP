@@ -3333,8 +3333,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       {d && (d.expected > 0 || d.submitted > 0) && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
-            <Hero label="EXPECTED CASH" value={$(d.expected)} sub="from sales (FileMaker)" accent="#2B3990" />
-            <Hero label="SPLIT SUBMITTED" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} submitted`} accent="#2E9E5B" />
+            <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
+            <Hero label="SPLIT SUBMITTED" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} submitted`} accent="#6BC048" />
           </div>
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
           {(() => {
