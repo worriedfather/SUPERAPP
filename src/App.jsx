@@ -522,7 +522,7 @@ function TestBar() {
 const ROLE_TABS = {
   // Fleet driver: one home screen (balance, card, trips, pending status) with
   // buttons into the request wizard and the delivery-note form.
-  driver: [["dhome", "Home"], ["drequest", "Request"], ["deliver", "Delivery"], ["dapprove", "Approve"]],
+  driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"]],   // filing delivery notes is the SITE's job — the driver approves
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
   retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
