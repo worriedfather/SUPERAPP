@@ -3326,28 +3326,45 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       </div>
       {err && <Note tone="red" title="Couldn't load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
-      {d && d.total === 0 && (
-        <Note tone="amber" title="No inflow data for this window yet">The finance Revenue &amp; Cash workbook is keyed up to <b>{d.asOf ? fmtD(d.asOf) : "—"}</b>. Days after that haven&rsquo;t been captured by finance yet — pick an earlier day or a wider window.</Note>
+      {d && d.expected === 0 && d.total === 0 && (
+        <Note tone="amber" title="No data for this window yet">Sales are keyed to <b>{d.asOf ? fmtD(d.asOf) : "—"}</b>. Pick an earlier day or a wider window.</Note>
       )}
-      {d && d.total > 0 && (
+      {d && (d.expected > 0 || d.total > 0) && (
         <>
+          {/* The headline: expected cash vs confirmed received — the one shortfall */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
-            <Hero label="TOTAL CASH IN" value={$(d.total)} accent="#2E9E5B" />
-            <Hero label="CASH COUNTED" value={$(d.cash)} accent="#57C57E" />
-            <Hero label="CARD / SWIPE" value={$(d.swipe)} accent="#8FB8FF" />
-            <Hero label="BANKED" value={$(d.banked)} accent="#6BC048" />
+            <Hero label="EXPECTED CASH" value={$(d.expected)} sub="from sales (FileMaker)" accent="#2B3990" />
+            <Hero label="CONFIRMED RECEIVED" value={$(d.confirmed)} sub="cash office confirmed" accent="#2E9E5B" />
+            <Hero label="SHORTFALL" value={$(d.shortfall)} sub="expected − petty − received" accent={d.shortfall > 0 ? "#E5604D" : "#6BC048"} />
           </div>
+          {/* How the sites say the cash was handled */}
+          <Panel style={{ marginBottom: 12 }}>
+            <span className="lbl">How the cash was handled <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· site submissions; history from the finance workbook</span></span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
+              <KpiCard label="Sent to HQ" value={$(d.hq)} />
+              <KpiCard label="Banked" value={$(d.banked)} />
+              <KpiCard label="Card swipe" value={$(d.swipe)} />
+              <KpiCard label="Mobile money" value={$(d.mobile)} />
+              <KpiCard label="Site petty cash" value={$(d.petty)} sub="also under Outflows" />
+              <KpiCard label="Cash on hand" value={$(d.onHand)} />
+              <KpiCard label="Unaccounted" value={$(d.unaccounted)} tone={d.unaccounted > d.expected * 0.01 ? "bad" : "good"} />
+            </div>
+          </Panel>
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Cash</Th><Th right>Card / swipe</Th><Th right>Banked</Th><Th right>Total in</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected</Th><Th right>To HQ</Th><Th right>Banked</Th><Th right>Swipe</Th><Th right>Mobile</Th><Th right>Petty</Th><Th right>On hand</Th><Th right>Unaccounted</Th></tr></thead>
               <tbody>{filtered.map((s) => (
-                <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)" }}>
+                <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.unaccounted > Math.max(50, s.expected * 0.01) ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{$(s.cash)}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{$(s.swipe)}</Td>
+                  <Td right style={{ fontWeight: 700 }}>{$(s.expected)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.hq)}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{$(s.banked)}</Td>
-                  <Td right style={{ fontWeight: 700 }}>{$(s.total)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.swipe)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.mobile)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.petty)}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{$(s.onHand)}</Td>
+                  <Td right style={{ fontWeight: 700, color: s.unaccounted > 50 ? "var(--red)" : s.unaccounted < -50 ? "var(--amber)" : "var(--ok)" }}>{s.unaccounted === 0 ? "$0" : (s.unaccounted > 0 ? $(s.unaccounted) : `(${$(Math.abs(s.unaccounted))})`)}</Td>
                 </tr>
               ))}</tbody>
             </table>
