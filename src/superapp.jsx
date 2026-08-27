@@ -3366,7 +3366,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected</Th><Th right>To HQ</Th><Th right>Banked</Th><Th right>Swipe</Th><Th right>Mobile</Th><Th right>Petty</Th><Th right>On hand</Th><Th right>Submitted</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Split submitted</Th></tr></thead>
               <tbody>{filtered.map((s) => (
                 <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
