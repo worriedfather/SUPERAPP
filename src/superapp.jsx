@@ -8,6 +8,7 @@ import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows,
+  requestUnlock, getUnlockRequests, decideUnlock,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords,
@@ -433,6 +434,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="readings" choice={choice} site={site} date={date} shift={shift} />}
         <div style={{ fontSize: 11.5, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "7px 10px", marginBottom: 12 }}>
           This is the <b>once-per-shift</b> stock &amp; sales submission. For a midday tank check, use the <b>Midday dip</b> tab — don&apos;t enter sales there.
         </div>
@@ -504,6 +506,7 @@ function DipForm({ choice, site, config, date, isManager }) {
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="midday" choice={choice} site={site} date={date} shift="midday" />}
         <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 10 }}>A mid-day tank dip — just the litres in each tank. No sales or prices.</div>
         <span className="lbl">Tank dips (litres)</span>
         {tanks.map((t, i) => (
@@ -561,6 +564,7 @@ function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, ne
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="price" choice={choice} site={site} date={date} shift={null} />}
         <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>Yesterday's prices are preloaded — change only what moved.</div>
         <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--steel)", padding: "0 2px 4px" }}>
           <span style={{ flex: 1 }}>STATION</span><span style={{ width: 66, textAlign: "center" }}>PETROL</span><span style={{ width: 66, textAlign: "center" }}>DIESEL</span>{hasULP && <span style={{ width: 66, textAlign: "center" }}>ULP</span>}
@@ -3372,7 +3376,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Split submitted</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th></tr></thead>
               <tbody>{filtered.map((s) => (
                 <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
@@ -3383,7 +3387,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.mobile) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.petty) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
-                  <Td right style={{ fontWeight: 700 }}>{s.subDays ? $(s.submitted) : "—"}</Td>
+                  <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : (s.expected - s.submitted) > 50 ? "var(--red)" : (s.expected - s.submitted) < -50 ? "var(--amber)" : "var(--ok)" }}>{!s.subDays ? "—" : (s.expected - s.submitted) === 0 ? "$0" : (s.expected - s.submitted) > 0 ? $(s.expected - s.submitted) : `(${$(Math.abs(s.expected - s.submitted))})`}</Td>
                 </tr>
               ))}</tbody>
             </table>
@@ -6151,3 +6155,99 @@ function DrvRow({ s, horses, busy, onSave }) {
 
 const selStyle = { border: "1px solid var(--line)", borderRadius: 8, padding: "6px 8px", fontSize: 12, background: "#fff", color: "var(--navy)", maxWidth: 220 };
 const saveBtn = (on) => ({ border: "1px solid " + (on ? "var(--navy)" : "var(--line)"), background: on ? "var(--navy)" : "#fff", color: on ? "#fff" : "var(--steel)", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: on ? "pointer" : "default" });
+
+// ---- UNLOCK REQUESTS --------------------------------------------------------
+// A locked submission blocks the site with a 409. Instead of phoning around, the
+// site asks for an unlock RIGHT THERE — with the reason the manager approves
+// against. Approval grants ONE resubmission; it locks again the moment it lands.
+function RequestUnlock({ kind, choice, site, date, shift }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState(null);
+  const send = async () => {
+    setBusy(true); setState(null);
+    try {
+      await requestUnlock({ site: choice && choice.fixed ? undefined : site, tradingDate: date, shift: shift || null, kind, reason: reason.trim() });
+      setState({ tone: "ok", title: "Unlock requested", body: "A manager has been notified. You'll get a notification when it's decided — if approved, resubmit; it locks again after." });
+    } catch (e) { setState({ tone: "red", title: "Not sent", body: e.message }); }
+    finally { setBusy(false); }
+  };
+  if (state && state.tone === "ok") return <Note tone="ok" title={state.title}>{state.body}</Note>;
+  return (
+    <div style={{ border: "1px dashed #B23B3B55", background: "#FDF7F6", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--navy)", marginBottom: 6 }}>Request an unlock from a manager</div>
+      {state && <Note tone={state.tone} title={state.title}>{state.body}</Note>}
+      <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+        placeholder="Why does this need changing? e.g. entered diesel litres under blend"
+        style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
+      <button type="button" className="pill" disabled={busy || reason.trim().length < 10} onClick={send}
+        style={{ width: "100%", marginTop: 8, opacity: busy || reason.trim().length < 10 ? 0.6 : 1 }}>
+        {busy ? "Sending…" : "Request unlock"}
+      </button>
+      {reason.trim().length > 0 && reason.trim().length < 10 && <div style={{ fontSize: 11, color: "var(--amber)", marginTop: 4 }}>Give the manager a proper sentence.</div>}
+    </div>
+  );
+}
+
+// The managers' queue: every unlock request with its reason — approve or deny.
+export function UnlockRequests() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(null), [msg, setMsg] = useState(null);
+  const [note, setNote] = useState({});
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setErr(null); getUnlockRequests().then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const decide = async (id, outcome) => {
+    setBusy(id); setMsg(null);
+    try { await decideUnlock(id, outcome, note[id] || null); setMsg({ tone: "ok", title: outcome === "approved" ? "Unlocked — the site can resubmit once" : "Denied", body: "The site has been notified." }); setReloadKey((k) => k + 1); }
+    catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); }
+    finally { setBusy(null); }
+  };
+  if (err) return <Wrap><SectionHead title="Unlock requests" /><Note tone="red" title="Couldn't load">{err}</Note></Wrap>;
+  if (!d) return <Wrap><SectionHead title="Unlock requests" /><Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel></Wrap>;
+  const pending = d.requests.filter((r) => r.status === "pending");
+  const decided = d.requests.filter((r) => r.status !== "pending").slice(0, 30);
+  return (
+    <Wrap>
+      <SectionHead title="Unlock requests" sub="Sites asking to correct a locked submission — approve grants ONE resubmission, then it locks again" />
+      <RefreshBar data={d} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+        <CountPill n={pending.length} label="Waiting" tone={pending.length ? "amber" : "ok"} />
+      </div>
+      {pending.length === 0 && <Note tone="ok" title="Nothing waiting">No unlock requests to review.</Note>}
+      {pending.map((r) => (
+        <Panel key={r.id} style={{ marginBottom: 10, borderLeft: "4px solid #C07A00" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+            <span style={{ fontWeight: 700, color: "var(--navy)" }}>{r.site_name} · {r.kindLabel} · {fmtD(r.trading_date)}{r.shift ? ` · ${r.shift}` : ""}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{r.requested_by || "site"} · {r.at}</span>
+          </div>
+          <div style={{ fontSize: 13.5, margin: "8px 0 10px", background: "#F7F8FB", borderRadius: 10, padding: "9px 12px" }}>&ldquo;{r.reason}&rdquo;</div>
+          <input value={note[r.id] || ""} onChange={(e) => setNote((s) => ({ ...s, [r.id]: e.target.value }))} placeholder="note back to the site (optional)"
+            style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "8px 11px", fontSize: 12.5, marginBottom: 9 }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="pill" disabled={busy === r.id} onClick={() => decide(r.id, "approved")} style={{ flex: 1 }}>{busy === r.id ? "…" : "Approve unlock"}</button>
+            <button className="pill-ghost" disabled={busy === r.id} onClick={() => decide(r.id, "denied")} style={{ flex: 1, color: "var(--red)", borderColor: "var(--red)" }}>Deny</button>
+          </div>
+        </Panel>
+      ))}
+      {decided.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden", marginTop: 14 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Submission</Th><Th>Day</Th><Th>Reason</Th><Th>Outcome</Th><Th>By</Th><Th>Used</Th></tr></thead>
+              <tbody>{decided.map((r) => (
+                <tr key={r.id} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td>{r.site_name}</Td><Td>{r.kindLabel}</Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.trading_date)}</Td>
+                  <Td style={{ maxWidth: 260, whiteSpace: "normal" }}>{r.reason}</Td>
+                  <Td style={{ fontWeight: 700, color: r.status === "approved" ? "var(--ok)" : "var(--red)" }}>{r.status}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{r.decided_by || "—"}</Td>
+                  <Td>{r.status === "approved" ? (r.used ? "✓ resubmitted" : "not yet") : "—"}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+    </Wrap>
+  );
+}
