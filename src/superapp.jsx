@@ -615,17 +615,23 @@ function CashForm({ choice, site, date, shift, isManager }) {
   const hqTotal = HQ_DENOMS.reduce((a, d) => a + d * n(hqDenoms[String(d)]), 0);
   const hqCount = HQ_DENOMS.reduce((a, d) => a + n(hqDenoms[String(d)]), 0);
 
+  // The cash being handled belongs to the trading day that just ENDED — sites hand
+  // over/split yesterday's takings (verified: submissions match the PREVIOUS day's
+  // FileMaker expected to the dollar). Stamping "today" put every submission one day
+  // late and broke the expected-vs-submitted join on the inflows/recon screens.
+  const cashDate = (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })();
+
   // Pull the expected cash the moment the site / date / shift settles.
   useEffect(() => {
     let live = true;
     if (!site) { setExp(null); return; }
     setExpLoading(true); setExp(null);
-    getExpectedCash({ site: choice.fixed ? undefined : site, date, shift })
+    getExpectedCash({ site: choice.fixed ? undefined : site, date: cashDate, shift })
       .then((d) => { if (live) setExp(d); })
       .catch(() => { if (live) setExp(null); })
       .finally(() => { if (live) setExpLoading(false); });
     return () => { live = false; };
-  }, [site, date, shift, choice.fixed]);
+  }, [site, cashDate, shift, choice.fixed]);
 
   const expected = exp && exp.expected != null && (exp.hasSplit || (exp.hasSales && exp.hasPrice)) ? n(exp.expected) : null;
   const accounted = CASH_LEGS.reduce((a, l) => a + (l.key === "sentToHq" ? hqTotal : n(f[l.key])), 0);
@@ -639,7 +645,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
     setBusy(true);
     try {
       const r = await postCash({
-        site: choice.fixed ? undefined : site, tradingDate: date, shift,
+        site: choice.fixed ? undefined : site, tradingDate: cashDate, shift,
         banked: n(f.banked), bankRef: f.bankRef || null, bank: f.bank || null, sentToHq: hqTotal,
         hqDenoms: HQ_DENOMS.reduce((o, d) => { const c = n(hqDenoms[String(d)]); if (c > 0) o[String(d)] = c; return o; }, {}),
         swipe: n(f.swipe), ecocash: n(f.ecocash), petty: n(f.petty), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
@@ -664,7 +670,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
         {/* Expected cash — pulled from the sales submission, not editable here */}
         <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <span style={{ fontSize: 12, letterSpacing: ".04em", opacity: .8, textTransform: "uppercase" }}>Cash to account for · trading day</span>
+            <span style={{ fontSize: 12, letterSpacing: ".04em", opacity: .8, textTransform: "uppercase" }}>Cash to account for · trading day {fmtD(cashDate)}</span>
             <span style={{ fontSize: 11, opacity: .7 }}>{exp && exp.basis === "site-declared" ? "site declared" : "official · FileMaker"}</span>
           </div>
           {expLoading ? (
