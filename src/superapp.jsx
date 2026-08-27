@@ -367,7 +367,7 @@ export function SiteSubmit({ me }) {
 // a mistake (a re-submit writes a correction; the latest reading wins).
 // canEdit gates the Edit button: once a SITE submits it's LOCKED — only a manager
 // can reopen and correct it (managers pass canEdit=true). Supervisors see a note.
-function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next }) {
+function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next, unlock = null }) {
   const c = tone === "amber"
     ? { bg: "#FEF7E6", fg: "#8A6D1E", ic: "!" }
     : { bg: "#EAF7EC", fg: "#2E7D33", ic: "✓" };
@@ -382,8 +382,9 @@ function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next 
             {next && next.onNext && <button type="button" className="pill" style={{ padding: "8px 16px" }} onClick={next.onNext}>{next.label || "Next"} ›</button>}
             {canEdit
               ? <button type="button" className="pill-ghost" style={{ padding: "8px 16px" }} onClick={onEdit}>Edit submission</button>
-              : <div style={{ fontSize: 12, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>🔒 Locked. If something needs changing, ask a manager to edit it.</div>}
+              : <div style={{ fontSize: 12, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>🔒 Locked — needs changing? Request an unlock below.</div>}
           </div>
+          {!canEdit && unlock && <div style={{ marginTop: 10 }}><RequestUnlock {...unlock} /></div>}
         </div>
       </div>
     </Panel>
@@ -429,7 +430,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
     finally { setBusy(false); }
   };
 
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "readings", choice, site, date, shift }} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -501,7 +502,7 @@ function DipForm({ choice, site, config, date, isManager }) {
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} unlock={{ kind: "midday", choice, site, date, shift: "midday" }} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -559,7 +560,7 @@ function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, ne
     finally { setBusy(false); }
   };
 
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "price", choice, site, date, shift: null }} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -665,11 +666,12 @@ function CashForm({ choice, site, date, shift, isManager }) {
   const okVar = variance != null && Math.abs(variance) < 1;
   const varTone = variance == null ? "var(--steel)" : okVar ? "#3C9A52" : variance > 0 ? "var(--amber)" : "#C0563A";
 
-  if (done) return <SubmittedCard tone={done.tone} title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} />;
+  if (done) return <SubmittedCard tone={done.tone} title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} unlock={{ kind: "cash", choice, site, date: cashDate, shift }} />;
   return (
     <Panel>
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="cash" choice={choice} site={site} date={cashDate} shift={shift} />}
 
         {/* Expected cash — pulled from the sales submission, not editable here */}
         <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
