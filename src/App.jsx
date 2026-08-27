@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
 import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM } from "./data";
 import { resumeTracking, startTracking } from "./tripTracker.js";
-import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings } from "./device";
+import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings, gpsEnabled } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -530,29 +530,29 @@ const ROLE_TABS = {
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
   fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
-                  ["cardsys", "Fuel drawn"], ["staff", "Staff assignment"], ["intel", "Intelligence"]],
+                  ["cardsys", "Fuel drawn"], ["staff", "Staff assignment"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   approver: [["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["logistics", "Deliveries"],
              ["cardsys", "Fuel drawn"], ["intel", "Intelligence"]],
   // Logistics: runs the warehouses. Submits warehouse + in-transit stock, logs
   // deliveries, and sees the full inventory plus what the sites hold.
-  logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"]],
-  logistics_manager: [["birdseye", "Bird's-eye"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"]],
-  depot: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"]],
+  logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
+  logistics_manager: [["birdseye", "Bird's-eye"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
+  depot: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["tracking", "Journey tracking"]],
   // Logistics lead (Dave): the full logistics role PLUS driver management —
   // approves fuel requests and sees truck/driver efficiency.
-  logistics_lead: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["staff", "Staff assignment"]],
+  logistics_lead: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
   // Executive: full access to everything EXCEPT raising fuel requests.
   // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
   // and no master data (master data is the admin role's alone).
   executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"],
               ["inventory", "Inventory"], ["logistics", "Deliveries"],
-              ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"]],
+              ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
   manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
@@ -567,11 +567,11 @@ const ROLE_TABS = {
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
   reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
-  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
+  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
   admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"],
           ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
-          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
 };
 
 /* Module cards on the Home hub, grouped. Keyed by tab key. */
@@ -606,6 +606,7 @@ const MODULE_META = {
   league: { label: "Driver league", group: "Logistics", desc: "Driver performance, ranked" },
   staff:  { label: "Staff assignment", group: "Logistics", desc: "Supervisors → sites · drivers → trucks" },
   unlocks:{ label: "Unlock requests", group: "Retail sites", desc: "Sites asking to correct a locked submission" },
+  tracking:{ label: "Journey tracking", group: "Logistics", desc: "Live GPS trail per trip" },
   inventory: { label: "Inventory", group: "Logistics", desc: "Warehouse · trucks · sites" },
   yardwork:  { label: "Yard workshop", group: "Yard", desc: "Log repairs & updates" },
   fleetstatus:{ label: "Fleet status", group: "Yard", desc: "Active / in workshop" },
@@ -820,6 +821,20 @@ function App() {
   const [toast, setToast] = useState(null);      // last-resort notice for any unhandled failure
   const [net, setNet] = useState(() => ({ online: typeof navigator === "undefined" || navigator.onLine, pending: outboxCount() }));
   const [mustUpdate, setMustUpdate] = useState(false);   // server requires a newer build
+  // TINDER-STYLE GPS GATE (drivers, native app): with location OFF the app is a
+  // brick — geo-lock, tracking and evidence all need it. Poll cheaply; the gate
+  // lifts ITSELF the moment GPS comes back on (no "check again" tap needed).
+  const [gpsOk, setGpsOk] = useState(true);
+  useEffect(() => {
+    if (!me || me.kind !== "driver" || !isNative()) { setGpsOk(true); return; }
+    let live = true;
+    const probe = async () => { const ok = await gpsEnabled(); if (live) setGpsOk(ok); };
+    probe();
+    const iv = setInterval(probe, 4000);
+    const onVis = () => { if (document.visibilityState === "visible") probe(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { live = false; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, [me]);
 
   // Force-update gate: ask the server for the minimum build it accepts. If this
   // app is older, block with an "update required" screen. Skipped silently when
@@ -949,6 +964,7 @@ function App() {
   }, [me, tab, tabs, homeTab]);
 
   if (mustUpdate) return <UpdateGate />;
+  if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
 
   const leave = () => { signOut(); setMe(null); setState(null); };
@@ -1026,6 +1042,7 @@ function App() {
         {tab === "cash" && <CashView />}
         {tab === "staff" && <StaffAssignment />}
         {tab === "unlocks" && <UnlockRequests />}
+        {tab === "tracking" && <JourneyTracking />}
         {tab === "deposit" && <SiteDeposit me={me} />}
         {tab === "cashoffice" && <CashOffice />}
         {(tab === "digest" || tab === "radar") && <RadarView />}
@@ -1388,6 +1405,14 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
 
   // ask for location the moment the app opens, so the driver is not stopped at the pump
   useEffect(() => { primeLocation().then((r) => { if (r === "blocked") setGeo({ state: "blocked" }); }); }, []);
+  // coming back from the phone's Location settings: re-verify AUTOMATICALLY the
+  // moment the app is visible again — no "check again" tap needed.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible" && (geo.state === "off" || geo.state === "nofix") && fuelStn) locate(fuelStn); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geo.state, fuelStn]);
   // resending a declined request: re-verify GPS for the prefilled station
   useEffect(() => { if (init.station) locate(init.station); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2606,3 +2631,40 @@ function MasterData({ drivers, horses, onAddDriver, gkey, setGkey }) {
 
 
 export default App;
+
+/* Full-screen block for drivers while the phone's GPS is off. Styled like the
+   update gate. It clears ITSELF — the app polls and unblocks the moment
+   location services come back on. */
+function GpsGate() {
+  const C = { navy: "#14213D", ink: "#1B2A4A", blue: "#2B3990", lime: "#6BC048", steel: "#5B6B84", red: "#B23B3B" };
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(165deg,#1F2E52 0%,#0F1A31 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))", fontFamily: "'Barlow',system-ui,sans-serif", color: "#EAF0FA" }}>
+      <div style={{ width: "100%", maxWidth: 384, textAlign: "center" }}>
+        <img src="/da-wordmark.png" alt="Daniel Aguiar Motors" style={{ width: "min(248px,74%)", height: "auto", filter: "drop-shadow(0 10px 24px rgba(0,0,0,.4))" }} />
+        <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 26, fontWeight: 800, letterSpacing: ".2em", marginTop: 16, lineHeight: 1 }}>
+          <span style={{ color: C.lime }}>OPS</span>
+        </div>
+        <div style={{ background: "#fff", color: C.ink, borderRadius: 18, padding: 24, boxShadow: "0 24px 60px rgba(0,0,0,.40)", textAlign: "center", marginTop: 24 }}>
+          <div style={{ width: 58, height: 58, borderRadius: 16, background: "#FDECEA", display: "grid", placeItems: "center", margin: "0 auto 14px" }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.red} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+          </div>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Turn on GPS to continue</div>
+          <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
+            DA OPS needs your location for fuel requests and trip tracking. Switch <b>Location</b> on — this screen clears by itself the moment it&rsquo;s on.
+          </div>
+          <button type="button" onClick={() => openLocationSettings().then((ok) => { if (!ok) alert("Open the phone's Settings → Location and switch it ON."); })}
+            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, border: "none", cursor: "pointer",
+              fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em",
+              background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>
+            Open location settings
+          </button>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, fontSize: 12, color: C.steel }}>
+            <span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid #D5DCEA", borderTopColor: C.lime, animation: "spin 1s linear infinite", display: "inline-block" }} />
+            Watching for GPS…
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

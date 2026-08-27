@@ -24,16 +24,18 @@ export const isMobileApp = () => {
    in the phone's settings — a different problem from a weak signal) · else no fix. */
 export async function getFix({ timeout = 15000 } = {}) {
   if (isNative()) {
-    const perm = await Geolocation.checkPermissions();
-    if (perm.location !== "granted") {
-      const asked = await Geolocation.requestPermissions();
-      if (asked.location !== "granted") throw Object.assign(new Error("denied"), { code: 1 });
-    }
+    // the WHOLE native flow classifies — Android throws "location disabled" from
+    // checkPermissions() itself when GPS is off, not just from getCurrentPosition
     try {
+      const perm = await Geolocation.checkPermissions();
+      if (perm.location !== "granted") {
+        const asked = await Geolocation.requestPermissions();
+        if (asked.location !== "granted") throw Object.assign(new Error("denied"), { code: 1 });
+      }
       const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout });
       return { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
     } catch (e) {
-      if (/disabled|not enabled|turned off|location services/i.test(String(e && e.message))) throw Object.assign(new Error("gps off"), { code: 3 });
+      if (/disabled|not enabled|turned off|location services|unavailable/i.test(String(e && e.message))) throw Object.assign(new Error("gps off"), { code: 3 });
       throw e;
     }
   }
@@ -52,14 +54,20 @@ export async function getFix({ timeout = 15000 } = {}) {
 export async function openLocationSettings() {
   try {
     if (!isNative()) return false;
-    // resolved at runtime only (plugin optional — builds without it fall back to
-    // the instruction text; vite must not try to bundle it, hence @vite-ignore)
-    const mod = await import(/* @vite-ignore */ "capacitor-native-settings");
+    const mod = await import("capacitor-native-settings");
     const { NativeSettings, AndroidSettings, IOSSettings } = mod;
     if (Capacitor.getPlatform() === "ios") await NativeSettings.openIOS({ option: IOSSettings.App });
     else await NativeSettings.openAndroid({ option: AndroidSettings.Location });
     return true;
   } catch { return false; }
+}
+
+/* Cheap probe: are the phone's location services ON? (Android rejects the
+   permission check itself when GPS is off — no fix attempt, no battery cost.) */
+export async function gpsEnabled() {
+  if (!isNative()) return true;
+  try { await Geolocation.checkPermissions(); return true; }
+  catch (e) { return !/disabled|not enabled|turned off|location services/i.test(String(e && e.message)); }
 }
 
 /* Ask for location the moment the app opens, so the driver is never stopped at the pump. */

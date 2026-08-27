@@ -42,6 +42,20 @@ export async function initPush(onOpenTab) {
       // generic list. (See App.jsx: it focuses the item from these fields.)
       if (data.tab && typeof onOpenTab === "function") onOpenTab(data.tab, data);
     });
+    // FOREGROUND pushes: Android does NOT display an FCM notification while the app
+    // is open — mirror it as an immediate local notification so nothing is missed.
+    PN.addListener("pushNotificationReceived", async (n) => {
+      try {
+        const { LocalNotifications } = await import("@capacitor/local-notifications");
+        await LocalNotifications.schedule({ notifications: [{
+          id: Math.floor(Date.now() % 2147483647),
+          title: n?.title || "DA OPS",
+          body: n?.body || "",
+          channelId: "da-ops",
+          extra: n?.data || {},
+        }] });
+      } catch { /* display is best-effort — the in-app inbox still carries the task */ }
+    });
 
     await PN.register();   // throws if google-services.json/FCM isn't set up — caught below
   } catch { /* Firebase not configured → degrade to no-op */ }

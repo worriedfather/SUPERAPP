@@ -6255,3 +6255,50 @@ export function UnlockRequests() {
     </Wrap>
   );
 }
+
+// ---- JOURNEY TRACKING -------------------------------------------------------
+// The dedicated GPS screen: every live trip, pick one, see the full journey —
+// route map, last seen, distance/duration, moving vs stopped, every stop (where
+// + how long), GPS gaps, and per-drop distance + ETA. The anti-pilferage log.
+export function JourneyTracking() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setErr(null); getDeliveriesInProgress().then((r) => { setD(r); if (r.trips && r.trips.length && !sel) setSel(r.trips.find((t) => t.stage === "in_transit")?.tripNo || r.trips[0].tripNo); }).catch((e) => setErr(e.message)); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
+  if (err) return <Wrap><SectionHead title="Journey tracking" /><Note tone="red" title="Couldn't load">{err}</Note></Wrap>;
+  if (!d) return <Wrap><SectionHead title="Journey tracking" /><Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel></Wrap>;
+  const trips = d.trips || [];
+  return (
+    <Wrap>
+      <SectionHead title="Journey tracking" sub="Live GPS trail per trip — route, stops, gaps, ETA to each drop" />
+      <RefreshBar data={d} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {trips.length === 0 && <Note tone="blue" title="No live trips">Nothing scheduled or on the road right now.</Note>}
+      {trips.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {trips.map((t) => (
+              <button key={t.tripNo} type="button" onClick={() => setSel(t.tripNo)}
+                style={{ border: `1.5px solid ${sel === t.tripNo ? "var(--navy)" : "var(--line)"}`, background: sel === t.tripNo ? "var(--navy)" : "#fff", color: sel === t.tripNo ? "#fff" : "var(--navy)", borderRadius: 12, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                {t.tripNo} · {t.truck}
+                <div style={{ fontWeight: 400, fontSize: 10.5, opacity: .8 }}>{t.stage === "in_transit" ? "🚚 in transit" : "📋 scheduled"} · {(t.drops || []).map((x) => x.site).join(", ") || t.warehouse}</div>
+              </button>
+            ))}
+          </div>
+          {sel && (() => {
+            const t = trips.find((x) => x.tripNo === sel);
+            return (
+              <Panel>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontWeight: 700, color: "var(--navy)" }}>{sel}{t ? ` · ${t.truck}${t.driver ? ` · ${t.driver}` : ""}` : ""}</span>
+                  {t && <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{t.warehouse} {t.product} · {full(t.qty)} L{t.collectedAt ? ` · collected ${t.collectedAt}` : " · not collected yet"}</span>}
+                </div>
+                <TripTrack tripNo={sel} />
+              </Panel>
+            );
+          })()}
+        </>
+      )}
+    </Wrap>
+  );
+}
