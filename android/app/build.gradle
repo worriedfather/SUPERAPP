@@ -14,8 +14,8 @@ android {
         applicationId "zw.co.damotors.fuel"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 113
-        versionName "1.5.91"
+        versionCode 114
+        versionName "1.5.92"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
