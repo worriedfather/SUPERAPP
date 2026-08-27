@@ -2568,8 +2568,8 @@ export function ManagerBirdsEye({ me } = {}) {
 
   // Logistics-managers (Ranga, Kuda) get an operational bird's-eye without the finance
   // detail tabs (day-end reconciliation, tank/status trends, cash banking).
-  const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash"]) : new Set();
-  const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));
+  const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash", "inflows"]) : new Set();
+  const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));
   const $ = (v) => "$" + full(v);
   const lossCol = (s) => (s === "critical" ? "var(--red)" : s === "watch" ? "var(--amber)" : "var(--ok)");
 
@@ -2744,6 +2744,7 @@ export function ManagerBirdsEye({ me } = {}) {
       {tab === "dayshift" && <ShiftReportView shift="day" />}
       {tab === "nightshift" && <ShiftReportView shift="night" />}
       {tab === "losses" && <WetstockView />}
+      {tab === "inflows" && <CashInflows />}
       {tab === "cash" && <CashOffice readOnly />}
       {tab === "prices" && (ex ? <ExecPrices prices={ex.prices} onDrill={() => {}} /> : <Panel><div style={{ color: "var(--steel)" }}>Loading prices…</div></Panel>)}
       {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
