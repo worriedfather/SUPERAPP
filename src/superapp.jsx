@@ -599,10 +599,11 @@ const CASH_LEGS = [
   { key: "banked", label: "Banked", hint: "USD cash deposited", tone: "#2B3990" },
   { key: "swipe", label: "Card swipe", hint: "POS / bank card", tone: "#6BC048" },
   { key: "ecocash", label: "EcoCash / mobile", hint: "mobile money", tone: "#4FA45B" },
+  { key: "petty", label: "Petty cash", hint: "spent from the till — keep the receipts", tone: "#B06A2C" },
   { key: "cashOnHand", label: "Cash on hand", hint: "float / not yet moved", tone: "#C8A24B" },
 ];
 function CashForm({ choice, site, date, shift, isManager }) {
-  const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", daCard: "", cashOnHand: "" };
+  const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", petty: "", daCard: "", cashOnHand: "" };
   const [f, setF] = useState(empty);
   const [hqDenoms, setHqDenoms] = useState({});   // { "100": count, ... } for cash sent to HQ
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
@@ -641,7 +642,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
         banked: n(f.banked), bankRef: f.bankRef || null, bank: f.bank || null, sentToHq: hqTotal,
         hqDenoms: HQ_DENOMS.reduce((o, d) => { const c = n(hqDenoms[String(d)]); if (c > 0) o[String(d)] = c; return o; }, {}),
-        swipe: n(f.swipe), ecocash: n(f.ecocash), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
+        swipe: n(f.swipe), ecocash: n(f.ecocash), petty: n(f.petty), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
         expected, deviceTime: new Date().toISOString(),
       });
       const tail = expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
