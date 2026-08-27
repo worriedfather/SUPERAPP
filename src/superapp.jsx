@@ -2121,6 +2121,25 @@ function ShiftReportView({ shift }) {
         </div>
       </div>
 
+      {/* Missing / incomplete — up top where it gets acted on */}
+      {(d.missingFull.length > 0 || d.missingShift.length > 0) && (
+        <div style={{ background: "#FDF1F0", border: "1px solid #EBC0BB", borderLeft: "4px solid #B23B3B", borderRadius: 14, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".04em", fontSize: 13, fontWeight: 800, color: "#B23B3B", marginBottom: 6 }}>Missing / incomplete</div>
+          {d.missingFull.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: d.missingShift.length ? 6 : 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#B23B3B", borderRadius: 20, padding: "2px 9px", whiteSpace: "nowrap" }}>Not submitted · {d.missingFull.length}</span>
+              <span style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.6 }}>{d.missingFull.join(" · ")}</span>
+            </div>
+          )}
+          {d.missingShift.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#B4801F", borderRadius: 20, padding: "2px 9px", whiteSpace: "nowrap" }}>{isNight ? "Night" : "Day"} shift not submitted · {d.missingShift.length}</span>
+              <span style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.6 }}>{d.missingShift.join(" · ")}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* KPI cards — like the PDF header */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
         <KpiCard label="Total sales" value={L(t.totalSales)}
@@ -2198,24 +2217,6 @@ function ShiftReportView({ shift }) {
         </div>
       </Panel>
 
-      {/* Missing / incomplete */}
-      {(d.missingFull.length > 0 || d.missingShift.length > 0) && (
-        <Panel>
-          <span className="lbl" style={{ color: "#B23B3B" }}>Missing / incomplete</span>
-          {d.missingFull.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#B23B3B", marginBottom: 4 }}>Not submitted ({d.missingFull.length})</div>
-              <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.7 }}>{d.missingFull.join(" · ")}</div>
-            </div>
-          )}
-          {d.missingShift.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#B4801F", marginBottom: 4 }}>{isNight ? "Night shift not submitted" : "Day shift not submitted"} ({d.missingShift.length})</div>
-              <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.7 }}>{d.missingShift.join(" · ")}</div>
-            </div>
-          )}
-        </Panel>
-      )}
     </>
   );
 }
