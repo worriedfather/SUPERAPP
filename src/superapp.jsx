@@ -3335,6 +3335,19 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
             <Hero label="EXPECTED CASH" value={$(d.expected)} sub="from sales (FileMaker)" accent="#2B3990" />
             <Hero label="SPLIT SUBMITTED" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} submitted`} accent="#2E9E5B" />
           </div>
+          {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
+          {(() => {
+            const notSub = (d.sites || []).filter((s) => s.subDays === 0 && s.expected > 0);
+            if (!notSub.length) return null;
+            return (
+              <div style={{ background: "#FDF1F0", border: "1px solid #EBC0BB", borderLeft: "4px solid #B23B3B", borderRadius: 14, padding: "12px 14px", marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#B23B3B", borderRadius: 20, padding: "2px 9px", whiteSpace: "nowrap" }}>Cash handling not submitted · {notSub.length}</span>
+                  <span style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.6 }}>{notSub.map((s) => s.site).join(" · ")}</span>
+                </div>
+              </div>
+            );
+          })()}
           {/* What the SITES SAY they did with the cash — their submissions, verbatim.
               Reconciliation (expected vs confirmed received) lives on the Cash office screen. */}
           <Panel style={{ marginBottom: 12 }}>
