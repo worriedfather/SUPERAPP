@@ -1197,18 +1197,6 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
   const first = (me.name || "").split(" ")[0];
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
-  // arriving via "Request fuel for this trip": the trip number is preset before the
-  // trip list loads — back-fill the horse, trailer, drops and end point once it does.
-  useEffect(() => {
-    if (!tripNo || !myTrips.length) return;
-    const t = myTrips.find((x) => x.tripNo === tripNo);
-    if (!t) return;
-    if (t.truck && !horse) setHorse(t.truck);
-    if (t.trailer && !trailer) setTrailer(t.trailer);
-    setDrops((d) => (d && d.length ? d : (t.drops || []).map((x) => x.site)));
-    setEnd((e) => e || t.endPoint || "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTrips, tripNo]);
   return (
     <div>
       <h2 style={{ margin: "2px 0 16px", fontSize: "clamp(22px,6vw,28px)" }}>Hi {first} 👋</h2>
@@ -1378,6 +1366,18 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [tripNo, setTripNo] = useState(init.tripNo || "");
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
+  // arriving via "Request fuel for this trip": the trip number is preset before the
+  // trip list loads — back-fill the horse, trailer, drops and end point once it does.
+  useEffect(() => {
+    if (!tripNo || !myTrips.length) return;
+    const t = myTrips.find((x) => x.tripNo === tripNo);
+    if (!t) return;
+    if (t.truck && !horse) setHorse(t.truck);
+    if (t.trailer && !trailer) setTrailer(t.trailer);
+    setDrops((d) => (d && d.length ? d : (t.drops || []).map((x) => x.site)));
+    setEnd((e) => e || t.endPoint || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTrips, tripNo]);
 
   const driver = drivers.find((d) => d.card === card);
   const isFleet = driver?.type === "fleet";

@@ -52,7 +52,9 @@ export async function getFix({ timeout = 15000 } = {}) {
 export async function openLocationSettings() {
   try {
     if (!isNative()) return false;
-    const mod = await import("capacitor-native-settings");
+    // resolved at runtime only (plugin optional — builds without it fall back to
+    // the instruction text; vite must not try to bundle it, hence @vite-ignore)
+    const mod = await import(/* @vite-ignore */ "capacitor-native-settings");
     const { NativeSettings, AndroidSettings, IOSSettings } = mod;
     if (Capacitor.getPlatform() === "ios") await NativeSettings.openIOS({ option: IOSSettings.App });
     else await NativeSettings.openAndroid({ option: AndroidSettings.Location });
