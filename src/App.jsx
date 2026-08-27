@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
 import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM } from "./data";
 import { resumeTracking, startTracking } from "./tripTracker.js";
-import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS } from "./device";
+import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
@@ -1197,6 +1197,18 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
   const first = (me.name || "").split(" ")[0];
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
+  // arriving via "Request fuel for this trip": the trip number is preset before the
+  // trip list loads — back-fill the horse, trailer, drops and end point once it does.
+  useEffect(() => {
+    if (!tripNo || !myTrips.length) return;
+    const t = myTrips.find((x) => x.tripNo === tripNo);
+    if (!t) return;
+    if (t.truck && !horse) setHorse(t.truck);
+    if (t.trailer && !trailer) setTrailer(t.trailer);
+    setDrops((d) => (d && d.length ? d : (t.drops || []).map((x) => x.site)));
+    setEnd((e) => e || t.endPoint || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTrips, tripNo]);
   return (
     <div>
       <h2 style={{ margin: "2px 0 16px", fontSize: "clamp(22px,6vw,28px)" }}>Hi {first} 👋</h2>
@@ -1407,7 +1419,9 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     } catch (e) {
       setGeo(e.code === 1
         ? { state: "blocked" }
-        : { state: "nofix", why: "The phone could not find you. Step out from under the canopy and try again." });
+        : e.code === 3
+          ? { state: "off" }
+          : { state: "nofix", why: "The phone could not find you. Step out from under the canopy and try again." });
     }
   };
 
@@ -1443,7 +1457,8 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   if (driver && isFleet && !trailer) missing.push("the trailer");
   if (driver && !isFleet && !veh) missing.push("the vehicle");
   if (!fuelStn) missing.push("the station you are fuelling from");
-  else if (geo.state === "blocked") missing.push("location switched on");
+  else if (geo.state === "blocked") missing.push("location permission for the app");
+  else if (geo.state === "off") missing.push("GPS switched on (phone settings)");
   else if (geo.state !== "onsite") missing.push("GPS confirmation that you are at " + fuelStn);
   if (!odo) missing.push("the odometer reading");
   else if (odoBad) missing.push("an odometer reading higher than " + L(lastOdo) + " km");
@@ -1515,7 +1530,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
       <>
         <Field label="Scheduled delivery trip">
           <Picker value={tripNo} title="Scheduled delivery trip" placeholder={myTrips.length ? "Select your trip…" : "No trip scheduled"}
-            onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck && !horse) setHorse(t.truck); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
+            onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck) setHorse(t.truck); if (t.trailer) setTrailer(t.trailer); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
             options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}` }))} />
         </Field>
         {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. Fleet fuel is requested against a planned trip — ask logistics to schedule it first, then it appears here.</div>}
@@ -1543,6 +1558,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
             <button onClick={() => locate()} className="disp pill pill-lime" style={{ width: "100%" }}>I have turned it on</button>
           </div>
         )}
+        {geo.state === "off" && <Flag tone="red" title="GPS is switched OFF on this phone">Turn on Location in the phone settings, then come back and check again.<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={async () => { const opened = await openLocationSettings(); if (!opened) alert("Open the phone's Settings → Location and switch it ON, then come back."); }} className="disp" style={{ marginTop: 8, background: "var(--red)", color: "#fff", padding: "8px 16px", borderRadius: 100, fontSize: 13 }}>Open location settings</button>
+          <button onClick={() => locate()} className="disp" style={{ marginTop: 8, background: "#fff", color: "var(--red)", border: "1.5px solid var(--red)", padding: "8px 16px", borderRadius: 100, fontSize: 13 }}>It&rsquo;s on — check again</button>
+        </div></Flag>}
         {geo.state === "nofix" && <Flag tone="amber" title="Cannot find you yet">{geo.why}<div><button onClick={() => locate()} className="disp" style={{ marginTop: 8, background: "var(--amber)", color: "#fff", padding: "8px 16px", borderRadius: 100, fontSize: 13 }}>Try again</button></div></Flag>}
         {geo.state === "wrongplace" && <Flag tone="red" title="You are not at that station"><span className="mono" style={{ fontSize: 12 }}>{geo.want} is {L(geo.m)} m away{geo.atOther ? ` · you appear to be at ${geo.atOther}` : ` · nearest site is ${geo.nearest}, ${L(geo.nearM)} m`}</span><div style={{ marginTop: 4 }}>{geo.atOther ? `Change the station to ${geo.atOther}, or drive to ${geo.want}.` : "Pick the station you are actually standing at."}</div><button onClick={() => locate()} className="disp" style={{ marginTop: 8, background: "var(--red)", color: "#fff", padding: "8px 16px", borderRadius: 100, fontSize: 13 }}>Check again</button></Flag>}
       </>

@@ -19,7 +19,9 @@ export const isMobileApp = () => {
   return false;
 };
 
-/* One position fix. Uses the native provider on Android, the browser elsewhere. */
+/* One position fix. Uses the native provider on Android, the browser elsewhere.
+   Error codes: 1 = permission denied · 3 = LOCATION SERVICES OFF (GPS switched off
+   in the phone's settings — a different problem from a weak signal) · else no fix. */
 export async function getFix({ timeout = 15000 } = {}) {
   if (isNative()) {
     const perm = await Geolocation.checkPermissions();
@@ -27,15 +29,35 @@ export async function getFix({ timeout = 15000 } = {}) {
       const asked = await Geolocation.requestPermissions();
       if (asked.location !== "granted") throw Object.assign(new Error("denied"), { code: 1 });
     }
-    const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout });
-    return { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
+    try {
+      const p = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout });
+      return { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
+    } catch (e) {
+      if (/disabled|not enabled|turned off|location services/i.test(String(e && e.message))) throw Object.assign(new Error("gps off"), { code: 3 });
+      throw e;
+    }
   }
   return new Promise((res, rej) => {
     if (!navigator.geolocation) return rej(Object.assign(new Error("unsupported"), { code: 2 }));
     navigator.geolocation.getCurrentPosition(
       (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy) }),
-      rej, { enableHighAccuracy: true, timeout, maximumAge: 0 });
+      (e) => rej(e && e.code === 2 ? Object.assign(new Error("gps off"), { code: 3 }) : e),
+      { enableHighAccuracy: true, timeout, maximumAge: 0 });
   });
+}
+
+/* Open the phone's own Location settings screen so the driver can flip GPS on.
+   Returns true if the settings screen was opened (needs the native plugin, so
+   only on an app build that carries it — callers show instructions otherwise). */
+export async function openLocationSettings() {
+  try {
+    if (!isNative()) return false;
+    const mod = await import("capacitor-native-settings");
+    const { NativeSettings, AndroidSettings, IOSSettings } = mod;
+    if (Capacitor.getPlatform() === "ios") await NativeSettings.openIOS({ option: IOSSettings.App });
+    else await NativeSettings.openAndroid({ option: AndroidSettings.Location });
+    return true;
+  } catch { return false; }
 }
 
 /* Ask for location the moment the app opens, so the driver is never stopped at the pump. */
