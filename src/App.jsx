@@ -564,6 +564,8 @@ const ROLE_TABS = {
   // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
+  // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
   accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
   // admin: full access (superuser).
