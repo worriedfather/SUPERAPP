@@ -4683,6 +4683,10 @@ export function DeliveriesInProgress() {
 // onGo(tab) navigates to the delivery (driver) / sign-off (site) screen.
 const DUE_STATUS = {
   collect: { label: "Confirm collected", tone: "#2B3990", tab: null },
+  arrive:   { label: "Confirm arrived at site", tone: "#2B3990", act: "arrived" },
+  offload:  { label: "Confirm offload completed", tone: "#2B3990", act: "offloaded" },
+  en_route: { label: "Delivery en route", tone: "var(--steel)" },
+  arrived:  { label: "Truck at your site — offloading", tone: "#C07A00" },
   awaiting_note: { label: "File delivery note", tone: "#C07A00", tab: "deliver" },
   sign_off_yours: { label: "Sign off delivery note", tone: "#B23B3B", tab: "dapprove" },
   sign_off_other: { label: "Awaiting other sign-off", tone: "var(--steel)", tab: "dapprove" },
@@ -4692,6 +4696,13 @@ export function DeliveriesDue({ onGo }) {
   const [d, setD] = useState(null); const [key, setKey] = useState(0); const [busy, setBusy] = useState(null);
   useEffect(() => { let live = true; getDeliveriesDue().then((r) => { if (live) setD(r); }).catch(() => { if (live) setD({ pending: [], count: 0 }); }); return () => { live = false; }; }, [key]);
   const onItem = async (p, s) => {
+    if (s && s.act) {   // driver confirms a leg step: arrived / offloaded
+      setBusy(p.tripNo + p.site);
+      try { await postTripLeg(p.tripNo, p.site, s.act); setKey((k) => k + 1); }
+      catch (e) { window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't confirm — " + (e.message || "try again.") })); }
+      finally { setBusy(null); }
+      return;
+    }
     if (p.status === "collect") {   // driver confirms fuel collected from the depot → starts the journey + GPS
       setBusy(p.tripNo);
       try { await collectTrip(p.tripNo); try { await startTracking(p.tripNo); } catch { /* tracking best-effort */ } setKey((k) => k + 1); }
@@ -4731,15 +4742,36 @@ export function DeliveriesDue({ onGo }) {
             );
           }
           const s = DUE_STATUS[p.status] || DUE_STATUS.awaiting_note;
+          // driver leg steps render as ACTION cards, not list rows
+          if (s.act) {
+            const isBusy = busy === p.tripNo + p.site;
+            return (
+              <div key={i} style={{ padding: "12px 13px", borderRadius: 12, background: "#EEF2FF", border: "1px solid #C9D4F5" }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "var(--navy)" }}>{p.site} · {full(p.qty)} L {p.product}</div>
+                <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 2 }}>{p.tripNo} · {p.truck}</div>
+                <button type="button" disabled={isBusy} onClick={() => onItem(p, s)} className="disp pill" style={{ width: "100%", marginTop: 9 }}>
+                  {isBusy ? "Saving…" : "✓ " + s.label}
+                </button>
+              </div>
+            );
+          }
+          // the site's ONE-HOUR delivery-note window, counting down from offload-complete
+          let clock = null;
+          if (p.dueBy && (p.status === "awaiting_note" || p.status === "rejected")) {
+            const leftMin = Math.round((new Date(p.dueBy) - Date.now()) / 60000);
+            clock = leftMin >= 0
+              ? <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: leftMin <= 15 ? "#B23B3B" : "#C07A00", borderRadius: 20, padding: "1px 8px" }}>⏱ {leftMin} min left</span>
+              : <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: "#B23B3B", borderRadius: 20, padding: "1px 8px" }}>⏱ OVERDUE {Math.abs(leftMin)} min</span>;
+          }
           const clickable = onGo && s.tab;
           return (
             <div key={i} onClick={() => onItem(p, s)} role={clickable ? "button" : undefined}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 10, background: "#fff", border: "1px solid var(--line)", cursor: clickable ? "pointer" : "default" }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{p.site} · {full(p.qty)} L {p.product}</div>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{p.site} · {full(p.qty)} L {p.product} {clock}</div>
                 <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.tripNo} · {p.truck}</div>
               </div>
-              <span style={{ fontSize: 11, fontWeight: 700, color: s.tone, whiteSpace: "nowrap" }}>{s.label + " ›"}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: s.tone, whiteSpace: "nowrap" }}>{s.label + (clickable ? " ›" : "")}</span>
             </div>
           );
         })}

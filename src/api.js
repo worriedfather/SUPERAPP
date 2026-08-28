@@ -264,6 +264,7 @@ export const getMyTrips = () => call("/api/trips/mine");
 export const getDeliveriesInProgress = () => call("/api/deliveries/in-progress");
 export const getDeliveriesDue = () => call("/api/deliveries/due");
 export const collectTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/collect`, { method: "POST" });
+export const postTripLeg = (tripNo, site, event) => call(`/api/trip/${encodeURIComponent(tripNo)}/leg`, { method: "POST", body: { site, event } });
 // GPS breadcrumb streaming (driver) + the trip's track/ETA (managers). Pings post
 // with a short timeout and are allowed to queue offline through the outbox.
 export const postTripPing = (tripNo, pings) => call(`/api/trip/${encodeURIComponent(tripNo)}/ping`, { method: "POST", body: { pings }, timeoutMs: 8000 });
