@@ -694,6 +694,11 @@ function CashForm({ choice, site, date, shift, isManager }) {
                 {exp.basis === "site-declared" ? "Site's declared cash · whole trading day" : "Official cash sales · whole trading day"}
                 {exp.salesValue > 0 ? ` · ${dollars(exp.salesValue)} total sales` : ""}{exp.daCardSales > 0 ? ` · DA card ${dollars(exp.daCardSales)}` : ""}
               </div>
+              {(exp.carryover || 0) > 0 && (
+                <div style={{ fontSize: 12, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,.25)" }}>
+                  + <b className="mono">{dollars(exp.carryover)}</b> still on hand from previous days → <b>total to remit {dollars(exp.totalDue != null ? exp.totalDue : expected + exp.carryover)}</b>
+                </div>
+              )}
             </>
           ) : (
             <div className="mono" style={{ fontSize: 30, fontWeight: 800, marginTop: 2, opacity: .55 }}>—</div>
@@ -3358,6 +3363,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
             <Hero label="SPLIT SUBMITTED" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} submitted`} accent="#6BC048" />
+            <Hero label="ON HAND (CARRIED)" value={$(d.carried || 0)} sub="un-remitted cash held at sites — carries into each day's target" accent="#E0B44C" />
           </div>
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
           {(() => {
@@ -3389,7 +3395,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>On hand (carried)</Th></tr></thead>
               <tbody>{filtered.map((s) => (
                 <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
@@ -3401,6 +3407,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.petty) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
                   <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : (s.expected - s.submitted) > 50 ? "var(--red)" : (s.expected - s.submitted) < -50 ? "var(--amber)" : "var(--ok)" }}>{!s.subDays ? "—" : (s.expected - s.submitted) === 0 ? "$0" : (s.expected - s.submitted) > 0 ? $(s.expected - s.submitted) : `(${$(Math.abs(s.expected - s.submitted))})`}</Td>
+                  <Td right style={{ fontWeight: (s.carried || 0) > 50 ? 700 : 400, color: (s.carried || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carried || 0)}</Td>
                 </tr>
               ))}</tbody>
             </table>
