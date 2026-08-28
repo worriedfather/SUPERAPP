@@ -3358,16 +3358,11 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       {d && d.expected === 0 && d.submitted === 0 && (
         <Note tone="amber" title="No data for this window yet">Sales are keyed to <b>{d.asOf ? fmtD(d.asOf) : "—"}</b>. Pick an earlier day or a wider window.</Note>
       )}
-      {d && d.clamped && (
-        <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "-4px 0 10px" }}>
-          Showing from <b>{fmtD(d.golive)}</b> — when in-app cash handling began. Earlier days are reconciled on the <b>Cash office</b> screen.
-        </div>
-      )}
       {d && (d.expected > 0 || d.submitted > 0) && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
-            <Hero label="SPLIT SUBMITTED" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} submitted`} accent="#6BC048" />
+            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048" />
             <Hero label="ON HAND (CARRIED)" value={$(d.carried || 0)} sub="un-remitted cash held at sites — carries into each day's target" accent="#E0B44C" />
           </div>
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
@@ -3386,7 +3381,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           {/* What the SITES SAY they did with the cash — their submissions, verbatim.
               Reconciliation (expected vs confirmed received) lives on the Cash office screen. */}
           <Panel style={{ marginBottom: 12 }}>
-            <span className="lbl">How the sites say the cash was handled <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· their submissions, as entered</span></span>
+            <span className="lbl">How the cash was handled <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· in-app submissions; earlier days from the HQ-confirmed recon (received at HQ, banking, POS, petty)</span></span>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
               <KpiCard label="Sent to HQ" value={$(d.hq)} />
               <KpiCard label="Banked" value={$(d.banked)} />
