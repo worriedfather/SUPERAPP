@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
-  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows,
+  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried,
   requestUnlock, getUnlockRequests, decideUnlock,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
@@ -3329,10 +3329,60 @@ const OUTFLOW_CAT_COLOR = {
   Bank: "#C8A24B", Payroll: "#6BC048", Opex: "#8FB8FF", Other: "#5B6B84",
 };
 // Cash INFLOWS — full money received from sites (cash counted + card/POS swipe + banked).
+// Drill behind ON HAND (CARRIED): per site, the day-by-day ledger of how the
+// un-remitted balance built up — expected vs cleared vs declared-held per day.
+function CarriedDrill() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [open, setOpen] = useState(null);
+  useEffect(() => { getCashCarried().then(setD).catch((e) => setErr(e.message)); }, []);
+  const $ = (v) => "$" + full(v);
+  if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
+  if (!d) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading…</div>;
+  if (!d.sites.length) return <Note tone="ok" title="Nothing carried">Every site's expected cash has been cleared.</Note>;
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 12 }}>
+        <KpiCard label="Cash on hand at sites" value={$(d.declared)} sub="confirmed by the sites" />
+        <KpiCard label="Unaccounted (never cleared)" value={$(d.variance)} />
+        <KpiCard label="Total carried" value={$(d.total)} />
+      </div>
+      {d.sites.map((s) => (
+        <div key={s.siteId} style={{ border: "1px solid var(--line)", borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setOpen(open === s.siteId ? null : s.siteId)}
+            style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
+            <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
+            <span className="mono" style={{ fontWeight: 800 }}>{$(s.total)}</span>
+            <span className="mono" style={{ fontSize: 11.5, color: "#B4801F" }}>site {$(s.declared)}</span>
+            <span className="mono" style={{ fontSize: 11.5, color: s.variance > 50 ? "var(--red)" : "var(--steel)" }}>var {$(s.variance)}</span>
+            <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
+          </div>
+          {open === s.siteId && (
+            <div style={{ overflowX: "auto", borderTop: "1px solid var(--line)" }}>
+              <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+                <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day</Th><Th right>Expected</Th><Th right>Cleared</Th><Th right>Declared held</Th><Th right>Running balance</Th></tr></thead>
+                <tbody>{s.days.map((r) => (
+                  <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.submitted ? "#fff" : "#FFF7E6" }}>
+                    <Td>{fmtD(r.date)}{!r.submitted && <span style={{ fontSize: 10, color: "#B4801F" }}> · no submission</span>}</Td>
+                    <Td right>{$(r.expected)}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{r.submitted ? $(r.cleared) : "—"}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{r.submitted ? $(r.declared) : "—"}</Td>
+                    <Td right style={{ fontWeight: 700, color: r.balance > 50 ? "#B4801F" : "var(--steel)" }}>{$(r.balance)}</Td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Amber days had no cash submission — the whole day's expected cash carried forward. The balance clears as the site records it sent to HQ, banked, swiped, mobile or petty.</div>
+    </>
+  );
+}
+
 export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   const [days, setDays] = useState(90);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
+  const [carriedDrill, setCarriedDrill] = useState(false);
   const effTo = embedded ? to : todayISO();
   const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   useEffect(() => {
@@ -3363,7 +3413,10 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
             <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048" />
-            <Hero label="ON HAND (CARRIED)" value={$(d.carried || 0)} sub={`Confirmed at site ${$(d.carriedDeclared || 0)} · Unconfirmed / variance ${$(d.carriedVariance || 0)}`} accent="#E0B44C" />
+            <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, (d.expected || 0) - (d.submitted || 0)))} sub="expected − accounted for" accent="#D96A5B" />
+            <div onClick={() => setCarriedDrill(true)} style={{ cursor: "pointer" }} title="Tap for the day-by-day ledger">
+              <Hero label="CASH ON HAND AT SITES" value={$(d.carriedDeclared || 0)} sub="confirmed by the sites · not yet sent to HQ · cumulative · tap to drill ›" accent="#E0B44C" />
+            </div>
           </div>
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
           {(() => {
@@ -3395,7 +3448,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Confirmed at site</Th><Th right>Unconfirmed / variance</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Cash on hand at sites</Th></tr></thead>
               <tbody>{filtered.map((s) => (
                 <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
@@ -3408,13 +3461,13 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
                   <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : (s.expected - s.submitted) > 50 ? "var(--red)" : (s.expected - s.submitted) < -50 ? "var(--amber)" : "var(--ok)" }}>{!s.subDays ? "—" : (s.expected - s.submitted) === 0 ? "$0" : (s.expected - s.submitted) > 0 ? $(s.expected - s.submitted) : `(${$(Math.abs(s.expected - s.submitted))})`}</Td>
                   <Td right style={{ fontWeight: (s.carriedDeclared || 0) > 50 ? 700 : 400, color: (s.carriedDeclared || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carriedDeclared || 0)}</Td>
-                  <Td right style={{ fontWeight: (s.carriedVariance || 0) > 50 ? 700 : 400, color: (s.carriedVariance || 0) > 50 ? "var(--red)" : "var(--steel)" }}>{$(s.carriedVariance || 0)}</Td>
                 </tr>
               ))}</tbody>
             </table>
           </div></Panel>
         </>
       )}
+      {carriedDrill && <DetailSheet title="Cash on hand (carried)" sub="un-remitted cash by site · day-by-day ledger" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
     </Shell>
   );
 }

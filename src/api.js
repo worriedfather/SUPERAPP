@@ -301,6 +301,7 @@ export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST"
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashShortfall = () => call('/api/cash/shortfall');
 export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/cash/inflows?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
+export const getCashCarried = () => call("/api/cash/carried");
 export const requestUnlock = (b) => call("/api/unlock/request", { method: "POST", body: b });
 export const getUnlockRequests = () => call("/api/unlock/requests");
 export const decideUnlock = (id, outcome, note) => call(`/api/unlock/${id}/decide`, { method: "POST", body: { outcome, note } });
