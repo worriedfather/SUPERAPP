@@ -3363,7 +3363,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
             <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048" />
-            <Hero label="ON HAND (CARRIED)" value={$(d.carried || 0)} sub="un-remitted cash held at sites — carries into each day's target" accent="#E0B44C" />
+            <Hero label="ON HAND (CARRIED)" value={$(d.carried || 0)} sub={`Confirmed at site ${$(d.carriedDeclared || 0)} · Unconfirmed / variance ${$(d.carriedVariance || 0)}`} accent="#E0B44C" />
           </div>
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
           {(() => {
@@ -3395,7 +3395,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <FilterBox value={q} onChange={setQ} />
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>On hand (carried)</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Confirmed at site</Th><Th right>Unconfirmed / variance</Th></tr></thead>
               <tbody>{filtered.map((s) => (
                 <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
                   <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
@@ -3407,7 +3407,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.petty) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
                   <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : (s.expected - s.submitted) > 50 ? "var(--red)" : (s.expected - s.submitted) < -50 ? "var(--amber)" : "var(--ok)" }}>{!s.subDays ? "—" : (s.expected - s.submitted) === 0 ? "$0" : (s.expected - s.submitted) > 0 ? $(s.expected - s.submitted) : `(${$(Math.abs(s.expected - s.submitted))})`}</Td>
-                  <Td right style={{ fontWeight: (s.carried || 0) > 50 ? 700 : 400, color: (s.carried || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carried || 0)}</Td>
+                  <Td right style={{ fontWeight: (s.carriedDeclared || 0) > 50 ? 700 : 400, color: (s.carriedDeclared || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carriedDeclared || 0)}</Td>
+                  <Td right style={{ fontWeight: (s.carriedVariance || 0) > 50 ? 700 : 400, color: (s.carriedVariance || 0) > 50 ? "var(--red)" : "var(--steel)" }}>{$(s.carriedVariance || 0)}</Td>
                 </tr>
               ))}</tbody>
             </table>
