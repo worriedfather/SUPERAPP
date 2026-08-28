@@ -673,9 +673,13 @@ function About({ onClose }) {
           </div>
         </div>
         <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 4px" }}>
-          DA OPS is Daniel Aguiar Motors' single operations app — fuel requisition &amp; approval, retail site
-          stock, prices, sales and lubricants, deliveries, warehouse inventory, the fleet workshop, and executive
-          reporting. It replaces the WhatsApp groups with structured, auditable, tamper-evident records.
+          DA OPS is Daniel Aguiar Motors' single operations app — fuel requisition &amp; approval with geo-lock
+          and measured consumption, DA card loads, scheduled trips with live GPS tracking and per-leg delivery
+          confirmation, retail site stock, prices, sales &amp; lubricants, the full cash flow from expected cash
+          through site handling to banked-and-confirmed at HQ, warehouse inventory &amp; outflows, the fleet
+          workshop, staff assignment, and executive reporting with margins, losses and compliance. Every entry
+          is attributable and tamper-evident on an append-only ledger — replacing the WhatsApp groups it grew
+          out of.
         </p>
         <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14, fontSize: 12, color: "var(--steel)", lineHeight: 1.7 }}>
           <div><b style={{ color: "var(--navy)" }}>Developer</b> · Tinashe Severa</div>

@@ -1,7 +1,7 @@
 {
   "name": "DA OPS",
   "short_name": "DA OPS",
-  "description": "Daniel Aguiar Motors — operations",
+  "description": "Daniel Aguiar Motors — operations: fuel approvals, deliveries & GPS tracking, retail stock & sales, cash, warehouse, workshop, executive reporting.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
