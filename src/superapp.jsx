@@ -3173,7 +3173,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
                           <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
                           <Td right>{r.received == null ? "—" : $(r.received)}</Td>
                           <Td right style={{ color: r.unbanked > 0 ? "var(--red)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
-                          <Td>{r.status === "open" ? <span style={{ color: "var(--red)", fontWeight: 700 }}>SHORT</span> : <span style={{ color: "var(--ok)" }}>received</span>}</Td>
+                          <Td>{r.status === "open" ? <span style={{ color: "var(--red)", fontWeight: 700 }}>SHORT</span> : r.status === "gap" ? <span style={{ color: "var(--steel)" }}>no record</span> : <span style={{ color: "var(--ok)" }}>received</span>}</Td>
                         </tr>
                       ))}</tbody>
                     </table>
@@ -3357,6 +3357,11 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && d.expected === 0 && d.submitted === 0 && (
         <Note tone="amber" title="No data for this window yet">Sales are keyed to <b>{d.asOf ? fmtD(d.asOf) : "—"}</b>. Pick an earlier day or a wider window.</Note>
+      )}
+      {d && d.clamped && (
+        <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "-4px 0 10px" }}>
+          Showing from <b>{fmtD(d.golive)}</b> — when in-app cash handling began. Earlier days are reconciled on the <b>Cash office</b> screen.
+        </div>
       )}
       {d && (d.expected > 0 || d.submitted > 0) && (
         <>
