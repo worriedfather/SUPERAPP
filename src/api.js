@@ -306,6 +306,9 @@ export const getUnlockRequests = () => call("/api/unlock/requests");
 export const decideUnlock = (id, outcome, note) => call(`/api/unlock/${id}/decide`, { method: "POST", body: { outcome, note } });
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
 export const getSignals = (days = 30, from = null, to = null) => call(`/api/signals?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
+// Field feedback ("Report a problem")
+export const postFeedback = (b) => call("/api/feedback", { method: "POST", body: b });
+export const getFeedback = (status) => call(`/api/feedback${status ? `?status=${status}` : ""}`);
 export const reviewDeposit = (seq, outcome, note) => call(`/api/cash/deposit/${seq}/review`, { method: "POST", body: { outcome, note } });
 export const closeDay = (b) => call("/api/cash/dayclose", { method: "POST", body: b });
 // Deposit-slip image needs the auth header, so fetch it as a blob → object URL

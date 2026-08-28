@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows,
   requestUnlock, getUnlockRequests, decideUnlock,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
@@ -17,6 +17,7 @@ import {
   getApprovalHistory, getApprovalDetail, downloadApprovalsCsv, getBankOutflows, getOutflowTxns,
 } from "./api.js";
 import { takeOdometerPhoto } from "./device.js";
+import { APP_BUILD, APP_VERSION } from "./config.js";
 import { startTracking } from "./tripTracker.js";
 import { Picker } from "./Picker.jsx";
 import { EFF, LOCAL_KM } from "./data";
@@ -3762,6 +3763,105 @@ export function RadarView() {
       )}
     </Wrap>
   );
+}
+
+/* ============================================================ *
+ *  FIELD FEEDBACK ("Report a problem") + WHAT'S-NEW modal
+ * ============================================================ */
+const uaPlatform = () => { const u = (typeof navigator !== "undefined" && navigator.userAgent) || ""; return /android/i.test(u) ? "android" : /iphone|ipad|ipod/i.test(u) ? "ios" : "web"; };
+
+// Any user reports a bug/idea; admins/execs also see the triage list below.
+export function FeedbackView({ me, currentTab }) {
+  const isAdmin = me?.kind === "admin" || me?.kind === "executive";
+  const [kind, setKind] = useState("problem");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const send = async () => {
+    setMsg(null);
+    if (!message.trim()) { setMsg({ tone: "amber", title: "Add a note", body: "Tell us what went wrong, or your idea." }); return; }
+    setBusy(true);
+    try {
+      await postFeedback({ kind, message: message.trim(), screen: currentTab || null, platform: uaPlatform(), appBuild: APP_BUILD, deviceInfo: (typeof navigator !== "undefined" && navigator.userAgent) || null });
+      setMsg({ tone: "ok", title: "Thanks — sent", body: "The team can see this now and may follow up." });
+      setMessage("");
+    } catch (e) { setMsg({ tone: "red", title: "Not sent", body: e.message }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Wrap>
+      <SectionHead title="Report a problem" sub="Tell us what's broken or what would help — it reaches the team with your screen and app version" />
+      <Panel>
+        {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        <Field label="Type">
+          <div style={{ display: "flex", gap: 8 }}>
+            {["problem", "idea", "other"].map((k) => (
+              <button key={k} type="button" onClick={() => setKind(k)} className="disp" style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${kind === k ? "var(--navy)" : "var(--line)"}`, background: kind === k ? "var(--navy)" : "#fff", color: kind === k ? "#fff" : "var(--navy)", fontWeight: 700, fontSize: 13, cursor: "pointer", textTransform: "capitalize" }}>{k}</button>
+            ))}
+          </div>
+        </Field>
+        <Field label="What happened?"><textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder="Describe it — the more detail, the faster we can fix it" style={{ width: "100%", resize: "vertical", fontFamily: "inherit" }} /></Field>
+        <button className="pill" disabled={busy} onClick={send} style={{ width: "100%" }}>{busy ? "Sending…" : "Send"}</button>
+      </Panel>
+      {isAdmin && <FeedbackTriage />}
+    </Wrap>
+  );
+}
+
+function FeedbackTriage() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  useEffect(() => { getFeedback().then(setD).catch((e) => setErr(e.message)); }, []);
+  const toneOf = (k) => (k === "problem" ? "var(--red)" : k === "idea" ? "var(--blue)" : "var(--steel)");
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="lbl" style={{ margin: "6px 2px 8px" }}>Reports {d ? `· ${d.open} open` : ""}</div>
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {d && d.rows.length === 0 && <Note tone="ok" title="No reports yet">Nothing has been reported.</Note>}
+      {d && d.rows.map((r) => (
+        <div key={r.seq} style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${toneOf(r.kind)}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--steel)", gap: 8 }}>
+            <span>{r.reporter || "—"} · {r.screen || "?"} · b{r.app_build || "?"} · {r.platform || "?"}</span><span style={{ whiteSpace: "nowrap" }}>{r.at}</span>
+          </div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>{r.message}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// What's-new modal — shown once after an app update (per build, via localStorage).
+const RELEASE_NOTES = {
+  116: [
+    "Deliveries: the supervisor confirms offload, then a 1-hour settling countdown runs before the dip.",
+    "Cash: the form shows the provisional figure vs the official target.",
+    "Cash office: confirm site deposits and close each day (banking reconciliation).",
+    "New insights: Cash bridge, a cash & fuel digest, and a Radar of tripwires.",
+    "Notifications: tapping one always lands on the right screen.",
+  ],
+};
+export function ReleaseNotesModal() {
+  const [notes, setNotes] = useState(null);
+  useEffect(() => {
+    try {
+      const seen = Number(localStorage.getItem("da_last_notes_build") || 0);
+      if (APP_BUILD > seen) {
+        const ns = Object.keys(RELEASE_NOTES).map(Number).filter((b) => b > seen && b <= APP_BUILD).sort((a, b) => b - a).flatMap((b) => RELEASE_NOTES[b]);
+        if (ns.length) setNotes(ns);
+        else localStorage.setItem("da_last_notes_build", String(APP_BUILD));   // nothing to show → mark seen
+      }
+    } catch { /* ignore */ }
+  }, []);
+  const dismiss = () => { try { localStorage.setItem("da_last_notes_build", String(APP_BUILD)); } catch { /* ignore */ } setNotes(null); };
+  if (!notes) return null;
+  return createPortal(
+    <div onClick={dismiss} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 500, display: "grid", placeItems: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} className="card" style={{ maxWidth: 420, width: "100%", padding: 20 }}>
+        <div className="disp" style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>What's new</div>
+        <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 12 }}>DA OPS v{APP_VERSION}</div>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.5 }}>{notes.map((n, i) => <li key={i} style={{ marginBottom: 6 }}>{n}</li>)}</ul>
+        <button className="pill" onClick={dismiss} style={{ width: "100%", marginTop: 16 }}>Got it</button>
+      </div>
+    </div>, document.body);
 }
 
 // Submission-compliance scorecard — who reports stock/price/sales, worst first.

@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS,
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -779,6 +779,15 @@ function Inbox({ items, onOpen }) {
           <div style={{ color: "#E0860E", fontSize: 22, flexShrink: 0 }}>›</div>
         </button>
       ))}
+      <button onClick={() => onOpen("feedback")} className="card"
+        style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", marginTop: 6, cursor: "pointer", border: "1px dashed var(--line)", background: "transparent" }}>
+        <div style={{ width: 34, height: 34, borderRadius: 10, background: "#EAEEFB", color: "#2B3990", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>🛠️</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="disp" style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>Report a problem</div>
+          <div style={{ fontSize: 12.5, color: "var(--steel)" }}>Something broken, or an idea? Tell the team.</div>
+        </div>
+        <div style={{ color: "var(--steel)", fontSize: 20, flexShrink: 0 }}>›</div>
+      </button>
     </div>
   );
 }
@@ -971,9 +980,12 @@ function App() {
   // Home always sits at the very top of the side nav.
   const tabs = homeTab ? [...rawTabs].sort((a, b) => (a[0] === homeTab ? -1 : b[0] === homeTab ? 1 : 0)) : rawTabs;
   useEffect(() => {
-    // "inbox" is a role-agnostic pseudo-tab (the bell) — always reachable.
-    if (me && tabs.length && tab !== "inbox" && !tabs.some(([k]) => k === tab)) setTab(homeTab);
+    // "inbox" and "feedback" are role-agnostic pseudo-tabs — always reachable.
+    if (me && tabs.length && tab !== "inbox" && tab !== "feedback" && !tabs.some(([k]) => k === tab)) setTab(homeTab);
   }, [me, tab, tabs, homeTab]);
+  // remember the screen the user was on before opening feedback, for triage context
+  const prevTabRef = useRef(null);
+  useEffect(() => { if (tab && tab !== "feedback") prevTabRef.current = tab; }, [tab]);
 
   if (mustUpdate) return <UpdateGate />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
@@ -1040,6 +1052,7 @@ function App() {
           </div>
         );
       })()}
+      <ReleaseNotesModal />
       <div key={tab} className="rise">
         {tab === "dhome" && <><DeliveriesDue onGo={goDeliver} /><DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => goDeliver("deliver", null)} onApprove={() => setTab("dapprove")} onTrip={(t) => { setPrefill({ id: t.tripNo, tripNo: t.tripNo, mode: "delivery" }); setTab("drequest"); }} /></>}
         {tab === "dcard" && <DriverCard me={me} cards={cards} requests={requests} />}
@@ -1062,6 +1075,7 @@ function App() {
         {tab === "birdseye" && <ManagerBirdsEye me={me} />}
         {tab === "hub" && <><DeliveriesDue onGo={goDeliver} /><Hub me={me} modules={tabs.filter(([k]) => k !== "hub")} onOpen={setTab} /></>}
         {tab === "inbox" && <Inbox items={alerts?.items || []} onOpen={setTab} />}
+        {tab === "feedback" && <FeedbackView me={me} currentTab={prevTabRef.current} />}
         {tab === "master" && !isMobileApp() && <MasterData drivers={drivers} horses={horses} onAddDriver={onAddDriver} gkey={gkey} setGkey={setGkey} />}
         {/* super-app modules */}
         {tab === "submit" && <SiteSubmit me={me} />}
