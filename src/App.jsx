@@ -811,8 +811,20 @@ function App() {
   const [focus, setFocus] = useState(null); // deep-link target from a tapped notification: {tab,ref,trip,dn,site}
   // Route a tapped notification to its SPECIFIC item, not just the tab. data.ref opens
   // that request; data.trip/dn/site pre-select that delivery note (see push.js).
+  // A tapped notification must NEVER dead-end on the home screen. If this role
+  // doesn't have the target tab, route to the container that holds that content;
+  // the Inbox (always reachable) is the last resort — it lists the same task.
+  const TAB_HOMES = {
+    nightshift: ["birdseye", "exec"], dayshift: ["birdseye", "exec"], midday: ["birdseye", "exec"],
+    inflows: ["birdseye", "exec"], outflows: ["birdseye", "exec"],
+    deliver: ["incoming", "dhome"], incoming: ["logistics", "retail"], submit: ["birdseye", "retail"],
+    yardwork: ["fleetstatus"], cash: ["cashoffice", "birdseye"], cashoffice: ["cash"],
+    dapprove: ["dhome"], approver: ["approvals"], dhome: ["hub"], deposit: ["cashoffice", "birdseye"], unlocks: ["birdseye"],
+  };
   const goFocus = (t, d) => {
-    setTab(t); setFocus(d || null);
+    const have = (k) => tabs.some(([x]) => x === k);
+    const target = have(t) ? t : ((TAB_HOMES[t] || []).find(have) || "inbox");
+    setTab(target); setFocus(d || null);
     if (d && (d.trip || d.dn || d.site)) setDeliverPrefill({ tripNo: d.trip || null, site: d.site || null, dn: d.dn || null });
   };
   const [rail, setRail] = useState(() => { try { return localStorage.getItem("da_rail") === "1"; } catch { return false; } });

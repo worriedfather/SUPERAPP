@@ -46,6 +46,16 @@ Build: `npm run build && npx cap sync android && npx cap open android`
 
 ---
 
+## Ledger policy — compensating rows, never re-chain
+
+The append-only tables are tamper-EVIDENT only if history is never rewritten. A
+correction is a NEW row that supersedes the old one (the way `decision.supersedes_seq`
+works) — never an UPDATE, never a trigger-disable, never a hash re-chain. Re-chaining
+was done during the 2026-08 build-out (schema additions, a date-stamp fix); from
+go-live it is prohibited: if a schema change or correction seems to require it, stop
+and design a compensating-row migration instead. If an emergency ever truly forces a
+re-chain, it must be recorded in `audit_log` with who/why/what, in the same commit.
+
 ## Domain rules — do not change these without asking
 
 **Geo-lock.** The driver picks the station he is standing at, then the app verifies it. 250 m

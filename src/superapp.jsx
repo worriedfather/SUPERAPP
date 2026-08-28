@@ -639,6 +639,11 @@ function CashForm({ choice, site, date, shift, isManager }) {
   }, [site, cashDate, shift, choice.fixed]);
 
   const expected = exp && exp.expected != null && (exp.hasSplit || (exp.hasSales && exp.hasPrice)) ? n(exp.expected) : null;
+  // Only the FileMaker figure is firm enough to call a difference a "short" — the
+  // site-declared fallback (before the morning numbers import) is provisional and
+  // must never be presented as a shortfall (2026-08-28: every site saw a phantom
+  // "Unaccounted (short)" because the fallback double-counts cumulative shifts).
+  const official = !!(exp && exp.basis === "official");
   const accounted = CASH_LEGS.reduce((a, l) => a + (l.key === "sentToHq" ? hqTotal : n(f[l.key])), 0);
   const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted
 
@@ -656,15 +661,15 @@ function CashForm({ choice, site, date, shift, isManager }) {
         swipe: n(f.swipe), ecocash: n(f.ecocash), petty: n(f.petty), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
         expected, deviceTime: new Date().toISOString(),
       });
-      const tail = expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
+      const tail = official && expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ tone: variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
+      setDone({ tone: official && variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
   const okVar = variance != null && Math.abs(variance) < 1;
-  const varTone = variance == null ? "var(--steel)" : okVar ? "#3C9A52" : variance > 0 ? "var(--amber)" : "#C0563A";
+  const varTone = variance == null ? "var(--steel)" : okVar ? "#3C9A52" : !official ? "var(--steel)" : variance > 0 ? "var(--amber)" : "#C0563A";
 
   if (done) return <SubmittedCard tone={done.tone} title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} unlock={{ kind: "cash", choice, site, date: cashDate, shift }} />;
   return (
@@ -677,7 +682,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
         <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <span style={{ fontSize: 12, letterSpacing: ".04em", opacity: .8, textTransform: "uppercase" }}>Cash to account for · trading day {fmtD(cashDate)}</span>
-            <span style={{ fontSize: 11, opacity: .7 }}>{exp && exp.basis === "site-declared" ? "site declared" : "official · FileMaker"}</span>
+            <span style={{ fontSize: 11, opacity: .7 }}>{exp && exp.basis === "site-declared" ? "provisional · site declared" : "official · FileMaker"}</span>
           </div>
           {expLoading ? (
             <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6, opacity: .7 }}>…</div>
@@ -747,9 +752,12 @@ function CashForm({ choice, site, date, shift, isManager }) {
           </div>
           {variance != null && (
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-              <span style={{ color: "var(--steel)" }}>{okVar ? "Reconciles" : variance > 0 ? "Unaccounted (short)" : "Over expected"}</span>
+              <span style={{ color: "var(--steel)" }}>{okVar ? "Reconciles" : !official ? "Difference vs declared (provisional)" : variance > 0 ? "Unaccounted (short)" : "Over expected"}</span>
               <span className="mono" style={{ fontWeight: 800, color: varTone }}>{okVar ? "✓ balanced" : dollars(Math.abs(variance))}</span>
             </div>
+          )}
+          {variance != null && !okVar && !official && (
+            <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3 }}>Official figure isn’t in yet — submit what you counted; HQ reconciles against the official number.</div>
           )}
         </div>
 
@@ -4684,7 +4692,8 @@ export function DeliveriesInProgress() {
 const DUE_STATUS = {
   collect: { label: "Confirm collected", tone: "#2B3990", tab: null },
   arrive:   { label: "Confirm arrived at site", tone: "#2B3990", act: "arrived" },
-  offload:  { label: "Confirm offload completed", tone: "#2B3990", act: "offloaded" },
+  offload_confirm: { label: "Confirm offload completed", tone: "#2B3990", act: "offloaded", hint: "Tap when the truck has finished offloading into your tanks." },
+  settling: { label: "Fuel settling — dip after the countdown", tone: "#C07A00" },
   en_route: { label: "Delivery en route", tone: "var(--steel)" },
   arrived:  { label: "Truck at your site — offloading", tone: "#C07A00" },
   awaiting_note: { label: "File delivery note", tone: "#C07A00", tab: "deliver" },
@@ -4752,16 +4761,20 @@ export function DeliveriesDue({ onGo }) {
                 <button type="button" disabled={isBusy} onClick={() => onItem(p, s)} className="disp pill" style={{ width: "100%", marginTop: 9 }}>
                   {isBusy ? "Saving…" : "✓ " + s.label}
                 </button>
+                {s.hint && <div style={{ fontSize: 10.5, color: "var(--steel)", textAlign: "center", marginTop: 6 }}>{s.hint}</div>}
               </div>
             );
           }
-          // the site's ONE-HOUR delivery-note window, counting down from offload-complete
+          // SETTLING countdown: the dip is only honest an hour after offload — show
+          // the time remaining until the site should dip; after that, file NOW.
           let clock = null;
-          if (p.dueBy && (p.status === "awaiting_note" || p.status === "rejected")) {
-            const leftMin = Math.round((new Date(p.dueBy) - Date.now()) / 60000);
-            clock = leftMin >= 0
-              ? <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: leftMin <= 15 ? "#B23B3B" : "#C07A00", borderRadius: 20, padding: "1px 8px" }}>⏱ {leftMin} min left</span>
-              : <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: "#B23B3B", borderRadius: 20, padding: "1px 8px" }}>⏱ OVERDUE {Math.abs(leftMin)} min</span>;
+          if (p.dueBy && p.status === "settling") {
+            const leftMin = Math.max(0, Math.round((new Date(p.dueBy) - Date.now()) / 60000));
+            clock = <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: "#C07A00", borderRadius: 20, padding: "1px 8px" }}>⏱ dip in {leftMin} min</span>;
+          }
+          if (p.dueBy && p.status === "awaiting_note") {
+            const overMin = Math.max(0, Math.round((Date.now() - new Date(p.dueBy)) / 60000));
+            clock = <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: overMin > 60 ? "#B23B3B" : "#3C9A52", borderRadius: 20, padding: "1px 8px" }}>{overMin > 60 ? `⏱ settled ${overMin} min ago — file now` : "✓ settled — dip & file now"}</span>;
           }
           const clickable = onGo && s.tab;
           return (
