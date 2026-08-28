@@ -1746,6 +1746,7 @@ export function ExecutiveDashboard() {
               <Hero label="DELIVERED" value={compact(k.litresDelivered)} unit="L" sub={`${k.deliveries} loads${k.deliveryLoss ? " · " + compact(k.deliveryLoss) + "L loss" : ""}`} delta={k.deltas?.delivered}
                 onClick={() => setDrill({ title: "Delivered & loss — by product", sub: `${compact(k.litresDelivered)} L in ${k.deliveries} loads`, render: () => deliveriesProductTable(d.supply.deliveriesByProduct) })} />
               <Hero label="SITE DAYS COVER" value={k.siteDaysCover ?? "—"} unit="days" sub={`${k.stockoutCount} at risk`} accent="#8FB8FF" onClick={() => goTo("supply", "sec-stockout")} />
+              {k.tenderMix && <Hero label="EXPECTED CASH" value={"$" + compact(k.tenderMix.cash)} sub="cash sales — to account for" accent="#E0B44C" onClick={() => goTo("inflows")} />}
             </div>
             {(k.deltas?.sales != null || k.deltas?.delivered != null) && (
               <div style={{ fontSize: 11, color: "var(--steel)", margin: "-4px 2px 12px" }}>
@@ -3337,35 +3338,77 @@ function CarriedDrill() {
   const $ = (v) => "$" + full(v);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading…</div>;
-  if (!d.sites.length) return <Note tone="ok" title="Nothing carried">Every site's expected cash has been cleared.</Note>;
+  const holders = d.sites.filter((s) => s.declared > 0).sort((a, b) => b.declared - a.declared);
+  if (!holders.length) return <Note tone="ok" title="No cash held at sites">No site has declared cash on hand that hasn't gone to HQ.</Note>;
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 12 }}>
-        <KpiCard label="Cash on hand at sites" value={$(d.declared)} sub="confirmed by the sites" />
-        <KpiCard label="Unaccounted (never cleared)" value={$(d.variance)} />
-        <KpiCard label="Total carried" value={$(d.total)} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
+        <KpiCard label="Cash on hand at sites" value={$(d.declared)} sub={`${holders.length} site${holders.length === 1 ? "" : "s"} holding cash`} />
+      </div>
+      {holders.map((s) => {
+        const held = s.days.filter((r) => r.declared > 0);
+        return (
+          <div key={s.siteId} style={{ border: "1px solid var(--line)", borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
+            <div onClick={() => setOpen(open === s.siteId ? null : s.siteId)}
+              style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
+              <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
+              <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{held.length} day{held.length === 1 ? "" : "s"}</span>
+              <span className="mono" style={{ fontWeight: 800, color: "#B4801F" }}>{$(s.declared)}</span>
+              <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
+            </div>
+            {open === s.siteId && (
+              <div style={{ overflowX: "auto", borderTop: "1px solid var(--line)" }}>
+                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day declared</Th><Th right>Cash on hand</Th></tr></thead>
+                  <tbody>{held.map((r) => (
+                    <tr key={r.date} style={{ borderTop: "1px solid var(--line)" }}>
+                      <Td>{fmtD(r.date)}</Td>
+                      <Td right style={{ fontWeight: 700, color: "#B4801F" }}>{$(r.declared)}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Only what each site itself declared as cash still held and not yet sent to HQ. It clears when the site records the hand-over.</div>
+    </>
+  );
+}
+
+// Drill behind UNACCOUNTED FOR: the chase list — per site, the days where
+// expected cash has nothing (or not enough) accounted against it.
+function UnaccountedDrill({ days, from, to }) {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [open, setOpen] = useState(null);
+  useEffect(() => { getCashUnaccounted(days, from, to).then(setD).catch((e) => setErr(e.message)); }, [days, from, to]);
+  const $ = (v) => "$" + full(v);
+  if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
+  if (!d) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading…</div>;
+  if (!d.sites.length) return <Note tone="ok" title="Fully accounted">Every site's expected cash in this window has been accounted for.</Note>;
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
+        <KpiCard label="Unaccounted for" value={$(d.unaccounted)} sub={`${d.sites.length} site${d.sites.length === 1 ? "" : "s"} with a gap`} />
       </div>
       {d.sites.map((s) => (
         <div key={s.siteId} style={{ border: "1px solid var(--line)", borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
           <div onClick={() => setOpen(open === s.siteId ? null : s.siteId)}
             style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
             <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
-            <span className="mono" style={{ fontWeight: 800 }}>{$(s.total)}</span>
-            <span className="mono" style={{ fontSize: 11.5, color: "#B4801F" }}>site {$(s.declared)}</span>
-            <span className="mono" style={{ fontSize: 11.5, color: s.variance > 50 ? "var(--red)" : "var(--steel)" }}>var {$(s.variance)}</span>
+            <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{s.days.length} day{s.days.length === 1 ? "" : "s"}</span>
+            <span className="mono" style={{ fontWeight: 800, color: "var(--red)" }}>{$(s.unaccounted)}</span>
             <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
           </div>
           {open === s.siteId && (
             <div style={{ overflowX: "auto", borderTop: "1px solid var(--line)" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-                <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day</Th><Th right>Expected</Th><Th right>Cleared</Th><Th right>Declared held</Th><Th right>Running balance</Th></tr></thead>
+                <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day</Th><Th right>Unaccounted</Th><Th>Record</Th></tr></thead>
                 <tbody>{s.days.map((r) => (
-                  <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.submitted ? "#fff" : "#FFF7E6" }}>
-                    <Td>{fmtD(r.date)}{!r.submitted && <span style={{ fontSize: 10, color: "#B4801F" }}> · no submission</span>}</Td>
-                    <Td right>{$(r.expected)}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{r.submitted ? $(r.cleared) : "—"}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{r.submitted ? $(r.declared) : "—"}</Td>
-                    <Td right style={{ fontWeight: 700, color: r.balance > 50 ? "#B4801F" : "var(--steel)" }}>{$(r.balance)}</Td>
+                  <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.source === "none" ? "#FFF7E6" : "#fff" }}>
+                    <Td>{fmtD(r.date)}</Td>
+                    <Td right style={{ fontWeight: 700, color: r.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{r.unaccounted > 0 ? $(r.unaccounted) : `(${$(Math.abs(r.unaccounted))})`}</Td>
+                    <Td style={{ fontSize: 11, color: "var(--steel)" }}>{r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -3373,7 +3416,7 @@ function CarriedDrill() {
           )}
         </div>
       ))}
-      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Amber days had no cash submission — the whole day's expected cash carried forward. The balance clears as the site records it sent to HQ, banked, swiped, mobile or petty.</div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Amber days have no record at all — the site never submitted cash handling for that day. Chase these first: each one clears when the site submits its split (or the cash office confirms what arrived).</div>
     </>
   );
 }
@@ -3383,6 +3426,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
   const [carriedDrill, setCarriedDrill] = useState(false);
+  const [unaccDrill, setUnaccDrill] = useState(false);
   const effTo = embedded ? to : todayISO();
   const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   useEffect(() => {
@@ -3413,7 +3457,9 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
             <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048" />
-            <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, (d.expected || 0) - (d.submitted || 0)))} sub="expected − accounted for" accent="#D96A5B" />
+            <div onClick={() => setUnaccDrill(true)} style={{ cursor: "pointer" }} title="Tap for the per-site chase list">
+              <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, (d.expected || 0) - (d.submitted || 0)))} sub="expected − accounted for · tap to drill ›" accent="#D96A5B" />
+            </div>
             <div onClick={() => setCarriedDrill(true)} style={{ cursor: "pointer" }} title="Tap for the day-by-day ledger">
               <Hero label="CASH ON HAND AT SITES" value={$(d.carriedDeclared || 0)} sub="confirmed by the sites · not yet sent to HQ · cumulative · tap to drill ›" accent="#E0B44C" />
             </div>
@@ -3467,7 +3513,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           </div></Panel>
         </>
       )}
-      {carriedDrill && <DetailSheet title="Cash on hand (carried)" sub="un-remitted cash by site · day-by-day ledger" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
+      {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
+      {unaccDrill && <DetailSheet title="Unaccounted for" sub={`expected − accounted · ${effFrom && effTo ? `${fmtD(effFrom)} – ${fmtD(effTo)}` : `last ${days} days`}`} onClose={() => setUnaccDrill(false)}><UnaccountedDrill days={days} from={effFrom} to={effTo} /></DetailSheet>}
     </Shell>
   );
 }
