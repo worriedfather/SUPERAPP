@@ -2860,12 +2860,13 @@ export function WetstockView({ extWindow = null } = {}) {
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
   const varCell = (v) => <Td right style={{ color: v < 0 ? "var(--red)" : v > 0 ? "var(--ok)" : "var(--steel)" }}>{v ? (v > 0 ? "+" : "") + L(v) : "—"}</Td>;
+  const Shell = extWindow ? ({ children }) => <>{children}</> : Wrap;
   return (
-    <Wrap>
-      <SectionHead title="High-loss sites" sub="Delivery + wet-stock losses per site — worst first" />
+    <Shell>
+      {!extWindow && <SectionHead title="High-loss sites" sub="Delivery + wet-stock losses per site — worst first" />}
       {!extWindow && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
-      <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
-      {d && d.sites && d.sites.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><ExportBtn onClick={() => exportWetstock(d)} /></div>}
+      {!extWindow && <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />}
+      {!extWindow && d && d.sites && d.sites.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><ExportBtn onClick={() => exportWetstock(d)} /></div>}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && d.sites.length === 0 && <Note tone="amber" title="No day-end data yet" >The day-end reports haven’t synced for this window.</Note>}
@@ -2899,7 +2900,7 @@ export function WetstockView({ extWindow = null } = {}) {
           </Panel>
         </>
       )}
-    </Wrap>
+    </Shell>
   );
 }
 
@@ -3632,7 +3633,8 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
       <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         <Segmented options={[["USD", "US$"], ["ZiG", "ZiG"]]} value={currency} onChange={setCurrency} />
         {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
-        <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: embedded ? "auto" : undefined, border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
+        {/* embedded → the parent Bird's-eye ribbon owns Refresh; don't render a second one */}
+        {!embedded && <button onClick={() => setReloadKey((k) => k + 1)} style={{ border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>}
       </div>
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
