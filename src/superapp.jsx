@@ -3397,7 +3397,7 @@ function UnaccountedDrill({ days, from, to }) {
             style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
             <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
             <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{s.days.length} day{s.days.length === 1 ? "" : "s"}</span>
-            <span className="mono" style={{ fontWeight: 800, color: "var(--red)" }}>{$(s.unaccounted)}</span>
+            <span className="mono" style={{ fontWeight: 800, color: s.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{s.unaccounted > 0 ? $(s.unaccounted) : `(${$(Math.abs(s.unaccounted))}) over`}</span>
             <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
           </div>
           {open === s.siteId && (
