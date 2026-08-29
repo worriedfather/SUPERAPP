@@ -829,7 +829,7 @@ function App() {
   // the Inbox (always reachable) is the last resort — it lists the same task.
   const TAB_HOMES = {
     nightshift: ["birdseye", "exec"], dayshift: ["birdseye", "exec"], midday: ["birdseye", "exec"],
-    inflows: ["birdseye", "exec"], outflows: ["birdseye", "exec"],
+    inflows: ["birdseye", "retail", "exec"], outflows: ["birdseye", "exec"],
     deliver: ["incoming", "dhome"], incoming: ["logistics", "retail"], submit: ["birdseye", "retail"],
     yardwork: ["fleetstatus"], cash: ["cashoffice", "birdseye"], cashoffice: ["cash"],
     dapprove: ["dhome"], approver: ["approvals"], dhome: ["hub"], deposit: ["cashoffice", "birdseye"], unlocks: ["birdseye"],

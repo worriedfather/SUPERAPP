@@ -1681,7 +1681,10 @@ export function ExecutiveDashboard() {
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   const { tab, setTab, back, prev } = useNavStack("overview");
-  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["outflows", "Cash outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
+  // Cash inflows deliberately NOT here (owner, 2026-08-29): executives reach it
+  // on the Retail board; the managers' Bird's-eye keeps its own copy. In its
+  // place: Cash collections — expected vs received per site, from the day-end.
+  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["collections", "Cash collections"], ["outflows", "Cash outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
   // These tabs embed self-fetching views that own their OWN period — the top period
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).
@@ -1795,7 +1798,7 @@ export function ExecutiveDashboard() {
               <Hero label="DELIVERED" value={compact(k.litresDelivered)} unit="L" sub={`${k.deliveries} loads${k.deliveryLoss ? " · " + compact(k.deliveryLoss) + "L loss" : ""}`} delta={k.deltas?.delivered}
                 onClick={() => setDrill({ title: "Delivered & loss — by product", sub: `${compact(k.litresDelivered)} L in ${k.deliveries} loads`, render: () => deliveriesProductTable(d.supply.deliveriesByProduct) })} />
               <Hero label="SITE DAYS COVER" value={k.siteDaysCover ?? "—"} unit="days" sub={`${k.stockoutCount} at risk`} accent="#8FB8FF" onClick={() => goTo("supply", "sec-stockout")} />
-              {k.tenderMix && <Hero label="EXPECTED CASH" value={"$" + compact(k.tenderMix.cash)} sub="cash sales — to account for" accent="#E0B44C" onClick={() => goTo("inflows")} />}
+              {k.tenderMix && <Hero label="EXPECTED CASH" value={"$" + compact(k.tenderMix.cash)} sub="cash sales — to account for · detail on the Retail board" accent="#E0B44C" />}
             </div>
             {(k.deltas?.sales != null || k.deltas?.delivered != null) && (
               <div style={{ fontSize: 11, color: "var(--steel)", margin: "-4px 2px 12px" }}>
@@ -2144,7 +2147,7 @@ export function ExecutiveDashboard() {
 
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
-          {tab === "inflows" && <div id="inflows" style={{ scrollMarginTop: 8 }}><CashInflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
+          {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}><CashView /></div>}
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
 
           {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
@@ -4130,7 +4133,7 @@ export function RetailDashboard() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"], ["inflows", "Cash inflows"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
@@ -4140,6 +4143,7 @@ export function RetailDashboard() {
       {data && which === "price" && <PriceBoard d={data} onSite={openSite} />}
       {data && which === "sales" && <SalesBoard d={data} onSite={openSite} />}
       {data && which === "compliance" && <ComplianceBoard rows={data.compliance || []} />}
+      {which === "inflows" && <CashInflows />}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
   );
