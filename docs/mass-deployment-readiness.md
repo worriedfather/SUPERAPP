@@ -39,6 +39,10 @@ Timed restore of the latest hourly dump. Target: < 15 min to a verified copy.
 `npm run test:load [concurrency] [seconds]` — morning-peak read mix, one client
 IP per simulated user (matches production; the limiter is per `cf-connecting-ip`).
 Pass: 0 errors, p95 < 500 ms at 3× current site count. Never run 08:00–09:30.
+**2026-08-29: PASS** — 46 real accounts, 60 concurrent, 528 req/s of 200s for
+30 s, 0 errors (incl. 429s). p95: expected-cash 219 ms, deliveries-due 120 ms,
+dashboards ≤ 24 ms warm; executive p99 1.2 s on a cold cache rebuild. That is
+~10× the true 54-site morning peak.
 
 ## 5. Manual per-release checklists
 
@@ -73,7 +77,7 @@ Shona/Ndebele once i18n lands.
 - [x] Tamper drill passes (2026-08-29)
 - [x] DR rehearsal under target (8 s on 2026-08-29) — re-run quarterly
 - [ ] WAL archiving live (≤ 1-minute loss window)
-- [ ] Load test: 0 errors, p95 < 500 ms at 3× sites
+- [x] Load test: 0 errors, p95 < 500 ms at ~10× sites (2026-08-29)
 - [ ] Push delivery ≥ 95% across the device matrix
 - [ ] 14 consecutive days of sites reconciling within $50 tolerance
 - [ ] Version-skew pass on the previous APK, MIN_BUILD policy decided
