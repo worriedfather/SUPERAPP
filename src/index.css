@@ -12,3 +12,17 @@ body{-webkit-tap-highlight-color:transparent;background:#F2F0E9;overscroll-behav
 /* horizontally-scrolling strips (tab bars) hide their scrollbar */
 .noscrollbar{scrollbar-width:none;-ms-overflow-style:none}
 .noscrollbar::-webkit-scrollbar{display:none;height:0}
+
+/* Row numbering on data tables — "1. Gweru · 2. Chikwanha …" so ranked lists are
+   easier to scan and reference. Prepends the row index to the first cell (no extra
+   column, no layout shift). Skips total/summary rows (those span columns). If a
+   webview lacks :has(), it simply shows no numbers rather than wrong ones. */
+table.mono > tbody { counter-reset: da-row; }
+table.mono > tbody > tr:not(:has(td[colspan])) { counter-increment: da-row; }
+table.mono > tbody > tr:not(:has(td[colspan])) > td:first-child::before {
+  content: counter(da-row) ". ";
+  color: var(--steel);
+  font-variant-numeric: tabular-nums;
+  opacity: .65;
+  font-weight: 400;
+}
