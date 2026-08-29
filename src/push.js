@@ -56,6 +56,16 @@ export async function initPush(onOpenTab) {
         }] });
       } catch { /* display is best-effort — the in-app inbox still carries the task */ }
     });
+    // Tapping a MIRRORED (local) notification must deep-link exactly like a real
+    // push tap — without this listener every foreground-mirrored notification
+    // dead-ends on the home screen (the payload rides in `extra`).
+    try {
+      const { LocalNotifications } = await import("@capacitor/local-notifications");
+      LocalNotifications.addListener("localNotificationActionPerformed", (a) => {
+        const data = a?.notification?.extra || {};
+        if (data.tab && typeof onOpenTab === "function") onOpenTab(data.tab, data);
+      });
+    } catch { /* plugin unavailable → mirrored taps just open the app */ }
 
     await PN.register();   // throws if google-services.json/FCM isn't set up — caught below
   } catch { /* Firebase not configured → degrade to no-op */ }

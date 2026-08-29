@@ -7,11 +7,11 @@ import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
-  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried,
+  getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
-  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords,
+  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
   getApprovalHistory, getApprovalDetail, downloadApprovalsCsv, getBankOutflows, getOutflowTxns,
@@ -323,6 +323,17 @@ export function SiteSubmit({ me }) {
   }, [activeSite, choice.fixed]);
   useEffect(() => { loadCfg(); }, [loadCfg]);
 
+  // LOCK-ON-LOAD: what's already filed for this site/shift — a submitted form
+  // opens as its locked card (with the entry's reference number), not a fresh
+  // form inviting a redo. An approved unlock lifts it for one resubmission.
+  const [subStatus, setSubStatus] = useState(null);
+  const cashDate = (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })();
+  const refreshStatus = useCallback(() => {
+    if (!activeSite) { setSubStatus(null); return; }
+    getSubmissionStatus({ site: choice.fixed ? undefined : activeSite, date, shift, cashDate }).then(setSubStatus).catch(() => setSubStatus(null));
+  }, [activeSite, date, shift, cashDate, choice.fixed]);
+  useEffect(() => { refreshStatus(); }, [refreshStatus]);
+
   return (
     <Wrap>
       <SectionHead title="Site submission" sub={activeSite || "Choose a site"} />
@@ -340,20 +351,22 @@ export function SiteSubmit({ me }) {
           {/* All four forms stay MOUNTED and are shown/hidden with CSS, so switching
               tabs never wipes what was typed on the previous one (audit: state loss). */}
           {config && <>
+            {(() => { const l = { readings: subStatus?.stockSales, dip: subStatus?.midday, prices: subStatus?.prices, cash: subStatus?.cash }[which];
+              return l && l.submitted && l.unlock ? <Note tone="amber" title="Unlock granted — one correction">{l.ref} is unlocked. Submit the corrected figures once — it locks again immediately.</Note> : null; })()}
             <div style={{ display: which === "readings" ? "block" : "none" }}>
-              <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={loadCfg} isManager={isManager}
+              <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={() => { loadCfg(); refreshStatus(); }} isManager={isManager} lock={subStatus?.stockSales}
                 onNext={() => setWhich(shift === "night" ? "cash" : "prices")} nextLabel={shift === "night" ? "Next: record cash" : "Next: prices"} />
             </div>
             <div style={{ display: which === "dip" ? "block" : "none" }}>
-              <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} />
+              <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} lock={subStatus?.midday} />
             </div>
             <div style={{ display: which === "prices" ? "block" : "none" }}>
-              <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={loadCfg} isManager={isManager}
+              <PricesForm choice={choice} site={activeSite} config={config} date={date} onSaved={() => { loadCfg(); refreshStatus(); }} isManager={isManager} lock={subStatus?.prices}
                 onNext={shift === "night" ? () => setWhich("cash") : undefined} nextLabel="Next: record cash" />
             </div>
             <div style={{ display: which === "cash" ? "block" : "none" }}>
               {shift === "night"
-                ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />
+                ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} lock={subStatus?.cash} />
                 : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>}
             </div>
           </>}
@@ -392,9 +405,29 @@ function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next,
   );
 }
 
+// Lock-on-load: the server already holds this submission — show its locked card
+// (with the entry's audit reference) instead of a fresh form. Managers can
+// reopen directly; sites go through the unlock-request flow. When an unlock has
+// been granted, the form shows with a one-correction banner instead.
+function useSubmissionLock(lock, done) {
+  const [reopened, setReopened] = useState(false);
+  const isLocked = !done && !reopened && !!(lock && lock.submitted && lock.locked);
+  const banner = !done && lock && lock.submitted && lock.unlock ? (
+    <Note tone="amber" title="Unlock granted — one correction">
+      {lock.ref} is unlocked. Submit the corrected figures once — it locks again immediately and the correction gets its own reference.
+    </Note>
+  ) : null;
+  return { isLocked, banner, reopen: () => setReopened(true) };
+}
+function LockedCard({ lock, what, isManager, onReopen, unlock }) {
+  return <SubmittedCard title={`Already submitted · ${lock.ref}`}
+    body={`${what} for this ${unlock && unlock.kind === "cash" ? "trading day" : "shift"} is already in as ${lock.ref}. It's locked so the same figures can't go in twice.`}
+    canEdit={isManager} onEdit={onReopen} unlock={unlock} />;
+}
+
 // Stock (per tank) + sales in one submission. Tanks and the previous readings
 // are preloaded; the user changes only what moved.
-function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel }) {
+function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
   const [sales, setSales] = useState({ blendSales: "", dieselSales: "", ulpSales: "", cashSales: "", petroSales: "", daCardSales: "" });
@@ -426,11 +459,13 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
         deviceTime: new Date().toISOString(),
       });
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ title: `Stock & sales submitted · ${r.site || site}`, body: `Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}` });
+      setDone({ title: `Stock & sales submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
+  const lk = useSubmissionLock(lock, done);
+  if (lk.isLocked) return <LockedCard lock={lock} what="Stock & sales" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "readings", choice, site, date, shift }} />;
   if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "readings", choice, site, date, shift }} />;
   return (
     <Panel>
@@ -486,7 +521,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 
 // Midday dip — a stock-only snapshot (litres in tank) between the day and night
 // submissions. Tank readings ONLY, no sales or prices.
-function DipForm({ choice, site, config, date, isManager }) {
+function DipForm({ choice, site, config, date, isManager, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: "" })));
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
@@ -499,10 +534,12 @@ function DipForm({ choice, site, config, date, isManager }) {
       const r = await postSiteDip({ site: choice.fixed ? undefined : site, tradingDate: date,
         tanks: tanks.map((t) => ({ label: t.label, product: t.product, litres: t.litres })), deviceTime: new Date().toISOString() });
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ title: `Midday dip submitted · ${r.site || site}`, body: `${L(r.blend)} blend · ${L(r.diesel)} diesel` });
+      setDone({ title: `Midday dip submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · ${L(r.blend)} blend · ${L(r.diesel)} diesel` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
+  const lk = useSubmissionLock(lock, done);
+  if (lk.isLocked) return <LockedCard lock={lock} what="The midday dip" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "midday", choice, site, date, shift: "midday" }} />;
   if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} unlock={{ kind: "midday", choice, site, date, shift: "midday" }} />;
   return (
     <Panel>
@@ -528,7 +565,7 @@ function DipForm({ choice, site, config, date, isManager }) {
 
 // Price survey — the site's competitor list is preloaded, prices default to
 // yesterday's; the user changes only what moved and can add a competitor.
-function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, nextLabel }) {
+function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, nextLabel, lock }) {
   const last = config.lastPrice || [];
   const priceOf = (station, fuel) => { const l = last.find((x) => x.station === station && x.fuelType === fuel); return l ? l.price : ""; };
   const daName = `DA ${site}`;
@@ -556,11 +593,13 @@ function PricesForm({ choice, site, config, date, onSaved, isManager, onNext, ne
       if (r.diesel) lines.push({ station: r.station.trim(), brand: r.brand, isDA: r.isDA, fuelType: "Diesel", price: Number(r.diesel) });
       if (r.ulp) lines.push({ station: r.station.trim(), brand: r.brand, isDA: r.isDA, fuelType: "ULP", price: Number(r.ulp) });
     }
-    try { const r = await postPrice({ site: choice.fixed ? undefined : site, tradingDate: date, lines, deviceTime: new Date().toISOString() }); setDone(r && r.__queued ? { title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." } : { title: "Prices submitted", body: `${r.lines} price${r.lines === 1 ? "" : "s"} recorded` }); }
+    try { const r = await postPrice({ site: choice.fixed ? undefined : site, tradingDate: date, lines, deviceTime: new Date().toISOString() }); setDone(r && r.__queued ? { title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." } : { title: `Prices submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.lines} price${r.lines === 1 ? "" : "s"} recorded` }); }
     catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
+  const lk = useSubmissionLock(lock, done);
+  if (lk.isLocked) return <LockedCard lock={lock} what="The price survey" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "price", choice, site, date, shift: null }} />;
   if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "price", choice, site, date, shift: null }} />;
   return (
     <Panel>
@@ -608,7 +647,7 @@ const CASH_LEGS = [
   { key: "petty", label: "Petty cash", hint: "spent from the till — keep the receipts", tone: "#B06A2C" },
   { key: "cashOnHand", label: "Cash on hand", hint: "float / not yet moved", tone: "#C8A24B" },
 ];
-function CashForm({ choice, site, date, shift, isManager }) {
+function CashForm({ choice, site, date, shift, isManager, lock }) {
   const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", petty: "", daCard: "", cashOnHand: "" };
   const [f, setF] = useState(empty);
   const [hqDenoms, setHqDenoms] = useState({});   // { "100": count, ... } for cash sent to HQ
@@ -651,6 +690,14 @@ function CashForm({ choice, site, date, shift, isManager }) {
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
     if (accounted === 0) { setMsg({ tone: "amber", title: "Nothing to submit", body: "Record how at least one part of the cash was handled." }); return; }
+    // HARD RULE: against the OFFICIAL figure the submission must balance to the
+    // dollar before it goes in (server enforces this too). Managers may override.
+    if (!isManager && official && variance != null && Math.abs(variance) >= 1) {
+      setMsg({ tone: "amber", title: "Doesn't balance — not submitted", body: variance > 0
+        ? `${dollars(Math.abs(variance))} of the official ${dollars(expected)} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
+        : `You've accounted for ${dollars(Math.abs(variance))} MORE than the official ${dollars(expected)} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
+      return;
+    }
     if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
     if (n(f.banked) > 0 && !String(f.bank || "").trim()) { setMsg({ tone: "amber", title: "Which bank?", body: "Name the bank the deposit went to — it flows straight to the cash office to confirm." }); return; }
     setBusy(true);
@@ -664,7 +711,7 @@ function CashForm({ choice, site, date, shift, isManager }) {
       });
       const tail = official && expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ tone: official && variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded · ${r.site || site}`, body: `${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
+      setDone({ tone: official && variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · ${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
@@ -672,6 +719,8 @@ function CashForm({ choice, site, date, shift, isManager }) {
   const okVar = variance != null && Math.abs(variance) < 1;
   const varTone = variance == null ? "var(--steel)" : okVar ? "#3C9A52" : !official ? "var(--steel)" : variance > 0 ? "var(--amber)" : "#C0563A";
 
+  const lk = useSubmissionLock(lock, done);
+  if (lk.isLocked) return <LockedCard lock={lock} what="Cash handling" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "cash", choice, site, date: cashDate, shift }} />;
   if (done) return <SubmittedCard tone={done.tone} title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} unlock={{ kind: "cash", choice, site, date: cashDate, shift }} />;
   return (
     <Panel>
@@ -6424,8 +6473,8 @@ function RequestUnlock({ kind, choice, site, date, shift }) {
   const send = async () => {
     setBusy(true); setState(null);
     try {
-      await requestUnlock({ site: choice && choice.fixed ? undefined : site, tradingDate: date, shift: shift || null, kind, reason: reason.trim() });
-      setState({ tone: "ok", title: "Unlock requested", body: "A manager has been notified. You'll get a notification when it's decided — if approved, resubmit; it locks again after." });
+      const r = await requestUnlock({ site: choice && choice.fixed ? undefined : site, tradingDate: date, shift: shift || null, kind, reason: reason.trim() });
+      setState({ tone: "ok", title: `Unlock requested${r && r.ref ? ` · ${r.ref}` : ""}`, body: "A manager has been notified. You'll get a notification when it's decided — if approved, resubmit; it locks again after." });
     } catch (e) { setState({ tone: "red", title: "Not sent", body: e.message }); }
     finally { setBusy(false); }
   };
@@ -6475,7 +6524,7 @@ export function UnlockRequests() {
       {pending.map((r) => (
         <Panel key={r.id} style={{ marginBottom: 10, borderLeft: "4px solid #C07A00" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
-            <span style={{ fontWeight: 700, color: "var(--navy)" }}>{r.site_name} · {r.kindLabel} · {fmtD(r.trading_date)}{r.shift ? ` · ${r.shift}` : ""}</span>
+            <span style={{ fontWeight: 700, color: "var(--navy)" }}>{r.ref ? `${r.ref} · ` : ""}{r.site_name} · {r.kindLabel} · {fmtD(r.trading_date)}{r.shift ? ` · ${r.shift}` : ""}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{r.requested_by || "site"} · {r.at}</span>
           </div>
           <div style={{ fontSize: 13.5, margin: "8px 0 10px", background: "#F7F8FB", borderRadius: 10, padding: "9px 12px" }}>&ldquo;{r.reason}&rdquo;</div>
@@ -6494,7 +6543,7 @@ export function UnlockRequests() {
               <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Submission</Th><Th>Day</Th><Th>Reason</Th><Th>Outcome</Th><Th>By</Th><Th>Used</Th></tr></thead>
               <tbody>{decided.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid var(--line)" }}>
-                  <Td>{r.site_name}</Td><Td>{r.kindLabel}</Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.trading_date)}</Td>
+                  <Td>{r.ref ? <span className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{r.ref} · </span> : null}{r.site_name}</Td><Td>{r.kindLabel}</Td><Td style={{ color: "var(--steel)" }}>{fmtD(r.trading_date)}</Td>
                   <Td style={{ maxWidth: 260, whiteSpace: "normal" }}>{r.reason}</Td>
                   <Td style={{ fontWeight: 700, color: r.status === "approved" ? "var(--ok)" : "var(--red)" }}>{r.status}</Td>
                   <Td style={{ color: "var(--steel)" }}>{r.decided_by || "—"}</Td>

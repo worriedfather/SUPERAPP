@@ -289,6 +289,15 @@ export const getWetstock = (days = 30, from = null, to = null) => call(`/api/wet
 export const getCash = (days = 30, from = null, to = null) => call(`/api/cash?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const postCash = (b) => call("/api/cash", { method: "POST", body: b });
 // Expected cash for a shift, derived from the site's sales submission (litres × DA price)
+// What has this site already submitted for the date/shift? (lock-on-load + refs)
+export const getSubmissionStatus = ({ site, date, shift, cashDate } = {}) => {
+  const q = new URLSearchParams();
+  if (site) q.set("site", site);
+  if (date) q.set("date", date);
+  if (shift) q.set("shift", shift);
+  if (cashDate) q.set("cashDate", cashDate);
+  return call(`/api/submission/status?${q.toString()}`);
+};
 export const getExpectedCash = ({ site, date, shift } = {}) => {
   const q = new URLSearchParams();
   if (site) q.set("site", site);
