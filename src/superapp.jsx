@@ -2162,7 +2162,7 @@ export function ExecutiveDashboard() {
 
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
-          {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}><CashView /></div>}
+          {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}><CashView embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
 
           {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
@@ -3004,14 +3004,19 @@ function SiteDayendDrill({ site }) {
   );
 }
 
-export function CashView() {
+export function CashView({ embedded = false, from = null, to = null } = {}) {
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
-    if (period === "range" && !(range.from && range.to)) return;
-    const w = periodWindow(period, range);
+    // when embedded (exec Bird's-eye), follow the PARENT's date ribbon — don't
+    // render a second one. Otherwise use this screen's own period selector.
+    if (embedded && !(from && to)) return;
+    if (!embedded && period === "range" && !(range.from && range.to)) return;
+    const w = embedded
+      ? { from, to, days: Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1) }
+      : periodWindow(period, range);
     setD(null); setErr(null);
     // Derive expected/confirmed/variance from the SAME per-day rows as the banking-
     // reconciliation screen, so the two views ALWAYS land on the same conclusion.
@@ -3039,15 +3044,17 @@ export function CashView() {
         setD({ days: w.days, sites, sales: sum("sales"), expectedCash: sum("expectedCash"), petty: sum("petty"), receivedCash: sum("confirmedReceived"), cashDiff: sum("cashDiff"), tender: cash?.tender });
       })
       .catch((e) => setErr(e.message));
-  }, [period, range.from, range.to, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, range.from, range.to, embedded, from, to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
   const $ = (v) => "$" + full(v);
   const [drill, setDrill] = useState(null);
+  const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
   return (
-    <Wrap>
-      <SectionHead title="Cash collections" sub="Expected cash vs received cash, per site — from the day-end report" />
-      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
-      <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
+    <Shell>
+      {!embedded && <SectionHead title="Cash collections" sub="Expected cash vs received cash, per site — from the day-end report" />}
+      {!embedded && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
+      {!embedded && <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && (d.sites || []).length === 0 && (
@@ -3082,7 +3089,7 @@ export function CashView() {
         </>
       )}
       {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
-    </Wrap>
+    </Shell>
   );
 }
 
