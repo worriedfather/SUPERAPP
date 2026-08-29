@@ -233,7 +233,7 @@ function useSiteChoice(me) {
   const [sites, setSites] = useState([]);
   const fixed = me?.kind === "site_manager";
   useEffect(() => {
-    if (!fixed) getSites().then((r) => setSites(r.sites)).catch(() => {});
+    if (!fixed) getSites().then((r) => setSites(r.sites || [])).catch(() => {});
   }, [fixed]);
   return { fixed, fixedSite: me?.site || null, sites };
 }
@@ -430,7 +430,15 @@ function LockedCard({ lock, what, isManager, onReopen, unlock }) {
 function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
-  const [sales, setSales] = useState({ blendSales: "", dieselSales: "", ulpSales: "", cashSales: "", petroSales: "", daCardSales: "" });
+  // seed sales from the last submission (like tanks seed from lastStock) so
+  // REOPENING to fix one tank doesn't blank the sales/tenders and overwrite them
+  // with zeros (audit finding #10). Empty when there's no prior submission.
+  const ls = config.lastSales || {};
+  const seed = (v) => (v == null || v === "" ? "" : String(v));
+  const [sales, setSales] = useState({
+    blendSales: seed(ls.blend_sales), dieselSales: seed(ls.diesel_sales), ulpSales: seed(ls.ulp_sales),
+    cashSales: seed(ls.cash_sales), petroSales: seed(ls.petro_sales), daCardSales: seed(ls.dacard_sales),
+  });
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
   const hasULP = (config.tanks || []).some((t) => t.product === "ULP");   // only sites with a ULP tank see the ULP field
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
@@ -1093,11 +1101,18 @@ function RefreshBar({ data, onRefresh, busy }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 20000); return () => clearInterval(t); }, []);
   const offline = !!(data && data.__offline);
   const at = offline ? (data.__cachedAt || seenRef.current) : seenRef.current;
+  // DATA RECENCY, not fetch time: the green dot must reflect how fresh the DATA is
+  // (max trading date), so a stalled importer shows amber "Data N days behind"
+  // instead of a reassuring "Live" over week-old numbers (audit finding #13).
+  const asOf = data && typeof data.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.asOf) ? data.asOf : null;
+  const daysBehind = asOf ? Math.floor((new Date(todayISO() + "T00:00:00") - new Date(asOf + "T00:00:00")) / 86400000) : null;
+  const stale = daysBehind != null && daysBehind >= 2;
+  const dotAmber = offline || stale;
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "0 2px 10px" }}>
-      <span className="mono" style={{ fontSize: 11, color: offline ? "var(--amber)" : "var(--steel)", display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: offline ? "var(--amber)" : "var(--ok)", flexShrink: 0 }} />
-        {!data ? "Loading…" : offline ? `Offline — cached ${relTime(now - at)}` : `Live · updated ${relTime(now - at)}`}
+      <span className="mono" style={{ fontSize: 11, color: dotAmber ? "var(--amber)" : "var(--steel)", display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: dotAmber ? "var(--amber)" : "var(--ok)", flexShrink: 0 }} />
+        {!data ? "Loading…" : offline ? `Offline — cached ${relTime(now - at)}` : stale ? `Data ${daysBehind} days behind · to ${fmtD(asOf)}` : `Live · updated ${relTime(now - at)}`}
       </span>
       <button type="button" onClick={onRefresh} disabled={busy} className="pill-ghost"
         style={{ padding: "5px 13px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, opacity: busy ? 0.6 : 1 }}>
@@ -3091,7 +3106,7 @@ export function SiteDeposit({ me }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  useEffect(() => { if (!fixed) getSites().then((r) => setSites(r.sites)).catch(() => {}); }, [fixed]);
+  useEffect(() => { if (!fixed) getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, [fixed]);
 
   const capture = async () => {
     try { const p = await takeOdometerPhoto(); if (p?.dataUrl) setPhoto(p.dataUrl); }
@@ -3184,7 +3199,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <CountPill n={$(d.summary.expected)} label="Expected cash" tone="ok" />
             <CountPill n={$(d.summary.received)} label="Received cash" tone="ok" />
-            <CountPill n={$(d.summary.shortfall)} label="Still short (open)" tone={d.summary.shortfall > 0 ? "red" : "ok"} />
+            <CountPill n={$(d.summary.openShort != null ? d.summary.openShort : d.summary.shortfall)} label="Still short (open)" tone={(d.summary.openShort ?? d.summary.shortfall) > 0 ? "red" : "ok"} />
             <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"} />
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -6304,7 +6319,7 @@ export function SiteManagerCreate() {
   const [f, setF] = useState({ role: "retail_supervisor", login: "", name: "", pin: "", site: "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
-  useEffect(() => { getSites().then((r) => setSites(r.sites)).catch(() => {}); }, [msg]);
+  useEffect(() => { getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, [msg]);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
   const siteScoped = ROLE_OPTIONS.find((r) => r[0] === f.role)?.[2];
   const send = async (e) => {

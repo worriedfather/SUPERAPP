@@ -109,38 +109,58 @@ async function call(path, { method = "GET", body, timeoutMs = 12000, _replay = f
   netEvent(true);                                      // a live server answered → we're online
   if (res.status === 401 && token) signOut();
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `request failed (${res.status})`);
+    err.status = res.status;
+    err.transient = res.status >= 500;   // 5xx = server blip → an outbox replay should RETRY, not drop
+    throw err;
+  }
   if (method === "GET") writeCache(path, data);       // refresh the offline copy
   if (!_replay) flushOutbox();                          // we're online → drain the queue
   return data;
 }
 
-// Replay queued writes in order. A network failure stops the drain (retry later);
-// a server rejection drops that item (it will never succeed) and continues.
+// Replay queued writes in order. THREE outcomes per item (audit findings #5/#8):
+//   • success            → item done, continue
+//   • offline / 5xx blip → STOP the drain, keep the item, retry on next trigger
+//     (never silently discard a write the user was told "Saved offline ✓")
+//   • genuine 4xx reject → the write will never succeed: move it to a FAILED
+//     list and fire 'da-outbox-failed' so the app can advise the user and unlock
+//     the form (was: silently shifted off and lost).
+const FAILED_KEY = "da_outbox_failed";
+const failedAll = () => { try { return JSON.parse(localStorage.getItem(FAILED_KEY) || "[]"); } catch { return []; } };
+const failedSave = (l) => { try { localStorage.setItem(FAILED_KEY, JSON.stringify(l)); } catch { /* ignore */ } };
+export const outboxFailed = () => failedAll();
+export const clearOutboxFailed = () => failedSave([]);
 let flushing = false;
 export async function flushOutbox() {
   if (flushing) return;
   let list = outboxAll();
   if (!list.length || !token) return;
   flushing = true;
-  let sent = 0;
+  let sent = 0; const failures = [];
   try {
     while (list.length) {
       const item = list[0];
       try {
         await call(item.path, { method: item.method, body: item.body, _replay: true });
         sent++;
+        list = outboxAll(); list.shift(); outboxSave(list);
       } catch (e) {
-        if (e && e.offline) break;   // still offline → keep the queue, try again later
-        // else: server rejected it — drop so it doesn't wedge the queue
+        if (e && (e.offline || e.transient)) break;   // offline or server blip → keep item, retry later
+        // permanent rejection: record WHY, remove from the live queue, keep it as a failure
+        const fail = { ...item, error: (e && e.message) || "rejected", status: (e && e.status) || 0, failedAt: Date.now() };
+        failures.push(fail);
+        const f = failedAll(); f.push(fail); failedSave(f);
+        list = outboxAll(); list.shift(); outboxSave(list);
       }
-      list = outboxAll(); list.shift(); outboxSave(list);
     }
   } finally {
     flushing = false;
-    // Tell the app a queued write actually landed, so the on-screen read-model refreshes
-    // and the user sees their offline submission appear (no manual pull-to-refresh).
-    if (sent > 0 && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("da-synced", { detail: sent }));
+    if (typeof window !== "undefined") {
+      if (sent > 0) window.dispatchEvent(new CustomEvent("da-synced", { detail: sent }));
+      if (failures.length) window.dispatchEvent(new CustomEvent("da-outbox-failed", { detail: failures }));
+    }
   }
 }
 // Drain automatically when the device regains connectivity.

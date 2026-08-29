@@ -23,6 +23,14 @@
 BEGIN;
 
 -- Per-tank readings on each stock submission: [{label,product,litres}].
+-- ⚠ LEDGER-POLICY NOTE (audit finding #23): site_stock is hash-chained. Adding a
+-- column changes to_jsonb() serialisation, which retroactively invalidates the
+-- hashes of rows written BEFORE the column existed. This ran during the 2026-08
+-- build-out and the chain was re-signed + recorded in audit_log at the time, so
+-- the live DB is consistent. On a FRESH rebuild this is harmless (the table is
+-- empty when the column is added). NEVER run an ADD COLUMN against a POPULATED
+-- chained table in production without a recorded compensating-migration + re-sign
+-- (see CLAUDE.md "compensating rows, never re-chain").
 ALTER TABLE site_stock ADD COLUMN IF NOT EXISTS tanks jsonb;
 
 -- A site's tanks (the remembered set the stock form preloads).

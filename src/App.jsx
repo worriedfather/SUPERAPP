@@ -5,6 +5,7 @@ import { resumeTracking, startTracking } from "./tripTracker.js";
 import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings, gpsEnabled } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
 import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps } from "./notify.js";
@@ -831,8 +832,11 @@ function App() {
     nightshift: ["birdseye", "exec"], dayshift: ["birdseye", "exec"], midday: ["birdseye", "exec"],
     inflows: ["birdseye", "retail", "exec"], outflows: ["birdseye", "exec"],
     deliver: ["incoming", "dhome"], incoming: ["logistics", "retail"], submit: ["birdseye", "retail"],
-    yardwork: ["fleetstatus"], cash: ["cashoffice", "birdseye"], cashoffice: ["cash"],
+    yardwork: ["fleetstatus"], yard: ["yardwork", "fleetstatus"], cash: ["cashoffice", "birdseye"], cashoffice: ["cash"],
     dapprove: ["dhome"], approver: ["approvals"], dhome: ["hub"], deposit: ["cashoffice", "birdseye"], unlocks: ["birdseye"],
+    // a manager 'birdseye' push reaching an admin/exec (no birdseye tab) lands on
+    // their equivalent dashboard; feedback pushes land on the Inbox triage list.
+    birdseye: ["exec", "retail"], feedback: ["inbox"], collections: ["exec", "birdseye"],
   };
   const goFocus = (t, d) => {
     const have = (k) => tabs.some(([x]) => x === k);
@@ -944,6 +948,16 @@ function App() {
     window.addEventListener("da-synced", onSynced);
     return () => window.removeEventListener("da-synced", onSynced);
   }, [me, load]);
+
+  // An offline submission that the server later REJECTED must never vanish
+  // silently — surface it so the operator knows their "Saved offline" write did
+  // not land, with the reason, and can redo it (audit findings #5/#8).
+  const [outboxFail, setOutboxFail] = useState(null);
+  useEffect(() => {
+    const onFail = (e) => { const items = (e && e.detail) || []; if (items.length) setOutboxFail(items); };
+    window.addEventListener("da-outbox-failed", onFail);
+    return () => window.removeEventListener("da-outbox-failed", onFail);
+  }, []);
 
   // Schedule this person's daily submission reminders on the device. Fires even
   // with the app closed; no server/Firebase.
@@ -1057,7 +1071,21 @@ function App() {
         );
       })()}
       <ReleaseNotesModal />
-      <div key={tab} className="rise">
+      {outboxFail && (
+        <div style={{ background: "#FDECEA", border: "1px solid #E4A79E", borderLeft: "4px solid #C0563A", borderRadius: 12, padding: "12px 14px", margin: "0 0 12px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontWeight: 800, color: "#8A2E1E" }}>⚠ {outboxFail.length} offline submission{outboxFail.length === 1 ? "" : "s"} didn’t go through</span>
+            <button onClick={() => setOutboxFail(null)} style={{ border: "none", background: "none", color: "#8A2E1E", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: "#7A3527", marginTop: 4, lineHeight: 1.5 }}>
+            The server rejected {outboxFail.length === 1 ? "it" : "them"} when your connection came back — please redo {outboxFail.length === 1 ? "it" : "them"}:
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {outboxFail.slice(0, 5).map((f, i) => <li key={i} style={{ marginBottom: 2 }}><b>{(f.path || "").replace("/api/", "")}</b> — {f.error}</li>)}
+            </ul>
+          </div>
+        </div>
+      )}
+      <ErrorBoundary key={tab}><div className="rise">
         {tab === "dhome" && <><DeliveriesDue onGo={goDeliver} /><DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => goDeliver("deliver", null)} onApprove={() => setTab("dapprove")} onTrip={(t) => { setPrefill({ id: t.tripNo, tripNo: t.tripNo, mode: "delivery" }); setTab("drequest"); }} /></>}
         {tab === "dcard" && <DriverCard me={me} cards={cards} requests={requests} />}
         {(tab === "driver" || tab === "drequest") && <DriverMode key={prefill ? prefill.id : "new"} initial={prefill} me={me} drivers={drivers} horses={horses} onSubmit={submit} cards={cards} requests={requests} gkey={gkey} onSent={() => { setPrefill(null); if (me.kind === "driver") setTab("dhome"); }} />}
@@ -1095,7 +1123,7 @@ function App() {
         {tab === "rrequest" && <RetailRequest me={me} />}
         {tab === "yardwork" && <YardWorkshop me={me} />}
         {tab === "fleetstatus" && <TruckStatus />}
-      </div>
+      </div></ErrorBoundary>
     </>
   );
 
@@ -1250,8 +1278,9 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
       <div style={{ marginBottom: 14 }}>
         <BalanceHero card={me.card} balance={c.balance} usdCash={c.usdCash} petrolL={c.petrolL} dieselL={c.dieselL}>
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            {/* delivery-note filing moved to supervisors; drivers confirm arrival/
+                collection/offload from the "Deliveries due" list above, not here */}
             <button onClick={onRequest} className="disp pill pill-lime" style={{ flex: 1 }}>New request</button>
-            <button onClick={onDelivery} className="disp pill-ghost" style={{ flex: 1, background: "rgba(255,255,255,.14)", color: "#EAF0FA", borderColor: "transparent" }}>New delivery</button>
           </div>
         </BalanceHero>
       </div>
