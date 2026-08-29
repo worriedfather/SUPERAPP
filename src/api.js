@@ -59,7 +59,19 @@ const NO_QUEUE = /\/api\/(login|route\/google|intelligence|verify)\b/;
 const readCache = (path) => { try { const s = localStorage.getItem(CACHE_PREFIX + path); return s ? JSON.parse(s) : null; } catch { return null; } };
 const writeCache = (path, data) => { try { localStorage.setItem(CACHE_PREFIX + path, JSON.stringify({ at: Date.now(), data })); } catch { /* quota — ignore */ } };
 const outboxAll = () => { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch { return []; } };
-const outboxSave = (list) => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); } catch { /* ignore */ } window.dispatchEvent(new CustomEvent("da-outbox", { detail: list.length })); };
+// returns TRUE only if the queue actually persisted. A QuotaExceededError (a big
+// base64 slip photo overflowing the ~5MB localStorage cap) must NOT be swallowed
+// — the caller needs to know the write did NOT queue (audit #5).
+const outboxSave = (list) => {
+  let okSave = false;
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); okSave = true; }
+  catch {
+    // last-ditch: evict GET cache to make room, then retry once
+    try { Object.keys(localStorage).forEach((k) => { if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k); }); localStorage.setItem(OUTBOX_KEY, JSON.stringify(list)); okSave = true; } catch { okSave = false; }
+  }
+  window.dispatchEvent(new CustomEvent("da-outbox", { detail: list.length }));
+  return okSave;
+};
 export const outboxCount = () => outboxAll().length;
 export const clearCache = () => { try { Object.keys(localStorage).forEach((k) => { if (k.startsWith(CACHE_ROOT)) localStorage.removeItem(k); }); } catch { /* ignore */ } };
 // Broadcast real API reachability (a live server answering), which is more
@@ -80,8 +92,11 @@ async function call(path, { method = "GET", body, timeoutMs = 12000, _replay = f
       const c = readCache(path);
       if (c) return { __served: { ...c.data, __offline: true, __cachedAt: c.at } };
     } else if (!_replay && !NO_QUEUE.test(path)) {
-      const list = outboxAll(); list.push({ path, method, body, at: Date.now() }); outboxSave(list);
-      return { __served: { __queued: true, ok: true } };
+      const list = outboxAll(); list.push({ path, method, body, at: Date.now() });
+      if (outboxSave(list)) return { __served: { __queued: true, ok: true } };
+      // couldn't persist (storage full — usually an oversized photo): DON'T claim
+      // it was saved. Tell the caller so the form stays filled and warns the user.
+      const qe = new Error("Couldn't save offline — phone storage is full. Free up space or try again on a connection."); qe.offline = true; qe.quota = true; throw qe;
     }
     const err = new Error(fallbackMsg); err.offline = true; throw err;
   };

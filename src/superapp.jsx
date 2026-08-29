@@ -49,7 +49,11 @@ const L = (n) => (Number.isFinite(Number(n)) ? acct(n) : "—");
 // fuel prices are quoted to the tenth-of-a-cent — 3dp everywhere so the retail
 // board matches the executive board (was 2dp here, hiding sub-cent gaps).
 const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(3) : "—");
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Harare calendar date — NOT UTC. shiftNow() reads the local (Harare) hour, so
+// the trading date must use the same clock; toISOString() (UTC) put every
+// 00:00–02:00 submission on the previous day and collided with the locked prior
+// entry (audit #7/#14). en-CA gives YYYY-MM-DD.
+const todayISO = () => { try { return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Harare" }); } catch { return new Date().toISOString().slice(0, 10); } };
 // Sensible default shift, still user-overridable: evening/overnight → the "day"
 // trading shift (17:00 close), otherwise "night". The app removes the guessing
 // the bots had to do from message timestamps.
@@ -3129,8 +3133,14 @@ export function SiteDeposit({ me }) {
     if (!photo) { setMsg({ tone: "amber", title: "Photograph the slip", body: "Attach a photo of the deposit slip so the cash office can confirm it." }); return; }
     setBusy(true);
     try {
-      await postCashDeposit({ site: fixed ? undefined : site, tradingDate: f.tradingDate, depositDate: f.depositDate,
+      const r = await postCashDeposit({ site: fixed ? undefined : site, tradingDate: f.tradingDate, depositDate: f.depositDate,
         bank: f.bank.trim(), amount: Number(f.amount), reference: f.reference.trim(), photo, deviceTime: new Date().toISOString() });
+      // OFFLINE-QUEUED is NOT recorded (audit #8): don't say "Deposit recorded" and
+      // don't wipe the form — the cash office hasn't seen it yet.
+      if (r && r.__queued) {
+        setMsg({ tone: "amber", title: "Saved offline — not sent yet", body: "You're offline. This deposit sends to the cash office automatically when you're back online — keep the slip until it confirms." });
+        return;
+      }
       setMsg({ tone: "ok", title: "Deposit recorded", body: `$${L(Number(f.amount))} to ${f.bank.trim()} — sent to the cash office to confirm.` });
       setF({ tradingDate: f.tradingDate, depositDate: todayISO(), bank: "", amount: "", reference: "" });
       setPhoto(null);
