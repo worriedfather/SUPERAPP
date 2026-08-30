@@ -2166,7 +2166,16 @@ export function ExecutiveDashboard() {
 
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
-          {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}><CashView embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
+          {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}>
+            {/* MERGED cash view for executives: the reconciliation (sales → expected
+                → received → variance + tender mix) AND how sites handled the cash
+                (accounted / unaccounted / on-hand + per-site table), one window. */}
+            <CashView embedded from={d.asOf?.periodStart} to={d.asOf?.date} />
+            <div style={{ borderTop: "2px solid var(--line)", margin: "22px 0 16px", paddingTop: 4 }}>
+              <span className="lbl" style={{ color: "var(--steel)" }}>How the cash was handled — by site</span>
+            </div>
+            <CashInflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} />
+          </div>}
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
 
           {/* ---------------- SHIFT REPORTS — indicative, from supervisor submissions ---------------- */}
