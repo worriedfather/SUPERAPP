@@ -3507,31 +3507,33 @@ function UnaccountedDrill({ days, from, to }) {
 }
 
 export function CashInflows({ embedded = false, from = null, to = null } = {}) {
-  const [days, setDays] = useState(90);
+  // standalone → the STANDARD Today/Yesterday/Month/Year/Range ribbon like every
+  // other screen; embedded → follow the parent Bird's-eye window (from/to props).
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
   const [carriedDrill, setCarriedDrill] = useState(false);
   const [unaccDrill, setUnaccDrill] = useState(false);
-  const effTo = embedded ? to : todayISO();
-  const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const w = embedded ? { from, to, days: 90 } : periodWindow(period, range);
+  const effFrom = w.from, effTo = w.to;
   useEffect(() => {
     if (embedded && !(effFrom && effTo)) return;
+    if (!embedded && period === "range" && !(range.from && range.to)) return;
     setD(null); setErr(null);
-    getCashInflows(days, effFrom, effTo).then(setD).catch((e) => setErr(e.message));
+    getCashInflows(w.days || 90, effFrom, effTo).then(setD).catch((e) => setErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, from, to, embedded, reloadKey]);
+  }, [period, range.from, range.to, from, to, embedded, reloadKey]);
   const $ = (v) => "$" + full(v);
   const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
-  const PRESETS = [[30, "30d"], [90, "90d"], [180, "6mo"], [365, "1y"]];
   const sites = d?.sites || [];
   const filtered = q ? sites.filter((s) => s.site.toLowerCase().includes(q.toLowerCase())) : sites;
   return (
     <Shell>
-      {!embedded && <SectionHead title="Cash inflows" />}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
-        <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: embedded ? "auto" : undefined, border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>
-      </div>
+      {!embedded && <SectionHead title="Cash inflows" sub="Expected cash vs what the sites submitted, per site" />}
+      {!embedded && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
+      {!embedded && <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />}
+      {embedded && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}><button onClick={() => setReloadKey((k) => k + 1)} style={{ border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button></div>}
       {err && <Note tone="red" title="Couldn't load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && d.expected === 0 && d.submitted === 0 && (
@@ -3599,7 +3601,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
         </>
       )}
       {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
-      {unaccDrill && <DetailSheet title="Unaccounted for" sub={`expected − accounted · ${effFrom && effTo ? `${fmtD(effFrom)} – ${fmtD(effTo)}` : `last ${days} days`}`} onClose={() => setUnaccDrill(false)}><UnaccountedDrill days={days} from={effFrom} to={effTo} /></DetailSheet>}
+      {unaccDrill && <DetailSheet title="Unaccounted for" sub={`expected − accounted · ${effFrom && effTo ? `${fmtD(effFrom)} – ${fmtD(effTo)}` : "current window"}`} onClose={() => setUnaccDrill(false)}><UnaccountedDrill days={w.days || 90} from={effFrom} to={effTo} /></DetailSheet>}
     </Shell>
   );
 }
