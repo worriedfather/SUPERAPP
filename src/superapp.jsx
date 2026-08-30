@@ -4167,7 +4167,7 @@ export function RetailDashboard() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"], ["inflows", "Cash inflows"]]} value={which} onChange={setWhich} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
@@ -4177,7 +4177,6 @@ export function RetailDashboard() {
       {data && which === "price" && <PriceBoard d={data} onSite={openSite} />}
       {data && which === "sales" && <SalesBoard d={data} onSite={openSite} />}
       {data && which === "compliance" && <ComplianceBoard rows={data.compliance || []} />}
-      {which === "inflows" && <CashInflows />}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
   );

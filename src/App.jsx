@@ -7,7 +7,7 @@ import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -531,7 +531,7 @@ const ROLE_TABS = {
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
   fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
@@ -549,28 +549,28 @@ const ROLE_TABS = {
   // Executive: full access to everything EXCEPT raising fuel requests.
   // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
   // and no master data (master data is the admin role's alone).
-  executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"],
+  executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"], ["inflows", "Cash inflows"],
               ["inventory", "Inventory"], ["logistics", "Deliveries"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
   supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
-  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
   // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
-  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
-  admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"],
+  admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"],
           ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
           ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
 };
@@ -599,6 +599,7 @@ const MODULE_META = {
   submit:    { label: "Site submit", group: "Retail sites", desc: "Stock · Price · Sales" },
   incoming:  { label: "Deliveries", group: "Retail sites", desc: "Incoming to your site" },
   retail:    { label: "Retail board", group: "Retail sites", desc: "Live site status" },
+  inflows:   { label: "Cash inflows", group: "Retail sites", desc: "Expected cash vs what sites submitted" },
   deliver:   { label: "Delivery note", group: "Retail sites", desc: "Log a delivery" },
   dapprove:  { label: "Approve deliveries", group: "Retail sites", desc: "Sign off delivery notes" },
   recon:     { label: "Warehouse", group: "Logistics", desc: "Imports & running balance" },
@@ -1112,6 +1113,7 @@ function App() {
         {/* super-app modules */}
         {tab === "submit" && <SiteSubmit me={me} />}
         {tab === "retail" && <RetailDashboard />}
+        {tab === "inflows" && <CashInflows />}
         {tab === "deliver" && <DeliverySubmit me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "recon" && <WarehouseImports me={me} />}
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
