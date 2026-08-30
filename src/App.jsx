@@ -674,14 +674,20 @@ function About({ onClose }) {
             <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>v{APP_VERSION} · {RELEASE_DATE}</div>
           </div>
         </div>
+        <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 8px" }}>
+          DA OPS is Daniel Aguiar Motors' operations app — built with every department, one system from order to banked cash.
+        </p>
+        <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 8px" }}>
+          <b style={{ color: "var(--navy)" }}>Fuel &amp; fleet</b> — requisition and approval with geo-lock and measured consumption, DA card loads, scheduled trips with live GPS and per-leg delivery confirmation, and the fleet workshop.
+        </p>
+        <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 8px" }}>
+          <b style={{ color: "var(--navy)" }}>Sites &amp; stock</b> — retail site stock, prices, sales and lubricants; warehouse inventory and outflows; staff assignment.
+        </p>
+        <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 8px" }}>
+          <b style={{ color: "var(--navy)" }}>Cash &amp; reporting</b> — the full cash cycle from expected cash to banked-and-confirmed at HQ, with executive reporting on margins, losses and compliance.
+        </p>
         <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--ink)", margin: "0 0 4px" }}>
-          DA OPS is Daniel Aguiar Motors' single operations app — fuel requisition &amp; approval with geo-lock
-          and measured consumption, DA card loads, scheduled trips with live GPS tracking and per-leg delivery
-          confirmation, retail site stock, prices, sales &amp; lubricants, the full cash flow from expected cash
-          through site handling to banked-and-confirmed at HQ, warehouse inventory &amp; outflows, the fleet
-          workshop, staff assignment, and executive reporting with margins, losses and compliance. Every entry
-          is attributable and tamper-evident on an append-only ledger — replacing the WhatsApp groups it grew
-          out of.
+          Every entry is attributable and tamper-evident on an append-only ledger — protecting staff, sites and the company alike. DA OPS replaced the WhatsApp groups it grew out of: informal messages became structured, auditable records.
         </p>
         <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14, fontSize: 12, color: "var(--steel)", lineHeight: 1.7 }}>
           <div><b style={{ color: "var(--navy)" }}>Developer</b> · Tinashe Severa</div>
