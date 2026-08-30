@@ -2549,13 +2549,16 @@ const FilterBox = ({ value, onChange, placeholder }) => (
 // Fleet allocation vs the system estimate: the system calculates an estimate; the approver
 // can allocate higher (over) or lower (under). This records and reports that variance daily.
 export function AllocationReport() {
-  const [days, setDays] = useState(30);
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
+  const w = periodWindow(period, range);
   useEffect(() => {
+    if (period === "range" && !(range.from && range.to)) return;
     setD(null); setErr(null);
-    const to = todayISO(); const from = new Date(Date.now() - (days - 1) * 864e5).toISOString().slice(0, 10);
-    getFleetAllocation(from, to).then(setD).catch((e) => setErr(e.message));
-  }, [days]);
+    getFleetAllocation(w.from, w.to).then(setD).catch((e) => setErr(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, range.from, range.to]);
   const vColor = (v) => (v > 0 ? "var(--red)" : v < 0 ? "#C77A15" : "var(--steel)");
   const vTxt = (v) => (v > 0 ? "+" : "") + L(v);
   if (err) return <Note tone="red" title="Couldn't load the allocation report">{err}</Note>;
@@ -2563,9 +2566,7 @@ export function AllocationReport() {
   const t = d.totals;
   return (<>
     <Note tone="blue" title="Allocation vs system estimate">The app calculates an estimated allocation from the route and the truck&rsquo;s efficiency. The approver can allocate higher (<b style={{ color: "var(--red)" }}>over</b>) or lower (<b style={{ color: "#C77A15" }}>under</b>). This is the daily record of that variance across the fleet.</Note>
-    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-      {[7, 30, 90].map((n) => <button key={n} onClick={() => setDays(n)} className={days === n ? "pill" : "pill-ghost"} style={{ padding: "6px 14px", fontSize: 12 }}>{n}d</button>)}
-    </div>
+    <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))", gap: 12, marginBottom: 12 }}>
       <Hero label="ESTIMATED" value={compact(t.estimated)} unit="L" accent="#8FB8FF" />
       <Hero label="ALLOCATED" value={compact(t.allocated)} unit="L" />
@@ -2573,7 +2574,7 @@ export function AllocationReport() {
       <Hero label="OVER-ALLOCATED" value={t.overCount} sub={`+${compact(t.overLitres)} L`} accent="#E5604D" />
       <Hero label="UNDER-ALLOCATED" value={t.underCount} sub={`${compact(t.underLitres)} L`} accent="#C77A15" />
     </div>
-    {(!d.daily || !d.daily.length) && <Note tone="amber" title="No fleet approvals to compare">No approved fleet fuel request carried a system estimate in the last {days} days.</Note>}
+    {(!d.daily || !d.daily.length) && <Note tone="amber" title="No fleet approvals to compare">No approved fleet fuel request carried a system estimate in this window.</Note>}
     {d.daily && d.daily.length > 0 && (<>
       <div className="lbl" style={{ marginBottom: 6 }}>Daily</div>
       <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}><div style={{ overflowX: "auto" }}>
@@ -3608,7 +3609,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
 
 const ZIG_RATE = 31;   // ZWL-book amounts ÷ this = ZiG
 export function CashOutflows({ embedded = false, from = null, to = null } = {}) {
-  const [days, setDays] = useState(90);
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
   const [currency, setCurrency] = useState("USD");
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [q, setQ] = useState("");
@@ -3616,15 +3618,16 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
   const [drill, setDrill] = useState(null);
   const isZig = currency === "ZiG";
   const apiCur = isZig ? "ZWL" : "USD";   // ZiG figures come from the ZWL book, converted
-  // embedded → follow the Bird's-eye period (from/to props); standalone → own window
-  const effTo = embedded ? to : new Date().toISOString().slice(0, 10);
-  const effFrom = embedded ? from : new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  // embedded → follow the Bird's-eye window; standalone → the STANDARD ribbon
+  const w = embedded ? { from, to } : periodWindow(period, range);
+  const effFrom = w.from, effTo = w.to;
   useEffect(() => {
     if (embedded && !(effFrom && effTo)) return;
+    if (!embedded && period === "range" && !(range.from && range.to)) return;
     setD(null); setErr(null);
     getBankOutflows(effFrom, effTo, apiCur).then(setD).catch((e) => setErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, currency, from, to, embedded, reloadKey]);
+  }, [period, range.from, range.to, currency, from, to, embedded, reloadKey]);
   // Drill into the underlying transactions behind a payee or a category.
   const openDrill = async ({ payee, category, label }) => {
     setDrill({ title: label, loading: true });
@@ -3635,18 +3638,17 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
   const conv = (v) => (isZig ? v / ZIG_RATE : v);
   const $ = (v) => cur + full(conv(v));
   const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
-  const PRESETS = [[90, "90d"], [180, "6mo"], [365, "1y"], [1095, "3y"]];
   const payees = d?.byPayee || [];
   const filtered = q ? payees.filter((p) => p.payee.toLowerCase().includes(q.toLowerCase()) || (p.category || "").toLowerCase().includes(q.toLowerCase())) : payees;
   const maxCat = Math.max(1, ...(d?.byCategory || []).map((c) => c.total));
   return (
     <Shell>
       {!embedded && <SectionHead title="Cash outflows" sub="Cash paid out — parsed from the daily cash-office whiteslips" />}
+      {!embedded && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
+      {!embedded && <RefreshBar data={d} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         <Segmented options={[["USD", "US$"], ["ZiG", "ZiG"]]} value={currency} onChange={setCurrency} />
-        {!embedded && <div style={{ flex: "1 1 220px", minWidth: 180 }}><Segmented value={String(days)} onChange={(v) => setDays(Number(v))} options={PRESETS.map(([n, l]) => [String(n), l])} /></div>}
-        {/* embedded → the parent Bird's-eye ribbon owns Refresh; don't render a second one */}
-        {!embedded && <button onClick={() => setReloadKey((k) => k + 1)} style={{ border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>}
+        {embedded && <button onClick={() => setReloadKey((k) => k + 1)} style={{ marginLeft: "auto", border: "1px solid var(--line)", background: "#fff", borderRadius: 9, padding: "8px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Refresh</button>}
       </div>
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
