@@ -6864,6 +6864,11 @@ export function TruckStatus() {
       </>
     ) });
   };
+  // Trucks the "D. A Truck faults" group reports in the workshop but with no formal app
+  // case yet — added to the list below so it reconciles with the "In workshop" count and
+  // the grid (was: count=4 but the table only showed the 2 formal cases).
+  const wsCaseCodes = new Set((d?.openCases || []).map((c) => String(c.vehicle)));
+  const groupOnly = (d?.vehicles || []).filter((v) => v.yardStatus === "workshop" && !wsCaseCodes.has(String(v.code)));
   return (
     <Wrap>
       <SectionHead title="Fleet status" sub="Which trucks are running, which are in the workshop" />
@@ -6876,7 +6881,7 @@ export function TruckStatus() {
             <CountPill n={d.counts.active} label="Active" tone="ok" />
             <CountPill n={d.counts.workshop} label="In workshop" tone={d.counts.workshop ? "red" : "ok"} />
           </div>
-          {d.openCases.length > 0 && (
+          {(d.openCases.length > 0 || groupOnly.length > 0) && (
             <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
               <div className="lbl" style={{ padding: "12px 14px 8px" }}>In the workshop — longest first</div>
               <div style={{ overflowX: "auto" }}>
@@ -6888,6 +6893,13 @@ export function TruckStatus() {
                       <Td style={{ color: "var(--steel)" }}>{c.description || c.category}</Td>
                       <Td><span className="pill" style={{ padding: "1px 8px", fontSize: 11, background: SEV[c.severity] || "var(--steel)", boxShadow: "none", borderRadius: 100 }}>{c.severity}</span></Td>
                       <Td right style={{ fontWeight: 700, color: c.days > 3 ? "var(--red)" : "var(--navy)" }}>{c.days}d</Td>
+                    </tr>))}
+                  {groupOnly.map((v) => (
+                    <tr key={v.code} onClick={() => openVehicle(v)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                      <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{v.code}</Td>
+                      <Td style={{ color: "var(--steel)" }}>{v.yardStatusDetail || "Reported in the workshop (faults group)"}</Td>
+                      <Td><span className="pill" style={{ padding: "1px 8px", fontSize: 11, background: "var(--steel)", boxShadow: "none", borderRadius: 100, color: "#fff" }}>group</span></Td>
+                      <Td right style={{ color: "var(--steel)" }}>—</Td>
                     </tr>))}</tbody>
                 </table>
               </div>
