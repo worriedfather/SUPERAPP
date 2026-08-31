@@ -6166,7 +6166,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           <div className="lbl" style={{ marginBottom: 6 }}>Drops — site &amp; litres</div>
           {drops.map((d, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder="Site…" title="Drop site" options={sites.map((s) => s.name)} /></div>
+              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder="Site…" title="Drop site" options={sites.map((s) => ({ value: s.name, label: s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
               <input style={{ flex: 1 }} inputMode="decimal" placeholder="litres" value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
               {drops.length > 1 && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
             </div>
