@@ -1055,9 +1055,13 @@ function App() {
   useEffect(() => { if (tab && tab !== "feedback") prevTabRef.current = tab; }, [tab]);
 
   if (mustUpdate) return <UpdateGate />;
-  // Driver features are mobile-only — the whole control (geo-lock, GPS evidence,
-  // the camera) needs the handset. A driver on a laptop/browser is blocked.
-  if (me && me.kind === "driver" && !isNative()) return <DriverMobileOnlyGate onSignOut={() => { signOut(); setMe(null); }} />;
+  // Driver features need a handset (geo-lock, GPS evidence, the camera). The native
+  // app is best (background GPS + device binding), but a driver struggling to install
+  // it can work on the PHONE web browser — geolocation and the camera both work there.
+  // Only a laptop/desktop browser is blocked (no GPS/camera for the pump controls).
+  const driverOnDesktop = me && me.kind === "driver" && !isNative()
+    && !/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || "");
+  if (driverOnDesktop) return <DriverMobileOnlyGate onSignOut={() => { signOut(); setMe(null); }} />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
 

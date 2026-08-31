@@ -1174,6 +1174,17 @@ function RefreshBar({ data, onRefresh, busy }) {
   const seenRef = useRef(Date.now());
   useEffect(() => { if (data) seenRef.current = Date.now(); }, [data]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 20000); return () => clearInterval(t); }, []);
+  // AUTO-REFRESH the data every minute so a dashboard left open never goes stale.
+  // Refs keep the interval stable (onRefresh is usually a fresh arrow each render);
+  // paused while the tab is hidden or a load is already in flight.
+  const refreshRef = useRef(onRefresh), busyRef = useRef(busy);
+  useEffect(() => { refreshRef.current = onRefresh; busyRef.current = busy; });
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible" && !busyRef.current && refreshRef.current) refreshRef.current();
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
   const offline = !!(data && data.__offline);
   const at = offline ? (data.__cachedAt || seenRef.current) : seenRef.current;
   // DATA RECENCY, not fetch time: the green dot must reflect how fresh the DATA is
