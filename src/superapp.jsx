@@ -1182,7 +1182,7 @@ function RefreshBar({ data, onRefresh, busy }) {
   useEffect(() => {
     const t = setInterval(() => {
       if (document.visibilityState === "visible" && !busyRef.current && refreshRef.current) refreshRef.current();
-    }, 60000);
+    }, 600000);   // every 10 minutes — enough to stay current without constant reloads
     return () => clearInterval(t);
   }, []);
   const offline = !!(data && data.__offline);
@@ -5341,7 +5341,7 @@ const DROP_TONE = { delivered: "#3C9A52", partial: "var(--amber)", pending: "var
 const STAGE = { in_transit: ["In transit", "#2B3990"], scheduled: ["Scheduled", "#C07A00"], delivered: ["Delivered", "#3C9A52"] };
 // TripTrack — the GPS audit trail for one trip: last known position, per-drop
 // distance + ETA, stops (where + how long), and tracking gaps (GPS off = a flag).
-export function TripTrack({ tripNo }) {
+export function TripTrack({ tripNo, compact = false }) {
   const [t, setT] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
   useEffect(() => { let live = true; setT(null); setErr(null); getTripTrack(tripNo).then((r) => { if (live) setT(r); }).catch((e) => { if (live) setErr(e.message); }); return () => { live = false; }; }, [tripNo, key]);
   if (err) return <div style={{ fontSize: 12, color: "var(--red)", padding: "8px 2px" }}>Couldn't load the track. <button type="button" className="pill-ghost" style={{ padding: "4px 10px", marginLeft: 6 }} onClick={() => setKey((k) => k + 1)}>Retry</button></div>;
@@ -5371,9 +5371,14 @@ export function TripTrack({ tripNo }) {
           {t.last && <span className="mono" style={{ fontSize: 11 }}>{t.last.lat.toFixed(4)}, {t.last.lon.toFixed(4)}</span>}
         </div>
       </div>
-      {/* per-drop distance + ETA */}
-      {(t.destinations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 10 }}>
-        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Drops — distance &amp; ETA from last position</div>
+      {/* compact: only the NEXT stop; full: every drop's ETA in sequence */}
+      {compact && (() => { const nx = (t.destinations || []).find((d) => !d.done); return nx ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 13, marginBottom: 8 }}>
+          <span style={{ color: "var(--steel)" }}>Next: <b style={{ color: "var(--navy)" }}>{nx.site}</b></span>
+          <span className="mono" style={{ whiteSpace: "nowrap", color: "var(--navy)" }}>{nx.distanceKm != null ? `${nx.distanceKm} km · ~${nx.etaMin} min` : "—"}</span>
+        </div>) : null; })()}
+      {!compact && (t.destinations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 10 }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Drops — distance &amp; ETA in sequence</div>
         {t.destinations.map((d, i, a) => (
           <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, padding: "7px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none" }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: "var(--navy)" }}>{d.site} <span style={{ fontWeight: 400, color: "var(--steel)", fontSize: 11 }}>{full(d.delivered)}/{full(d.qty)} L</span></span>
@@ -5398,6 +5403,7 @@ export function TripTrack({ tripNo }) {
           </div>
         );
       })()}
+      {!compact && (<>
       {/* summary */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <S label="Distance" value={t.distanceKm + " km"} />
@@ -5429,6 +5435,7 @@ export function TripTrack({ tripNo }) {
             <b style={{ color: "var(--red)", whiteSpace: "nowrap" }}>{fmtDurMin(g.minutes)}</b>
           </div>))}
       </div>}
+      </>)}
     </div>
   );
 }
@@ -5485,21 +5492,28 @@ export function DeliveriesInProgress() {
       {started.length > 0 && <>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#2B3990", margin: "12px 0 8px" }}>🚚 In transit · {started.length} on the road</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {started.map((t) => (
+          {started.map((t) => {
+            const open = trackFor === t.tripNo;
+            return (
             <div key={t.tripNo} style={{ border: "1px solid #C9D4F5", borderRadius: 12, padding: "11px 13px", background: "#FAFBFF" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>To: {t.drops.map((x) => x.site).join(", ")}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#2B3990", background: "#E7ECFF", padding: "2px 9px", borderRadius: 20 }}>{t.progress}% delivered</span>
+              {/* line 1 — TRAILER first (the identifier the business reads), then truck/driver + progress */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <span style={{ fontSize: 15 }}><b style={{ color: "var(--navy)" }}>Trailer {t.trailer || "—"}</b><span style={{ color: "var(--steel)", fontSize: 12 }}> · {t.truck}{t.driver ? ` · ${t.driver}` : ""}</span></span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#2B3990", background: "#E7ECFF", padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" }}>{t.progress}% delivered</span>
               </div>
+              {/* line 2 — load + trip, muted */}
+              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>{t.warehouse} {t.product} · {full(t.remaining)} of {full(t.qty)} L on truck · {t.tripNo}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
+              {/* route as a sequence */}
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--navy)", margin: "7px 0 5px" }}>{t.drops.map((x) => x.site).join(" → ")}</div>
               {dropChips(t)}
-              {flowStrip(t)}
-              <div style={{ height: 6, borderRadius: 5, background: "var(--line)", overflow: "hidden", margin: "8px 0 6px" }}>
+              <div style={{ height: 6, borderRadius: 5, background: "var(--line)", overflow: "hidden", margin: "8px 0 4px" }}>
                 <div style={{ width: `${t.progress}%`, height: "100%", background: "#2B3990" }} />
               </div>
-              <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.tripNo} · <b style={{ color: "var(--navy)" }}>Trailer {t.trailer || "—"}</b> · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.remaining)} L still on truck · started {fmtD(t.tripDate)}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
-              <div style={{ marginTop: 8, borderTop: "1px solid var(--line)", paddingTop: 8 }}><TripTrack tripNo={t.tripNo} /></div>
+              {/* GPS — compact (where it is + next stop) by default; full track/stops on tap */}
+              <TripTrack tripNo={t.tripNo} compact={!open} />
+              <button type="button" className="pill-ghost" style={{ padding: "5px 12px", fontSize: 12, marginTop: 8 }} onClick={() => setTrackFor((v) => (v === t.tripNo ? null : t.tripNo))}>{open ? "Hide full track ▲" : "Full track, stops & ETAs ▾"}</button>
             </div>
-          ))}
+          );})}
         </div>
       </>}
 
