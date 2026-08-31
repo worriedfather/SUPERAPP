@@ -374,8 +374,10 @@ export function SiteSubmit({ me }) {
   const loadCfg = useCallback(() => {
     if (!activeSite) { setConfig(null); return; }
     setLoading(true); setConfig(null); setCfgErr(null);
-    getSiteConfig(choice.fixed ? undefined : activeSite).then(setConfig).catch((e) => { setConfig(null); setCfgErr(e.message || "Couldn't load this site's setup."); }).finally(() => setLoading(false));
-  }, [activeSite, choice.fixed]);
+    // pass date+shift so sales prefill is scoped to THIS shift's own submission (a reopen),
+    // never the previous shift's — otherwise the night form pre-fills with day's figures.
+    getSiteConfig(choice.fixed ? undefined : activeSite, date, shift).then(setConfig).catch((e) => { setConfig(null); setCfgErr(e.message || "Couldn't load this site's setup."); }).finally(() => setLoading(false));
+  }, [activeSite, choice.fixed, date, shift]);
   useEffect(() => { loadCfg(); }, [loadCfg]);
 
   // LOCK-ON-LOAD: what's already filed for this site/shift — a submitted form
@@ -481,11 +483,19 @@ function LockedCard({ lock, what, isManager, onReopen, unlock }) {
     canEdit={isManager} onEdit={onReopen} unlock={unlock} />;
 }
 
+// House rule: fuel is ALWAYS listed alphabetically — Blend, Diesel, ULP — on every
+// screen. PROD_RANK is the single source of that order (Petrol/Unleaded are the
+// internal aliases for Blend/ULP). Use sortTanks / byProduct wherever tanks or
+// products are rendered so nothing slips back to Diesel-first.
+const PROD_RANK = { Blend: 0, Petrol: 0, Diesel: 1, ULP: 2, Unleaded: 2 };
+const byProduct = (a, b) => ((PROD_RANK[a?.product] ?? 9) - (PROD_RANK[b?.product] ?? 9)) || String(a?.label || "").localeCompare(String(b?.label || ""));
+const sortTanks = (tanks) => [...(tanks || [])].sort(byProduct);
+
 // Stock (per tank) + sales in one submission. Tanks and the previous readings
 // are preloaded; the user changes only what moved.
 function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
-  const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
+  const [tanks, setTanks] = useState(sortTanks(config.tanks).map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
   // seed sales from the last submission (like tanks seed from lastStock) so
   // REOPENING to fix one tank doesn't blank the sales/tenders and overwrite them
   // with zeros (audit finding #10). Empty when there's no prior submission.
@@ -587,7 +597,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 // submissions. Tank readings ONLY, no sales or prices.
 function DipForm({ choice, site, config, date, isManager, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
-  const [tanks, setTanks] = useState(config.tanks.map((t) => ({ label: t.label, product: t.product, litres: "" })));
+  const [tanks, setTanks] = useState(sortTanks(config.tanks).map((t) => ({ label: t.label, product: t.product, litres: "" })));
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
   const send = async (e) => {
@@ -2140,7 +2150,7 @@ export function ExecutiveDashboard() {
                 const ulp = sum(sl, (s) => s.ulp) + sum(wh, (w) => w.products && w.products.ULP);
                 return (blend + diesel + ulp) > 0 ? (<>
                   <div className="lbl" style={{ margin: "2px 0 6px", fontSize: 10.5 }}>By product</div>
-                  <StockBar parts={[["Diesel", diesel, "#2B3990"], ["Blend", blend, "#C07A00"], ["ULP", ulp, "#6BC048"]]} total={blend + diesel + ulp} />
+                  <StockBar parts={[["Blend", blend, "#C07A00"], ["Diesel", diesel, "#2B3990"], ["ULP", ulp, "#6BC048"]]} total={blend + diesel + ulp} />
                 </>) : null;
               })()}
               <div className="lbl" style={{ margin: "12px 0 6px", fontSize: 10.5 }}>By location</div>
@@ -5823,7 +5833,7 @@ export function InventoryView() {
               <div style={{ overflowX: "auto" }}>
                 <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Product</Th><Th right>Import / L</Th><Th right>Duty / L</Th><Th right>Distribution / L</Th><Th right>Landed / L</Th></tr></thead>
-                  <tbody>{["Diesel", "Blend", "ULP"].filter((k) => d.costParts[k]).map((k) => (
+                  <tbody>{["Blend", "Diesel", "ULP"].filter((k) => d.costParts[k]).map((k) => (
                     <tr key={k} style={{ borderTop: "1px solid var(--line)" }}>
                       <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{k}</Td>
                       <Td right>${d.costParts[k].base.toFixed(4)}</Td>

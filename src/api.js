@@ -280,7 +280,7 @@ export const registerPush = (token, platform) => call("/api/push/register", { me
 
 // ---- super-app modules (stock / price / sales / deliveries / recon) ----
 export const getSites = () => call("/api/sites");
-export const getSiteConfig = (site) => call(`/api/site-config${site ? `?site=${encodeURIComponent(site)}` : ""}`);
+export const getSiteConfig = (site, date, shift) => { const q = new URLSearchParams(); if (site) q.set("site", site); if (date) q.set("date", date); if (shift) q.set("shift", shift); const s = q.toString(); return call(`/api/site-config${s ? `?${s}` : ""}`); };
 export const postSiteSubmit = (b) => call("/api/site-submit", { method: "POST", body: b });
 export const postSiteDip = (b) => call("/api/site-dip", { method: "POST", body: b });
 export const addSiteTank = (b) => call("/api/site-tank", { method: "POST", body: b });
