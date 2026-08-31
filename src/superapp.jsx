@@ -475,8 +475,9 @@ function useSubmissionLock(lock, done) {
   return { isLocked, banner, reopen: () => setReopened(true) };
 }
 function LockedCard({ lock, what, isManager, onReopen, unlock }) {
+  const who = lock.by ? ` — submitted by ${lock.by}${lock.at ? ` at ${lock.at}` : ""}` : "";
   return <SubmittedCard title={`Already submitted · ${lock.ref}`}
-    body={`${what} for this ${unlock && unlock.kind === "cash" ? "trading day" : "shift"} is already in as ${lock.ref}. It's locked so the same figures can't go in twice.`}
+    body={`${what} for this ${unlock && unlock.kind === "cash" ? "trading day" : "shift"} is already in as ${lock.ref}${who}. If a colleague at your site did it, there's nothing more to do. It's locked so the same figures can't go in twice — only request an unlock to CORRECT it.`}
     canEdit={isManager} onEdit={onReopen} unlock={unlock} />;
 }
 

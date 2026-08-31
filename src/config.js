@@ -12,8 +12,8 @@ export const GOOGLE_MAPS_KEY =
 /* This build's Android versionCode. Keep it in step with android/app/build.gradle
    `versionCode` on every release — the server compares its MIN_BUILD to this to
    force old apps to update. */
-export const APP_BUILD = 139;
-export const APP_VERSION = "1.7.7";
+export const APP_BUILD = 140;
+export const APP_VERSION = "1.7.8";
 export const PLAY_URL = "https://play.google.com/store/apps/details?id=zw.co.damotors.fuel";
 /* Direct APK download — DA OPS is sideloaded, not on Play, so the force-update
    screen points here (the server hosts the latest signed APK at this path). */
