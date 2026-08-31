@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
-  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
+  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
@@ -6412,6 +6412,131 @@ function LineGroup({ title, rows, setRows, cols, make }) {
 }
 
 // Full dip/VCF/loss breakdown behind one delivery note.
+// ===== Approved (signed-off) delivery notes — register + printable note =====
+// Opens a clean, self-contained delivery note in a new window and triggers the browser
+// print dialog. On desktop and Android the same dialog offers "Save as PDF", so this one
+// action covers both PRINT and DOWNLOAD without a PDF library.
+function printDeliveryNote(d) {
+  const esc = (s) => String(s == null ? "—" : s).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  const num = (v, u = " L") => (v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) + u);
+  const line = (a, b, strong) => `<tr><td>${esc(a)}</td><td class="r${strong ? " b" : ""}">${b}</td></tr>`;
+  const win = window.open("", "_blank", "width=820,height=1000");
+  if (!win) { alert("Allow pop-ups to print the delivery note."); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Delivery Note ${esc(d.dnNo)}</title>
+  <style>
+    *{box-sizing:border-box} body{font:13px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#12233f;margin:0;padding:32px;max-width:760px}
+    .hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #22345C;padding-bottom:12px;margin-bottom:6px}
+    .hd h1{font-size:20px;margin:0;color:#22345C;letter-spacing:.5px} .hd .sub{color:#5b6b85;font-size:12px;margin-top:2px}
+    .dn{text-align:right} .dn .no{font-size:18px;font-weight:800;color:#22345C} .dn .dt{color:#5b6b85;font-size:12px}
+    .meta{display:grid;grid-template-columns:1fr 1fr;gap:2px 24px;margin:14px 0 8px}
+    .meta div{font-size:12px} .meta b{color:#5b6b85;font-weight:600;display:inline-block;min-width:96px}
+    h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#5b6b85;margin:16px 0 4px}
+    table{width:100%;border-collapse:collapse;font-size:12.5px} td{padding:5px 2px;border-top:1px solid #e6e9ef} td.r{text-align:right;font-variant-numeric:tabular-nums} td.b{font-weight:700}
+    .sign{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:22px}
+    .sign .box{border:1px solid #cfd6e3;border-radius:8px;padding:10px 12px} .sign .box .role{font-size:11px;color:#5b6b85;text-transform:uppercase;letter-spacing:.05em}
+    .sign .box .who{font-weight:700;margin-top:3px} .sign .box .at{font-size:11px;color:#5b6b85;font-variant-numeric:tabular-nums}
+    .foot{margin-top:20px;font-size:11px;color:#8a95a8;border-top:1px solid #e6e9ef;padding-top:8px}
+    @media print{body{padding:0}@page{margin:16mm}}
+  </style></head><body>
+    <div class="hd"><div><h1>DA MOTORS</h1><div class="sub">Fuel delivery note</div></div>
+      <div class="dn"><div class="no">${esc(d.dnNo)}</div><div class="dt">${esc(d.date)}</div></div></div>
+    <div class="meta">
+      <div><b>Site</b>${esc(d.site)}</div><div><b>Product</b>${esc(d.commodity)}</div>
+      <div><b>Driver</b>${esc(d.driver)}</div><div><b>Truck / trailer</b>${esc(d.trailer || d.truck || "—")}${d.truckReg ? " · " + esc(d.truckReg) : ""}</div>
+      <div><b>Trip</b>${esc(d.tripNo || "—")}</div><div><b>Density</b>${d.density != null ? esc(d.density) + " kg/L" : "—"}</div>
+    </div>
+    <h2>Quantities</h2>
+    <table>${line("Dispatched (ordered load)", num(d.qtyLoaded))}${line("Truck dip on arrival", num(d.truckDip))}${line("Site received", num(d.siteDip), true)}</table>
+    ${(d.truckCorrected != null || d.siteCorrected != null) ? `<h2>Temperature correction (ASTM D1250)</h2><table>${d.truckTemp != null ? line("Truck temp", esc(d.truckTemp) + " &deg;C") : ""}${d.siteTemp != null ? line("Site temp", esc(d.siteTemp) + " &deg;C") : ""}${d.truckCorrected != null ? line("Truck @ 20&deg;C", num(d.truckCorrected)) : ""}${d.siteCorrected != null ? line("Site @ 20&deg;C", num(d.siteCorrected)) : ""}</table>` : ""}
+    <h2>Loss</h2>
+    <table>${line("Before arrival (loading + road)", num(d.transitLoss))}${line("At discharge (handover)", num(d.dischargeLoss))}${line("Total" + (d.adjustedLoss != null ? " @ 20&deg;C" : ""), num(d.adjustedLoss != null ? d.adjustedLoss : d.combinedLoss) + ((d.adjustedLossPct != null ? d.adjustedLossPct : d.adjustedLossPct) != null ? ` (${d.adjustedLossPct != null ? d.adjustedLossPct : "—"}%)` : ""), true)}</table>
+    ${d.note ? `<h2>Notes</h2><div style="font-size:12.5px">${esc(d.note)}</div>` : ""}
+    <div class="sign">
+      <div class="box"><div class="role">Driver — confirmed loaded</div><div class="who">${esc(d.driverApproval ? d.driverApproval.name : "—")}</div><div class="at">${esc(d.driverApproval ? d.driverApproval.at : "")}</div></div>
+      <div class="box"><div class="role">Site — confirmed received</div><div class="who">${esc(d.siteApproval ? d.siteApproval.name : "—")}</div><div class="at">${esc(d.siteApproval ? d.siteApproval.at : "")}</div></div>
+    </div>
+    <div class="foot">DA OPS · generated ${esc(new Date().toLocaleString())} · this note is the signed-off record of a completed delivery.</div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},250);}</script>
+  </body></html>`;
+  win.document.write(html); win.document.close();
+}
+
+function DeliveryNoteView({ d }) {
+  const n = (v, u = " L") => (v == null ? "—" : L(v) + u);
+  const row = (label, val, extra) => <tr style={{ borderTop: "1px solid var(--line)" }}><Td style={{ color: "var(--steel)" }}>{label}</Td><Td right style={extra}>{val}</Td></tr>;
+  const flagged = d.adjustedLossPct != null && d.adjustedLossPct > 0.3;
+  return (
+    <>
+      <button className="pill" onClick={() => printDeliveryNote(d)} style={{ width: "100%", marginBottom: 12 }}>🖨  Print / Download PDF</button>
+      <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{d.commodity || "—"} · {d.driver || "—"}{d.trailer ? " · " + d.trailer : (d.truck ? " · " + d.truck : "")}{d.truckReg ? " · " + d.truckReg : ""}</div>
+      <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+        <div className="lbl" style={{ padding: "12px 14px 6px" }}>Quantities</div>
+        <div style={{ overflowX: "auto" }}><table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><tbody>
+          {row("Dispatched (ordered load)", n(d.qtyLoaded))}
+          {row("Truck dip on arrival", n(d.truckDip))}
+          {row("Site received", n(d.siteDip), { fontWeight: 700 })}
+        </tbody></table></div>
+      </Panel>
+      <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+        <div className="lbl" style={{ padding: "12px 14px 6px" }}>Loss</div>
+        <div style={{ overflowX: "auto" }}><table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><tbody>
+          {row("Before arrival (loading + road)", n(d.transitLoss))}
+          {row("At discharge (handover)", n(d.dischargeLoss))}
+          {row("Total" + (d.adjustedLoss != null ? " @ 20°C" : ""), n(d.adjustedLoss != null ? d.adjustedLoss : d.combinedLoss) + (d.adjustedLossPct != null ? ` (${d.adjustedLossPct}%)` : ""), { fontWeight: 700, color: flagged ? "var(--red)" : "var(--ok)" })}
+        </tbody></table></div>
+      </Panel>
+      <Panel>
+        <div className="lbl" style={{ marginBottom: 8 }}>Signed off</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {[["Driver — loaded", d.driverApproval], ["Site — received", d.siteApproval]].map(([label, a]) => (
+            <div key={label} style={{ flex: "1 1 45%", minWidth: 140, border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 11, color: "var(--steel)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</div>
+              <div style={{ fontWeight: 700, color: "var(--navy)", marginTop: 3 }}>{a ? a.name : "—"}</div>
+              {a && a.at && <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{a.at}</div>}
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+export function ApprovedDeliveries() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [note, setNote] = useState(null);
+  useEffect(() => { setD(null); setErr(null); getApprovedDeliveries(90).then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const list = (d && d.deliveries) || [];
+  return (
+    <Wrap>
+      <SectionHead title="Approved deliveries" sub="Signed-off delivery notes — tap one to view, print or download" />
+      <RefreshBar data={d ? { asOf: todayISO() } : null} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && list.length === 0 && <Note tone="ok" title="No approved deliveries yet">Once a delivery note is signed off by both the driver and the receiving site, it appears here.</Note>}
+      {d && list.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>DN</Th><Th>Date</Th><Th>Site</Th><Th>Product</Th><Th right>Received</Th><Th right>Loss</Th></tr></thead>
+              <tbody>{list.map((x) => (
+                <tr key={x.dnNo} onClick={() => setNote(x)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                  <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{x.dnNo}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                  <Td style={{ color: "var(--steel)" }}>{fmtD(x.date)}</Td>
+                  <Td>{x.site}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{x.commodity || "—"}</Td>
+                  <Td right>{x.siteDip != null ? L(x.siteDip) + " L" : "—"}</Td>
+                  <Td right style={{ fontWeight: 700, color: x.adjustedLossPct != null && x.adjustedLossPct > 0.3 ? "var(--red)" : "var(--steel)" }}>{x.adjustedLoss != null ? L(x.adjustedLoss) + " L" : "—"}</Td>
+                </tr>))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {note && <DetailSheet title={`Delivery note · ${note.dnNo}`} sub={`${note.site} · ${fmtD(note.date)}`} onClose={() => setNote(null)}><DeliveryNoteView d={note} /></DetailSheet>}
+    </Wrap>
+  );
+}
+
 function deliveryDetail(d) {
   const row = (label, val, extra) => (
     <tr style={{ borderTop: "1px solid var(--line)" }}><Td style={{ color: "var(--steel)" }}>{label}</Td><Td right style={extra}>{val}</Td></tr>

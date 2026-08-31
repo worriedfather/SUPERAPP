@@ -7,7 +7,7 @@ import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -421,6 +421,7 @@ const NAV_PATHS = {
   retail: <><path d="M3 9l1.5-5h15L21 9" /><path d="M4 9h16v11H4z" /><path d="M9 20v-6h6v6" /></>,
   deliver: <><rect x="1" y="6" width="13" height="10" rx="1.4" /><path d="M14 9h4l3 3v4h-7z" /><circle cx="6.5" cy="18" r="1.6" /><circle cx="17.5" cy="18" r="1.6" /></>,
   dapprove: <><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></>,
+  deliverynotes: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 15l1.8 1.8L15 13" /></>,
   recon: <><path d="M3 21V8l9-5 9 5v13" /><path d="M3 21h18" /><rect x="9" y="13" width="6" height="8" /></>,
   inventory: <><path d="M3 7l9-4 9 4-9 4-9-4z" /><path d="M3 7v10l9 4 9-4V7" /><path d="M12 11v10" /></>,
   schedule: <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4M8 14h4" /></>,
@@ -567,7 +568,7 @@ const ROLE_TABS = {
              ["cardsys", "Fuel drawn"], ["intel", "Intelligence"]],
   // Logistics: runs the warehouses. Submits warehouse + in-transit stock, logs
   // deliveries, and sees the full inventory plus what the sites hold.
-  logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
+  logistics: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["deliverynotes", "Delivery notes"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
   logistics_manager: [["birdseye", "Bird's-eye"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
   depot: [["cockpit", "Watchlist"], ["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["tracking", "Journey tracking"]],
   // Logistics lead (Dave): the full logistics role PLUS driver management —
@@ -577,10 +578,10 @@ const ROLE_TABS = {
   // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
   // and no master data (master data is the admin role's alone).
   executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"], ["inflows", "Cash inflows"],
-              ["inventory", "Inventory"], ["logistics", "Deliveries"],
+              ["inventory", "Inventory"], ["logistics", "Deliveries"], ["deliverynotes", "Delivery notes"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
+  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
   manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
@@ -629,6 +630,7 @@ const MODULE_META = {
   inflows:   { label: "Cash inflows", group: "Retail sites", desc: "Expected cash vs what sites submitted" },
   deliver:   { label: "Delivery note", group: "Retail sites", desc: "Log a delivery" },
   dapprove:  { label: "Approve deliveries", group: "Retail sites", desc: "Sign off delivery notes" },
+  deliverynotes: { label: "Delivery notes", group: "Logistics", desc: "Approved notes — view, print, download" },
   recon:     { label: "Warehouse", group: "Logistics", desc: "Imports & running balance" },
   schedule:  { label: "Schedule", group: "Logistics", desc: "Plan a delivery trip" },
   logistics: { label: "Deliveries", group: "Logistics", desc: "Delivery performance" },
@@ -1184,6 +1186,7 @@ function App() {
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "incoming" && <DeliveriesInProgress />}
+        {tab === "deliverynotes" && <ApprovedDeliveries />}
         {tab === "logistics" && <LogisticsDashboard />}
         {tab === "league" && <DriverLeague />}
         {tab === "inventory" && <InventoryView />}

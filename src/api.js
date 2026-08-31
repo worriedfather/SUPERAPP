@@ -294,6 +294,7 @@ export const approveDelivery = (dn, body) => call(`/api/delivery/${encodeURIComp
 export const getPendingDeliveries = () => call("/api/deliveries/pending");
 export const getAppDelivery = (dn) => call(`/api/delivery/${encodeURIComponent(dn)}`);
 export const getAppDeliveries = () => call("/api/deliveries/app");
+export const getApprovedDeliveries = (days = 45) => call(`/api/deliveries/approved?days=${days}`);
 export const postRecon = (b) => call("/api/recon", { method: "POST", body: b });
 export const getExecutive = (period, from, to, scope) => {
   let q = `/api/executive?period=${encodeURIComponent(period)}${from && to ? `&from=${from}&to=${to}` : ""}`;
