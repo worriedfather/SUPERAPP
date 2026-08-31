@@ -749,7 +749,12 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   // "Unaccounted (short)" because the fallback double-counts cumulative shifts).
   const official = !!(exp && exp.basis === "official");
   const accounted = CASH_LEGS.reduce((a, l) => a + (l.key === "sentToHq" ? hqTotal : n(f[l.key])), 0);
-  const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted
+  // Reconcile against the TOTAL the site is holding — today's cash PLUS anything
+  // carried over from previous days ("total to remit") — not just today's slice.
+  // Cash the site can't move today is declared under "Cash on hand" and carries on.
+  const carryover = exp && Number(exp.carryover) > 0 ? n(exp.carryover) : 0;
+  const remitDue = expected != null ? (exp && exp.totalDue != null ? n(exp.totalDue) : expected + carryover) : null;
+  const variance = remitDue != null ? remitDue - accounted : null;   // + = short / unaccounted
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
@@ -758,8 +763,8 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
     // dollar before it goes in (server enforces this too). Managers may override.
     if (!isManager && official && variance != null && Math.abs(variance) >= 1) {
       setMsg({ tone: "amber", title: "Doesn't balance — not submitted", body: variance > 0
-        ? `${dollars(Math.abs(variance))} of the official ${dollars(expected)} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
-        : `You've accounted for ${dollars(Math.abs(variance))} MORE than the official ${dollars(expected)} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
+        ? `${dollars(Math.abs(variance))} of the ${dollars(remitDue)} to remit${carryover > 0 ? ` (today's ${dollars(expected)} + ${dollars(carryover)} carried over)` : ""} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
+        : `You've accounted for ${dollars(Math.abs(variance))} MORE than the ${dollars(remitDue)} to remit — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
       return;
     }
     if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
@@ -2227,18 +2232,31 @@ export function ExecutiveDashboard() {
                 </div>
               </>);
             })()}
-            {/* ── PERFORMANCE — strongest & weakest site by volume ── */}
-            {d.sales && d.sales.top && d.sales.top.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-                {[["Top site · volume", d.sales.top[0], "#3C9A52"], ["Weakest site · volume", d.sales.bottom[0], "#C0563A"]].map(([lbl, s, col]) => s && (
-                  <div key={lbl} className="card" style={{ padding: "12px 13px", cursor: "pointer" }} onClick={() => goTo("sales")}>
-                    <div className="lbl" style={{ marginBottom: 4 }}>{lbl}</div>
-                    <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site}</div>
-                    <div className="mono" style={{ fontSize: 12, color: col }}>{compact(s.litres)} L <span style={{ color: "var(--steel)" }}>· ${compact(s.cash)}</span></div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* ── PERFORMANCE — best & weakest 10 sites by volume (tap for the full leaderboard) ── */}
+            {d.sales && d.sales.top && d.sales.top.length > 0 && (() => {
+              const openLeaderboard = () => setDrill({
+                title: "Sites by volume", sub: `Best & worst 10 · ${compact(d.sales.totalVolume || 0)} L total`,
+                render: () => (
+                  <>
+                    <div className="lbl" style={{ margin: "2px 0 6px" }}>Top 10 · best selling</div>
+                    <RankTable rows={(d.sales.top || []).slice(0, 10)} tone="var(--ok)" onRow={(s) => setDrill(siteVolumeDrill(d.sales.sites, s))} />
+                    <div className="lbl" style={{ margin: "18px 0 6px" }}>Bottom 10 · weakest</div>
+                    <RankTable rows={(d.sales.bottom || []).slice(0, 10)} tone="var(--amber)" onRow={(s) => setDrill(siteVolumeDrill(d.sales.sites, s))} />
+                  </>
+                ),
+              });
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                  {[["Top 10 · best", d.sales.top[0], "#3C9A52"], ["Bottom 10 · weakest", d.sales.bottom[0], "#C0563A"]].map(([lbl, s, col]) => s && (
+                    <div key={lbl} className="card" style={{ padding: "12px 13px", cursor: "pointer" }} onClick={openLeaderboard}>
+                      <div className="lbl" style={{ marginBottom: 4 }}>{lbl} <span style={{ color: "var(--steel)" }}>›</span></div>
+                      <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site}</div>
+                      <div className="mono" style={{ fontSize: 12, color: col }}>{compact(s.litres)} L <span style={{ color: "var(--steel)" }}>· ${compact(s.cash)}</span></div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {/* 30-day trend */}
             {d.trend && d.trend.length > 1 && (
               <Panel style={{ marginBottom: 0 }}>
