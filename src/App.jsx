@@ -914,8 +914,9 @@ function App() {
   // app is older, block with an "update required" screen. Skipped silently when
   // offline (never trap someone who just can't reach the server).
   useEffect(() => {
-    getHealth().then((h) => {
-      if (!h || h.__offline) return;
+    let cancelled = false;
+    const check = () => getHealth().then((h) => {
+      if (cancelled || !h || h.__offline) return;
       // NATIVE: hard update gate — block with an "update required" screen when this
       // app is below the minimum build the server accepts. ANDROID ONLY: it sideloads,
       // so the gate hands over a working APK. iOS is EXEMPT — Apple forbids in-app
@@ -932,6 +933,14 @@ function App() {
         } catch { /* ignore */ }
       }
     }).catch(() => {});
+    // POLL, don't just check once: a tab/app left open must notice a new deploy on
+    // its own (was one-shot on launch → an open tab never updated). Check on load,
+    // every 60s while visible, and the moment the tab is refocused.
+    check();
+    const iv = setInterval(() => { if (document.visibilityState === "visible") check(); }, 60000);
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   // Track real API reachability (from api.js) + the offline write queue, and
