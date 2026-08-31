@@ -31,6 +31,25 @@ const effFor = (horse) => {
 };
 const routePrior = (a, b) => ROUTE_PRIOR[[a, b].sort().join("|")] || null;
 
+/* TOLERANT station lookup. Site/depot names come from MASTER DATA (the site table,
+   the trips logistics schedule) — drivers never type them — but the bundled station
+   list can differ in FORMAT: case ("Zvishavane CBD" vs "Zvishavane Cbd"), punctuation,
+   or a city prefix ("Bulawayo Cowdray Park" vs "Cowdray Park", "Gweru" vs "Gweru Amtec").
+   An exact === match silently dropped the point and zeroed the fuel estimate, so the
+   driver couldn't submit. Resolve by NORMALISED name, then by dropping/adding a leading
+   city word, so any master-data spelling maps to the right coordinates. */
+const _stnNorm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const _stnByNorm = new Map(STATIONS.map((s) => [_stnNorm(s.name), s]));
+function findStation(name) {
+  if (!name) return undefined;
+  const n = _stnNorm(name);
+  if (_stnByNorm.has(n)) return _stnByNorm.get(n);
+  const w = n.split(" ");
+  if (w.length > 1 && _stnByNorm.has(w.slice(1).join(" "))) return _stnByNorm.get(w.slice(1).join(" ")); // drop leading city
+  for (const [k, v] of _stnByNorm) { if (k.startsWith(n + " ") || n.startsWith(k + " ") || k.endsWith(" " + n) || n.endsWith(" " + k)) return v; }
+  return undefined;
+}
+
 /* Split a journey into town legs and highway legs and cost each properly. */
 function estimate(names, legs, horse) {
   const e = effFor(horse);
@@ -139,7 +158,7 @@ function tableDist(pts) {
 }
 
 async function roadDistance(names, key) {
-  const pts = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
+  const pts = names.map((n) => findStation(n)).filter(Boolean);
   if (pts.length < 2) return null;
   const [g, o] = await Promise.all([googleDist(pts), osmDist(pts)]);
   const iv = internalKm(names);
@@ -172,7 +191,7 @@ function useRoute(names, key) {
 
 /* Google embed needs no key for the classic output=embed form */
 const embedUrl = (names) => {
-  const pts = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
+  const pts = names.map((n) => findStation(n)).filter(Boolean);
   if (pts.length < 2) return null;
   const ll = (p) => `${p.lat},${p.lon}`;
   const mid = pts.slice(1, -1).map((p) => "+to:" + ll(p)).join("");
@@ -181,7 +200,7 @@ const embedUrl = (names) => {
 
 
 const gmapsUrl = (names) => {
-  const pts = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
+  const pts = names.map((n) => findStation(n)).filter(Boolean);
   if (pts.length < 2) return null;
   const ll = (p) => `${p.lat},${p.lon}`;
   const mid = pts.slice(1, -1).map(ll).join("|");
@@ -190,7 +209,7 @@ const gmapsUrl = (names) => {
 };
 
 function RouteMap({ names, route, height = 300 }) {
-  const pts = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
+  const pts = names.map((n) => findStation(n)).filter(Boolean);
   if (pts.length < 2) return null;
   const link = gmapsUrl(names);
   return (
@@ -262,7 +281,7 @@ const hav = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(s));
 };
 const routeKm = (names) => {
-  const p = names.map((n) => STATIONS.find((s) => s.name === n)).filter(Boolean);
+  const p = names.map((n) => findStation(n)).filter(Boolean);
   let d = 0; for (let i = 1; i < p.length; i++) d += hav(p[i - 1], p[i]);
   return Math.round(d * ROAD_FACTOR);
 };
@@ -759,12 +778,22 @@ function UpdateGate() {
           <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
             A newer version of DA OPS is out. {help}
           </div>
-          <a href={link} target="_blank" rel="noreferrer"
-            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, textDecoration: "none",
+          <button type="button"
+            onClick={() => {
+              // Android: navigate the MAIN WebView to the APK — it's served as an
+              // attachment, so the native DownloadListener (MainActivity) hands it to
+              // Android's DownloadManager and the user installs from the notification.
+              // A WebView can't download via a plain <a>/new tab, which is why the old
+              // button did nothing. iOS/web: just open the link.
+              if (isIOS) window.open(link, "_blank", "noreferrer");
+              else window.location.href = link;
+            }}
+            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, border: "none", cursor: "pointer",
               fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em",
               background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>
             {cta}
-          </a>
+          </button>
+          <div style={{ fontSize: 11, color: C.steel, marginTop: 12 }}>Not downloading? Open <b>fuel.dasuperapp.com/download/latest.apk</b> in Chrome.</div>
         </div>
         <div style={{ fontSize: 11, color: "#5E6F94", marginTop: 20 }}>This device: DA OPS v{APP_VERSION} (build {APP_BUILD})</div>
       </div>
@@ -1502,7 +1531,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
 
   const check = (here, acc, stn) => {
     const target = stn || fuelStn;
-    const want = STATIONS.find((x) => x.name === target);
+    const want = findStation(target);
     const m = Math.round(hav(here, want) * 1000);
     // capture the GPS and allow, flagging when it's beyond the tight radius
     if (m <= SURVEY_TOLERANCE_M) {

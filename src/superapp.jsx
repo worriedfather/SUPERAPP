@@ -1563,19 +1563,20 @@ function trucksDrill(trucks) {
     return (
       <div style={{ overflowX: "auto" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trailer</Th><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
           <tbody>
             {rows.map((t) => (
               <tr key={t.tripNo} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.truck}</Td>
+                <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{t.trailer || "—"}</Td>
+                <Td style={{ color: "var(--steel)" }}>{t.truck}</Td>
                 <Td style={{ color: "var(--steel)" }}>{t.tripNo}</Td>
                 <Td>{t.product}</Td>
                 <Td right style={{ fontWeight: 700 }}>{L(t.litres)}</Td>
-                <Td style={{ color: "var(--steel)" }}>{t.route}</Td>
+                <Td style={{ color: "var(--steel)" }}>{t.route || `${t.from} → ${(t.to || []).join(", ")}`}</Td>
               </tr>
             ))}
             <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
-              <Td style={{ fontWeight: 700 }} colSpan={3}>Total · {rows.length} trip{rows.length === 1 ? "" : "s"}</Td>
+              <Td style={{ fontWeight: 700 }} colSpan={4}>Total · {rows.length} trip{rows.length === 1 ? "" : "s"}</Td>
               <Td right style={{ fontWeight: 700 }}>{L(tot)}</Td><Td />
             </tr>
           </tbody>
@@ -2367,10 +2368,11 @@ export function ExecutiveDashboard() {
               {(d.supply.trucks || []).length === 0 ? <div style={{ color: "var(--steel)", fontSize: 13, padding: "0 14px 14px" }}>Nothing in transit.</div> : (
                 <div style={{ overflowX: "auto" }}>
                   <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trailer</Th><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
                     <tbody>{d.supply.trucks.map((t) => (
-                      <tr key={t.tripNo} onClick={() => setDrill({ title: `${t.tripNo} · ${t.truck}`, sub: `${L(t.litres)} L ${t.product} · ${t.route}`, render: trucksDrill([t]) })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
-                        <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.truck}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                      <tr key={t.tripNo} onClick={() => setDrill({ title: `${t.trailer || t.truck} · ${t.tripNo}`, sub: `${L(t.litres)} L ${t.product} · ${t.from} → ${(t.to || []).join(", ")}`, render: trucksDrill([t]) })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                        <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{t.trailer || "—"}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                        <Td style={{ color: "var(--steel)" }}>{t.truck}</Td>
                         <Td style={{ color: "var(--steel)" }}>{t.tripNo}</Td>
                         <Td>{t.product}</Td>
                         <Td right style={{ fontWeight: 700 }}>{L(t.litres)}</Td>
@@ -5483,7 +5485,7 @@ export function DeliveriesInProgress() {
               <div style={{ height: 6, borderRadius: 5, background: "var(--line)", overflow: "hidden", margin: "8px 0 6px" }}>
                 <div style={{ width: `${t.progress}%`, height: "100%", background: "#2B3990" }} />
               </div>
-              <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.remaining)} L still on truck · started {fmtD(t.tripDate)}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
+              <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.tripNo} · <b style={{ color: "var(--navy)" }}>Trailer {t.trailer || "—"}</b> · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.remaining)} L still on truck · started {fmtD(t.tripDate)}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
               <div style={{ marginTop: 8, borderTop: "1px solid var(--line)", paddingTop: 8 }}><TripTrack tripNo={t.tripNo} /></div>
             </div>
           ))}
@@ -5502,7 +5504,7 @@ export function DeliveriesInProgress() {
               </div>
               {dropChips(t)}
               {flowStrip(t)}
-              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 7 }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.qty)} L — driver hasn't collected from the depot yet</div>
+              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 7 }}>{t.tripNo} · <b style={{ color: "var(--navy)" }}>Trailer {t.trailer || "—"}</b> · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.qty)} L — driver hasn't collected from the depot yet</div>
             </div>
           ))}
         </div>

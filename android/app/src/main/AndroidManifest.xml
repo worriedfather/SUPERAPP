@@ -71,4 +71,6 @@
          apps, which this is not. Daily reminders use inexact alarms (fire within a
          short window), which is fine for a nudge. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Let the in-app "Update" button install the downloaded APK (Android 8+). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>
