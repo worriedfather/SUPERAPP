@@ -35,11 +35,15 @@ export async function startTracking(tripNo) {
   try {
     await BackgroundGeolocation.start(
       {
-        // FOREGROUND-ONLY (no backgroundMessage → no persistent foreground service),
-        // so Android can fully sleep the app when it's not open. This keeps the phone
-        // running smoothly / stops the crash-and-drain from a long-lived location
-        // service. The route still records while the driver has the app open; any
-        // gap (app closed) is logged as a tracking gap — still useful evidence.
+        // BACKGROUND foreground-service: backgroundMessage/Title make @capgo run a
+        // persistent "trip in progress" notification + location service, so the route
+        // keeps recording while the driver DRIVES with the phone in a pocket / the app
+        // backgrounded — the whole point of trip GPS. (Foreground-only recorded almost
+        // nothing: drivers don't hold the app open while driving.) The earlier crash
+        // was R8/minify stripping the plugin's metadata; minify is now disabled
+        // (android/app/build.gradle), so the long-lived service is safe to re-enable.
+        backgroundMessage: "Recording this delivery's route",
+        backgroundTitle: "DA OPS — trip in progress",
         requestPermissions: true,
         distanceFilter: 50,        // a breadcrumb roughly every 50 m of movement…
         minIntervalMs: 30000,      // …and at most one every 30 s (lighter on battery)

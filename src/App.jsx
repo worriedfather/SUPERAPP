@@ -7,8 +7,8 @@ import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
-import { syncReminders, checkAlerts, initLocalNotificationTaps } from "./notify.js";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
+import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
 import { internalKm } from "./mileage.js";
@@ -419,6 +419,14 @@ const NAV_PATHS = {
   cashoffice: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="12" cy="12" r="3.6" /><path d="M12 8.4v1.2M12 14.4v1.2" /></>,
   approvals: <><circle cx="12" cy="12" r="9" /><path d="M12 7.5v4.7l3 1.8" /></>,
   outflows: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M12 8.5v5M9.6 11.4l2.4 2.4 2.4-2.4" /></>,
+  inflows: <><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M12 13.5v-5M9.6 10.6l2.4-2.4 2.4 2.4" /></>,
+  devices: <><rect x="7" y="2" width="10" height="20" rx="2.4" /><path d="M10.5 18.5h3" /></>,
+  digest: <><rect x="4" y="3" width="16" height="18" rx="1.6" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+  incoming: <><path d="M3 15v4a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-4" /><path d="M12 3v9M8.5 8.5l3.5 3.5 3.5-3.5" /></>,
+  league: <><path d="M6 4h12v3a6 6 0 0 1-12 0z" /><path d="M6 5H3v1.5a3 3 0 0 0 3 3M18 5h3v1.5a3 3 0 0 1-3 3" /><path d="M12 13v4M9 21h6M10 17h4" /></>,
+  staff: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0" /><circle cx="17.6" cy="9" r="2.2" /><path d="M16.6 15.3a4.7 4.7 0 0 1 4 4.7" /></>,
+  tracking: <><path d="M9 20l-5 2V6l5-2 6 2 5-2v12l-5 2z" /><path d="M9 4v16M15 6v14" /></>,
+  unlocks: <><rect x="5" y="11" width="14" height="9" rx="1.6" /><path d="M8 11V7a4 4 0 0 1 7.9-.9" /><circle cx="12" cy="15.4" r="1.3" /></>,
 };
 const NavIcon = ({ k, on }) => (
   <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={on ? 2.4 : 2} strokeLinecap="round" strokeLinejoin="round">
@@ -531,7 +539,7 @@ const ROLE_TABS = {
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
   fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
@@ -553,26 +561,26 @@ const ROLE_TABS = {
               ["inventory", "Inventory"], ["logistics", "Deliveries"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  manager: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  manager_cashier: [["hub", "Home"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
   supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
-  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"]],
+  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
   // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
-  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["staff", "Staff assignment"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
   admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"],
           ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
-          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
 };
 
 /* Module cards on the Home hub, grouped. Keyed by tab key. */
@@ -588,7 +596,7 @@ const MODULE_META = {
   birdseye:  { label: "Birds-eye", group: "Executive", desc: "Site analytics — scorecard, day-end, trends, deliveries" },
   dhome:     { label: "My balance", group: "Fuel", desc: "Card & requests" },
   dcard:     { label: "My card", group: "Fuel", desc: "Balance & history" },
-  fleet:     { label: "Efficiency", group: "Executive", desc: "km/L analytics" },
+  fleet:     { label: "Efficiency", group: "Logistics", desc: "km/L analytics" },
   intel:     { label: "Intelligence", group: "Executive", desc: "Ask the data" },
   driver:    { label: "Raise request", group: "Fuel", desc: "New fuel request" },
   drequest:  { label: "Raise request", group: "Fuel", desc: "New fuel request" },
@@ -608,6 +616,7 @@ const MODULE_META = {
   league: { label: "Driver league", group: "Logistics", desc: "Driver performance, ranked" },
   staff:  { label: "Staff assignment", group: "Logistics", desc: "Supervisors → sites · drivers → trucks" },
   unlocks:{ label: "Unlock requests", group: "Retail sites", desc: "Sites asking to correct a locked submission" },
+  devices:{ label: "Device requests", group: "Logistics", desc: "Approve a driver signing in on a new phone" },
   tracking:{ label: "Journey tracking", group: "Logistics", desc: "Live GPS trail per trip" },
   inventory: { label: "Inventory", group: "Logistics", desc: "Warehouse · trucks · sites" },
   yardwork:  { label: "Yard workshop", group: "Yard", desc: "Log repairs & updates" },
@@ -990,8 +999,12 @@ function App() {
     let alive = true;
     const tick = () => checkAlerts().then((a) => { if (alive && a) setAlerts(a); }).catch(() => {});
     tick();
+    // Clear any notifications sitting in the tray when the app opens/resumes — the
+    // in-app inbox carries the actual tasks, so stale tray notifications (old build,
+    // already-actioned, or tab-less) don't linger and dead-end when tapped.
+    clearDeliveredNotifications();
     const iv = setInterval(tick, 3 * 60 * 1000);
-    const onVis = () => { if (document.visibilityState === "visible") tick(); };
+    const onVis = () => { if (document.visibilityState === "visible") { tick(); clearDeliveredNotifications(); } };
     document.addEventListener("visibilitychange", onVis);
     return () => { alive = false; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
   }, [me, state]);
@@ -1013,6 +1026,9 @@ function App() {
   useEffect(() => { if (tab && tab !== "feedback") prevTabRef.current = tab; }, [tab]);
 
   if (mustUpdate) return <UpdateGate />;
+  // Driver features are mobile-only — the whole control (geo-lock, GPS evidence,
+  // the camera) needs the handset. A driver on a laptop/browser is blocked.
+  if (me && me.kind === "driver" && !isNative()) return <DriverMobileOnlyGate onSignOut={() => { signOut(); setMe(null); }} />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
 
@@ -1106,6 +1122,7 @@ function App() {
         {tab === "cash" && <CashView />}
         {tab === "staff" && <StaffAssignment />}
         {tab === "unlocks" && <UnlockRequests />}
+        {tab === "devices" && <DeviceRequests />}
         {tab === "tracking" && <JourneyTracking />}
         {tab === "deposit" && <SiteDeposit me={me} />}
         {tab === "cashoffice" && <CashOffice />}
@@ -2702,6 +2719,32 @@ export default App;
 /* Full-screen block for drivers while the phone's GPS is off. Styled like the
    update gate. It clears ITSELF — the app polls and unblocks the moment
    location services come back on. */
+// A driver signed in on a laptop/browser — driver features need the handset.
+function DriverMobileOnlyGate({ onSignOut }) {
+  const C = { navy: "#14213D", ink: "#1B2A4A", blue: "#2B3990", lime: "#6BC048", steel: "#5B6B84" };
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(165deg,#1F2E52 0%,#0F1A31 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "24px 20px", fontFamily: "'Barlow',system-ui,sans-serif", color: "#EAF0FA" }}>
+      <div style={{ width: "100%", maxWidth: 384, textAlign: "center" }}>
+        <img src="/da-wordmark.png" alt="Daniel Aguiar Motors" style={{ width: "min(248px,74%)", height: "auto", filter: "drop-shadow(0 10px 24px rgba(0,0,0,.4))" }} />
+        <div style={{ background: "#fff", color: C.ink, borderRadius: 18, padding: 24, boxShadow: "0 24px 60px rgba(0,0,0,.40)", textAlign: "center", marginTop: 24 }}>
+          <div style={{ width: 58, height: 58, borderRadius: 16, background: "#EAF0FA", display: "grid", placeItems: "center", margin: "0 auto 14px" }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.blue} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>
+          </div>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Use the mobile app</div>
+          <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
+            Driver features — fuel requests, collection, the geo-lock and trip GPS — only work on the DA OPS phone app. Sign in on your Android phone to continue.
+          </div>
+          <a href={APK_URL} style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, cursor: "pointer",
+            fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em", textDecoration: "none",
+            background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>Download the Android app</a>
+          <button type="button" onClick={onSignOut} style={{ marginTop: 12, width: "100%", padding: 12, fontSize: 13, fontWeight: 700, borderRadius: 12, border: "1px solid #D5DCEA", background: "#fff", color: C.steel, cursor: "pointer" }}>Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GpsGate() {
   const C = { navy: "#14213D", ink: "#1B2A4A", blue: "#2B3990", lime: "#6BC048", steel: "#5B6B84", red: "#B23B3B" };
   return (

@@ -40,7 +40,9 @@ export async function initPush(onOpenTab) {
       // Forward the WHOLE payload, not just the tab — data.ref/trip/dn identify the
       // specific request / trip / delivery note so the tap lands on THAT item, not a
       // generic list. (See App.jsx: it focuses the item from these fields.)
-      if (data.tab && typeof onOpenTab === "function") onOpenTab(data.tab, data);
+      // ALWAYS navigate — a tab-less / stale push still opens the app to a real
+      // screen (goFocus falls back to home) instead of dead-ending on tap.
+      if (typeof onOpenTab === "function") onOpenTab(data.tab || null, data);
     });
     // FOREGROUND pushes: Android does NOT display an FCM notification while the app
     // is open — mirror it as an immediate local notification so nothing is missed.
@@ -63,7 +65,7 @@ export async function initPush(onOpenTab) {
       const { LocalNotifications } = await import("@capacitor/local-notifications");
       LocalNotifications.addListener("localNotificationActionPerformed", (a) => {
         const data = a?.notification?.extra || {};
-        if (data.tab && typeof onOpenTab === "function") onOpenTab(data.tab, data);
+        if (typeof onOpenTab === "function") onOpenTab(data.tab || null, data);
       });
     } catch { /* plugin unavailable → mirrored taps just open the app */ }
 

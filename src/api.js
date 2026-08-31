@@ -211,10 +211,24 @@ async function offlineLogin(login, pin) {
   } catch { return null; }
 }
 
+// Stable per-handset id (native app only) — used to bind a driver account to one
+// phone. Generated once and kept in localStorage; only sent from the native app.
+const nativeApp = () => { try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch { return false; } };
+function deviceId() {
+  if (!nativeApp()) return undefined;               // web never binds — driver features are native-only
+  try {
+    let id = localStorage.getItem("da_device_id");
+    if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, "0")).join("")); localStorage.setItem("da_device_id", id); }
+    return id;
+  } catch { return undefined; }
+}
+function deviceLabel() { try { const m = /Android[^;)]*|iPhone|iPad/.exec(navigator.userAgent || ""); return (m ? m[0] : "phone").slice(0, 40); } catch { return undefined; } }
+
 export async function signIn(loginId, pin, meta = {}) {
   // meta carries the web human-check (hp honeypot + ts form-render time); the app is exempt server-side
   try {
-    const r = await call("/api/login", { method: "POST", body: { login: loginId, pin, hp: meta.hp || "", ts: meta.ts || 0 } });
+    const r = await call("/api/login", { method: "POST", body: { login: loginId, pin, hp: meta.hp || "", ts: meta.ts || 0, deviceId: deviceId(), deviceLabel: deviceLabel() } });
+    if (r && r.deviceBlocked) { const err = new Error(r.message || "This phone isn't approved for this account."); err.deviceBlocked = true; err.ref = r.ref; throw err; }
     token = r.token;
     me = r.actor;
     localStorage.setItem("da_token", token);
@@ -297,6 +311,8 @@ export const closeTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo
 export const getTrips = () => call("/api/trips");
 export const getMyTrips = () => call("/api/trips/mine");
 export const getDeliveriesInProgress = () => call("/api/deliveries/in-progress");
+export const getDeviceRequests = () => call("/api/device-requests");
+export const decideDeviceRequest = (seq, approve) => call(`/api/device-request/${encodeURIComponent(seq)}/decision`, { method: "POST", body: { approve } });
 export const getDeliveriesDue = () => call("/api/deliveries/due");
 export const collectTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/collect`, { method: "POST" });
 export const postTripLeg = (tripNo, site, event) => call(`/api/trip/${encodeURIComponent(tripNo)}/leg`, { method: "POST", body: { site, event } });
@@ -342,6 +358,8 @@ export const getExpectedCash = ({ site, date, shift } = {}) => {
 };
 // Banking reconciliation & day-close (module A)
 export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
+// Pending deposit obligations — declared to bank (in the cash submission) but no slip in yet.
+export const getPendingDeposits = (site) => call(`/api/cash/deposit/pending${site ? `?site=${encodeURIComponent(site)}` : ""}`);
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashShortfall = () => call('/api/cash/shortfall');
 export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/cash/inflows?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);

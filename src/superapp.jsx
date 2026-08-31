@@ -6,9 +6,9 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
-  requestUnlock, getUnlockRequests, decideUnlock,
+  requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
@@ -140,6 +140,57 @@ const Segmented = ({ options, value, onChange }) => {
     </div>
   );
 };
+// Line-icon set for the Bird's-eye rail — keyed by section tab. 24×24, stroke,
+// inherits colour so the active item can flip to white on navy.
+const SECTION_ICON = {
+  overview: <><rect x="3" y="3" width="7" height="8" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="11" width="7" height="10" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></>,
+  sales: <><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2.5" /><path d="M6 9v6M18 9v6" /></>,
+  margins: <><path d="M19 5L5 19" /><circle cx="6.5" cy="6.5" r="2" /><circle cx="17.5" cy="17.5" r="2" /></>,
+  prices: <><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z" /><circle cx="7" cy="7" r="1.2" /></>,
+  collections: <><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M4 20h16" /></>,
+  outflows: <><path d="M12 21V10" /><path d="M8 13l4-4 4 4" /><path d="M4 4h16" /></>,
+  supply: <><path d="M21 8l-9-5-9 5 9 5 9-5z" /><path d="M3 8v8l9 5 9-5V8" /><path d="M12 13v8" /></>,
+  transit: <><rect x="1" y="6" width="13" height="10" rx="1" /><path d="M14 9h4l3 3v4h-7z" /><circle cx="5.5" cy="18" r="1.6" /><circle cx="18" cy="18" r="1.6" /></>,
+  losses: <><path d="M12 3l9 16H3z" /><path d="M12 10v4" /><path d="M12 17h.01" /></>,
+  nightshift: <><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></>,
+  dayshift: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19" /></>,
+  midday: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  fleet: <><path d="M4 14a8 8 0 1 1 16 0" /><path d="M12 14l4-3" /><circle cx="12" cy="14" r="1" /></>,
+  workshop: <><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.8-.8-.8-2.8 2.4-2.4z" /></>,
+};
+const SecIcon = ({ name, size = 21 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{SECTION_ICON[name] || SECTION_ICON.overview}</svg>
+);
+
+// Bird's-eye section selector as a compact ICON RAIL: a slim scrolling strip of
+// icons with tiny labels; the active section lights up (white on navy) and names
+// itself. Replaces the crowded 14-wide text ribbon. `sections` = [[tabKey, short]].
+function SectionNav({ tab, setTab, sections }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current && ref.current.querySelector('[data-on="1"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  }, [tab]);
+  return (
+    <div style={{ position: "relative", marginBottom: 12 }}>
+      <div ref={ref} className="noscrollbar" style={{ display: "flex", gap: 2, overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "2px 2px" }}>
+        {sections.map(([k, label]) => {
+          const on = tab === k;
+          return (
+            <button key={k} data-on={on ? "1" : "0"} type="button" onClick={() => setTab(k)} aria-label={label} aria-current={on ? "page" : undefined}
+              style={{ flex: "0 0 auto", width: 60, textAlign: "center", background: "transparent", border: "none", cursor: "pointer", padding: "2px 0" }}>
+              <span style={{ display: "grid", placeItems: "center", width: 42, height: 42, margin: "0 auto 3px", borderRadius: 13, background: on ? "var(--blue)" : "var(--surface-2,#fff)", border: on ? "1px solid var(--blue)" : "1px solid var(--line)", color: on ? "#fff" : "var(--steel)", transition: "background .15s, color .15s" }}>
+                <SecIcon name={k} />
+              </span>
+              <span style={{ display: "block", fontSize: 10, fontWeight: on ? 700 : 500, color: on ? "var(--navy)" : "var(--steel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.2 }}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div aria-hidden style={{ position: "absolute", top: 0, bottom: 18, right: 0, width: 26, background: "linear-gradient(90deg, rgba(255,255,255,0), var(--surface,#F6F7F5) 82%)", pointerEvents: "none" }} />
+    </div>
+  );
+}
 const Wrap = ({ children }) => <div className="wrap">{children}</div>;
 // Button-style period/range selector (used everywhere instead of a dropdown).
 const RANGE_OPTS = [[1, "Today"], [7, "7 days"], [14, "14 days"], [30, "30 days"], [90, "90 days"], [365, "1 year"]];
@@ -842,6 +893,18 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
 // FULL figure with thousands separators everywhere. Kept the name so every caller
 // (Heroes, Stats, drills) shows the real number; Hero font shrinks to fit.
 const compact = (n) => acct(n);
+// Format a server comparative {prev, pct} into a KpiCard cmp prop (money-abbreviated).
+const kpiCmp = (o) => (o && o.pct != null ? { prev: "$" + (Math.abs(o.prev) >= 1e6 ? (o.prev / 1e6).toFixed(1) + "M" : Math.abs(o.prev) >= 1e3 ? (o.prev / 1e3).toFixed(0) + "k" : String(Math.round(o.prev))), pct: o.pct } : undefined);
+// Abbreviated figure (12.6M, 493k, 8.2B) — for SECONDARY context like a hero's
+// comparative or breakdown, where the precise headline number already sits above.
+const abbr = (n) => {
+  const v = Number(n) || 0, x = Math.abs(Math.round(v));
+  const s = x >= 1e9 ? (x / 1e9).toFixed(x >= 1e10 ? 0 : 1) + "B"
+    : x >= 1e6 ? (x / 1e6).toFixed(x >= 1e7 ? 0 : 1) + "M"
+    : x >= 1e3 ? (x / 1e3).toFixed(x >= 1e4 ? 0 : 1) + "k"
+    : String(x);
+  return (v < 0 ? "-" : "") + s;
+};
 // Full figure with thousands separators. Accounting style (0 dp, negatives in
 // parentheses) — same `acct` used everywhere so the whole app is consistent.
 const full = (n) => acct(n);
@@ -873,7 +936,7 @@ const Delta = ({ v }) => {
     </span>
   );
 };
-const Hero = ({ label, value, unit, sub, accent = "var(--lime)", delta, onClick }) => (
+const Hero = ({ label, value, unit, sub, accent = "var(--lime)", delta, cmp, onClick }) => (
   <div onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
     onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
     style={{ background: "linear-gradient(150deg,#22345C,#14213D)", borderRadius: 18, padding: "16px 18px", color: "#EAF0FA", boxShadow: "0 10px 26px rgba(20,33,61,.22)", cursor: onClick ? "pointer" : "default", position: "relative" }}>
@@ -882,9 +945,16 @@ const Hero = ({ label, value, unit, sub, accent = "var(--lime)", delta, onClick 
     <div className="mono" style={{ fontSize: "clamp(15px,4.4vw,22px)", lineHeight: 1.08, fontWeight: 500, color: accent, marginTop: 6, letterSpacing: "-.02em", whiteSpace: "nowrap" }}>
       {value}{unit && <span style={{ fontSize: 13, marginLeft: 4, color: "#8FA0C4" }}>{unit}</span>}
     </div>
+    {/* comparative: prior-period value + % movement — a figure is never shown bare */}
+    {cmp && cmp.pct != null && (
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, flexWrap: "wrap" }}>
+        <Delta v={cmp.pct} />
+        <span className="mono" style={{ fontSize: 11, color: "#9FB0D0" }}>vs {cmp.prev}{cmp.label ? ` · ${cmp.label}` : ""}</span>
+      </div>
+    )}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
       {sub && <div className="mono" style={{ fontSize: 11, color: "#9FB0D0", marginTop: 5 }}>{sub}</div>}
-      <Delta v={delta} />
+      {!cmp && <Delta v={delta} />}
     </div>
   </div>
 );
@@ -1188,13 +1258,13 @@ export const fmtD = (v) => {
   return isNaN(d) ? s : `${d.getDate()} ${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}`;
 };
 // ranked table (top / bottom sites): Site | Litres | Revenue
-const RankTable = ({ rows, tone }) => (
+const RankTable = ({ rows, tone, onRow }) => (
   <div style={{ overflowX: "auto" }}>
     <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Litres</Th><Th right>Revenue</Th></tr></thead>
       <tbody>{(rows || []).map((s) => (
-        <tr key={s.site} style={{ borderTop: "1px solid var(--line)" }}>
-          <Td>{s.site}</Td>
+        <tr key={s.site} onClick={onRow ? () => onRow(s) : undefined} style={{ borderTop: "1px solid var(--line)", cursor: onRow ? "pointer" : undefined }}>
+          <Td>{s.site}{onRow ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</Td>
           <Td right style={{ fontWeight: 700, color: tone || "var(--navy)" }}>{L(s.litres)}</Td>
           <Td right style={{ color: "var(--steel)" }}>{s.cash != null ? "$" + compact(s.cash) : "—"}</Td>
         </tr>
@@ -1331,6 +1401,54 @@ function siteSalesDrill(sites, cols, sortKey) {
 }
 const money0 = (v) => "$" + L(Math.round(v || 0));
 
+// Generic drill body: a list of rows → a leading label column + N value columns,
+// sorted by sortKey (desc), closed with a reconciling Totals row. This is the
+// workhorse behind most exec drill-downs — each drill decomposes EXACTLY the tapped
+// figure (its value columns sum to that figure; the "Total (N)" count reconciles a
+// count pill). `label` = ["Header", keyOrFn]; each col = [Header, key, fmt?].
+function breakdownDrill(rows, label, cols, sortKey, opts = {}) {
+  return () => {
+    let list = [...(rows || [])];
+    if (opts.filter) list = list.filter(opts.filter);
+    if (sortKey) list.sort((a, b) => (Number(b[sortKey]) || 0) - (Number(a[sortKey]) || 0));
+    if (!list.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>{opts.empty || "Nothing to show."}</div>;
+    const [lh, lk] = label;
+    const lval = (r) => (typeof lk === "function" ? lk(r) : r[lk]);
+    const totals = {}; for (const [, k] of cols) totals[k] = list.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>{lh}</Th>{cols.map(([lab]) => <Th key={lab} right>{lab}</Th>)}</tr></thead>
+          <tbody>
+            {list.map((r, i) => (
+              <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{lval(r)}</Td>
+                {cols.map(([lab, k, fmt]) => <Td key={lab} right style={fmt && fmt._style ? fmt._style(r[k], r) : undefined}>{fmt ? fmt(r[k], r) : L(r[k] || 0)}</Td>)}
+              </tr>
+            ))}
+            {!opts.noTotal && (
+              <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
+                <Td style={{ fontWeight: 700 }}>{opts.totalLabel || `Total (${list.length})`}</Td>
+                {cols.map(([lab, k, fmt]) => <Td key={lab} right style={{ fontWeight: 700 }}>{opts.sumCols === false ? "" : (fmt ? fmt(totals[k]) : L(totals[k]))}</Td>)}
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {opts.note && <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>{opts.note}</div>}
+      </div>
+    );
+  };
+}
+const $full = (v) => "$" + full(v);   // money formatter for drill columns
+
+// A single site's sales volume, split by product — the drill behind a rank-table
+// row. Blend + Diesel + ULP reconcile to the row's total litres.
+function siteVolumeDrill(sites, row) {
+  const r = (sites || []).find((x) => x.site === row.site) || {};
+  const parts = [{ p: "Blend", litres: r.blend || 0 }, { p: "Diesel", litres: r.diesel || 0 }, { p: "ULP", litres: r.ulp || 0 }].filter((x) => x.litres > 0);
+  return { title: row.site, sub: `${L(row.litres || 0)} L${row.cash != null ? ` · $${compact(row.cash)} revenue` : ""}`, render: breakdownDrill(parts, ["Product", "p"], [["Litres", "litres", (v) => L(v) + " L"]], "litres") };
+}
+
 // Deliveries + transit/discharge loss, split by product (Diesel / Blend / ULP).
 // Used both inline (supply tab panel) and inside a drill sheet. Loss over 0.3%
 // (the delivery bot's excessive-loss line) is flagged red.
@@ -1363,11 +1481,12 @@ function driverTruckTable(dr) {
   );
 }
 
-function deliveriesProductTable(rows) {
+function deliveriesProductTable(rows, onRow) {
   const list = rows || [];
   if (!list.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>No deliveries in this period.</div>;
   const tot = list.reduce((a, p) => ({ loaded: a.loaded + p.loaded, received: a.received + p.received, loss: a.loss + p.loss, loads: a.loads + (p.loads || 0) }), { loaded: 0, received: 0, loss: 0, loads: 0 });
   const totPct = tot.loaded > 0 ? +((tot.loss / tot.loaded) * 100).toFixed(2) : null;
+  const clickable = typeof onRow === "function";
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1376,8 +1495,8 @@ function deliveriesProductTable(rows) {
         </tr></thead>
         <tbody>
           {list.map((p) => (
-            <tr key={p.product} style={{ borderTop: "1px solid var(--line)" }}>
-              <Td>{p.product}</Td>
+            <tr key={p.product} onClick={clickable && (p.sites || []).length ? () => onRow(p) : undefined} style={{ borderTop: "1px solid var(--line)", cursor: clickable && (p.sites || []).length ? "pointer" : undefined }}>
+              <Td>{p.product}{clickable && (p.sites || []).length ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</Td>
               <Td right>{p.loads}</Td>
               <Td right>{L(p.loaded)}</Td>
               <Td right>{L(p.received)}</Td>
@@ -1431,6 +1550,119 @@ function warehouseStockDrill(warehouses) {
       </div>
     );
   };
+}
+
+// On-trucks (goods in transit): each trip that makes up the transit litres. Reconciles
+// to the "On trucks" stat — the Litres column sums to the transit total.
+function trucksDrill(trucks) {
+  return () => {
+    const rows = trucks || [];
+    if (!rows.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>Nothing in transit right now.</div>;
+    const tot = rows.reduce((s, t) => s + (t.litres || 0), 0);
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.tripNo} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.truck}</Td>
+                <Td style={{ color: "var(--steel)" }}>{t.tripNo}</Td>
+                <Td>{t.product}</Td>
+                <Td right style={{ fontWeight: 700 }}>{L(t.litres)}</Td>
+                <Td style={{ color: "var(--steel)" }}>{t.route}</Td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
+              <Td style={{ fontWeight: 700 }} colSpan={3}>Total · {rows.length} trip{rows.length === 1 ? "" : "s"}</Td>
+              <Td right style={{ fontWeight: 700 }}>{L(tot)}</Td><Td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+}
+
+// Total fuel — where every litre is. Reconciles to the "Total" stat: the three
+// component lines (sites + warehouses + trucks) sum to the total.
+function totalSupplyDrill(supply) {
+  return () => {
+    const s = supply || {};
+    const parts = [["At sites", s.sites || 0], ["In warehouses", s.warehouse || 0], ["On trucks (in transit)", s.transit || 0]];
+    const tot = s.total || parts.reduce((a, p) => a + p[1], 0);
+    return (
+      <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Where</Th><Th right>Litres</Th><Th right>Share</Th></tr></thead>
+        <tbody>
+          {parts.map(([label, val]) => (
+            <tr key={label} style={{ borderTop: "1px solid var(--line)" }}>
+              <Td>{label}</Td><Td right style={{ fontWeight: 700 }}>{L(val)}</Td>
+              <Td right style={{ color: "var(--steel)" }}>{tot > 0 ? Math.round((val / tot) * 100) + "%" : "—"}</Td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
+            <Td style={{ fontWeight: 700 }}>Total</Td><Td right style={{ fontWeight: 700 }}>{L(tot)}</Td><Td right style={{ fontWeight: 700 }}>100%</Td>
+          </tr>
+        </tbody>
+      </table>
+    );
+  };
+}
+
+// A product's delivered-vs-received loss, decomposed by site. Reconciles to the
+// product row: Loaded/Received/Loss sum to the row, and the loads count matches.
+function productLossBySiteDrill(p) {
+  return () => {
+    const rows = p.sites || [];
+    if (!rows.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>No per-site breakdown available.</div>;
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Loads</Th><Th right>Loaded</Th><Th right>Received</Th><Th right>Loss</Th><Th right>%</Th></tr></thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.site} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{s.site}</Td>
+                <Td right>{s.loads}</Td>
+                <Td right>{L(s.loaded)}</Td>
+                <Td right>{L(s.received)}</Td>
+                <Td right style={{ fontWeight: 700, color: s.lossPct != null && s.lossPct > 0.3 ? "var(--red)" : "var(--ink)" }}>{L(s.loss)}</Td>
+                <Td right style={{ color: s.lossPct != null && s.lossPct > 0.3 ? "var(--red)" : "var(--steel)" }}>{s.lossPct != null ? s.lossPct + "%" : "—"}</Td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
+              <Td style={{ fontWeight: 700 }}>Total</Td>
+              <Td right style={{ fontWeight: 700 }}>{p.loads}</Td>
+              <Td right style={{ fontWeight: 700 }}>{L(p.loaded)}</Td>
+              <Td right style={{ fontWeight: 700 }}>{L(p.received)}</Td>
+              <Td right style={{ fontWeight: 700 }}>{L(p.loss)}</Td>
+              <Td right style={{ fontWeight: 700 }}>{p.lossPct != null ? p.lossPct + "%" : "—"}</Td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+}
+
+// One at-risk site+product: the cover maths behind the stock-out flag.
+function stockoutSiteDrill(s) {
+  return () => (
+    <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <tbody>
+        {[["Product", s.product], ["Stock now", L(s.stock) + " L"], ["Days' cover", s.daysCover + "d"],
+          ["Projected end of shift", s.projectedEndShift != null ? "~" + L(Math.max(0, s.projectedEndShift)) + " L" : "—"],
+          ["Suggested top-up", s.suggestLitres ? L(s.suggestLitres) + " L" : "—"],
+          ["Risk level", s.level === "risk" ? "At risk (⚠ under 1 day)" : "Watch (low cover)"]].map(([k, v]) => (
+          <tr key={k} style={{ borderTop: "1px solid var(--line)" }}>
+            <Td style={{ color: "var(--steel)" }}>{k}</Td>
+            <Td right style={{ fontWeight: 700, color: k === "Risk level" && s.level === "risk" ? "var(--red)" : "var(--navy)" }}>{v}</Td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
 
 /* THE standard period model, shared across the app. Maps a period + optional
@@ -1525,6 +1757,7 @@ export function Cockpit({ me, go, tabs = [] }) {
   const recurring = (ex?.workshop?.recurring || []).slice().sort((a, b) => num(b.cases) - num(a.cases));                              // most repeat visits first
   const inWorkshop = (ex?.workshop?.openCases || []).slice().sort((a, b) => num(b.days) - num(a.days));                               // longest in workshop first
   const wetCrit = (ws?.sites || []).filter((s) => s.status !== "ok").slice().sort((a, b) => num(b.totalLoss) - num(a.totalLoss));     // biggest total loss first
+  const overdueDep = (rt?.overdueDeposits || []).slice().sort((a, b) => num(b.pending) - num(a.pending));                            // declared to bank, slip not in past 3pm
 
   // generic drill table: cols = [[label, key|fn, fmt?]]; fmt = L | "%" | "$" | "d" | fn
   const val = (r, c) => (typeof c[1] === "function" ? c[1](r) : r[c[1]]);
@@ -1574,6 +1807,7 @@ export function Cockpit({ me, go, tabs = [] }) {
     { tab: "wetstock", title: "High-loss sites", tone: (ws?.critical || 0) ? "red" : wetCrit.length ? "amber" : "ok", rows: wetCrit, cols: [["Site", "site"], ["Delivery", "deliveryLoss", L], ["Site", "siteLoss", L], ["Total", "totalLoss", L], ["%", "lossPct", "%"]] },
     { tab: "retail", title: "Sites to dispatch", tone: risks.length ? "red" : dispatch.length ? "amber" : "ok", rows: dispatch, cols: [["Site", "site"], ["Product", "product"], ["Now", "stock", L], ["End of shift", "projectedEndShift", L], ["Cover", "daysCover", "d"]] },
     { tab: "retail", title: "Not reporting", tone: nonSub.some((c) => c.pct === 0) ? "red" : nonSub.length ? "amber" : "ok", rows: nonSub, cols: [["Site", "site"], ["Compliance", "pct", "%"], ["Sales", "salesDays"], ["Stock", "stockDays"]] },
+    { tab: "inflows", title: "Bank deposits overdue", tone: overdueDep.length ? "red" : "ok", rows: overdueDep, cols: [["Site", "site"], ["Cash from", "tradingDate"], ["To bank", (r) => "$" + Math.round(num(r.pending)).toLocaleString()], ["Due by", "dueDate"]] },
     { tab: "retail", title: "Price actions", tone: priceAct.length ? "amber" : "ok", rows: priceAct,
       cols: [["Site", "site"], ["Product", "product"], ["Lowest rival", (a) => a.type === "underpriced" ? "we're below mkt" : `${a.competitor || "?"} $${Number(a.ref || 0).toFixed(3)}`], ["Cut", "gap", "$"]],
       subFn: (a) => a.type === "underpriced"
@@ -1703,7 +1937,23 @@ export function ExecutiveDashboard() {
   // Cash inflows deliberately NOT here (owner, 2026-08-29): executives reach it
   // on the Retail board; the managers' Bird's-eye keeps its own copy. In its
   // place: Cash collections — expected vs received per site, from the day-end.
-  const SECTIONS = [["overview", "Overview"], ["supply", "Inventory"], ["sales", "Sales"], ["losses", "Losses"], ["collections", "Cash collections"], ["outflows", "Cash outflows"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"], ["fleet", "Fleet"], ["workshop", "Workshop"], ["prices", "Prices"]];
+  // Sections in the order a CEO/CFO reads the business: cockpit → P&L story
+  // (revenue → margin → pricing → cash in → cash out) → stock & supply → the daily
+  // shift feeds → fleet. Full labels drive the BackBar; the icon rail uses short ones.
+  const SECTIONS = [
+    ["overview", "Overview"],
+    ["sales", "Sales"], ["margins", "Margins"], ["prices", "Prices"], ["collections", "Cash inflows"], ["outflows", "Cash outflows"],
+    ["supply", "Inventory"], ["transit", "Goods in transit"], ["losses", "Losses"],
+    ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"],
+    ["fleet", "Fleet"], ["workshop", "Workshop"],
+  ];
+  const SECTION_RAIL = [
+    ["overview", "Overview"],
+    ["sales", "Sales"], ["margins", "Margins"], ["prices", "Prices"], ["collections", "Cash in"], ["outflows", "Cash out"],
+    ["supply", "Inventory"], ["transit", "Transit"], ["losses", "Losses"],
+    ["nightshift", "Night"], ["dayshift", "Day"], ["midday", "Midday"],
+    ["fleet", "Fleet"], ["workshop", "Workshop"],
+  ];
   // These tabs embed self-fetching views that own their OWN period — the top period
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).
@@ -1803,88 +2053,182 @@ export function ExecutiveDashboard() {
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && (
         <>
-          <div id="exec-top" style={{ scrollMarginTop: 8 }}><Segmented value={tab} onChange={setTab} options={SECTIONS} /></div>
+          <div id="exec-top" style={{ scrollMarginTop: 8 }}><SectionNav tab={tab} setTab={setTab} sections={SECTION_RAIL} /></div>
           <BackBar prev={prev} options={SECTIONS} onBack={back} />
 
           {/* ---------------- OVERVIEW — bird's-eye ---------------- */}
           {tab === "overview" && <>
             {period === "today" && d.asOf?.isPartial &&
               <Note tone="amber" title={`${d.asOf.shiftLabel}`}>Figures are for {fmtD(d.asOf.date)} so far. The remaining shift has not been submitted yet.{d.kpis?.deltas?.shiftAware ? " Comparisons are like-for-like — this day shift vs the previous day shift." : ""}</Note>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, marginBottom: 12 }}>
-              <Hero label="FUEL SOLD" value={compact(k.salesLitres)} unit="L" sub={`${compact(k.blendSales)}L blend · ${compact(k.dieselSales)}L diesel${k.ulpSales ? " · " + compact(k.ulpSales) + "L ULP" : ""}`} delta={k.deltas?.sales} onClick={() => goTo("sales")} />
-              <Hero label="REVENUE" value={"$" + compact(k.cash)} sub={k.revenueMix ? `fuel $${compact(k.revenueMix.pump.revenue)} + commission $${compact(k.revenueMix.coupon.commission)}` : null} accent="#6BC048" onClick={() => goTo("sales")} />
-              {k.margin && <Hero label="GROSS MARGIN" value={"$" + compact(k.margin.total)} accent="#C8A24B" onClick={() => goTo("sales")} />}
-              <Hero label="DELIVERED" value={compact(k.litresDelivered)} unit="L" sub={`${k.deliveries} loads${k.deliveryLoss ? " · " + compact(k.deliveryLoss) + "L loss" : ""}`} delta={k.deltas?.delivered}
-                onClick={() => setDrill({ title: "Delivered & loss — by product", sub: `${compact(k.litresDelivered)} L in ${k.deliveries} loads`, render: () => deliveriesProductTable(d.supply.deliveriesByProduct) })} />
-              <Hero label="SITE DAYS COVER" value={k.siteDaysCover ?? "—"} unit="days" sub={`${k.stockoutCount} at risk`} accent="#8FB8FF" onClick={() => goTo("supply", "sec-stockout")} />
-              {k.tenderMix && <Hero label="EXPECTED CASH" value={"$" + compact(k.tenderMix.cash)} sub="cash sales — to account for · detail on the Retail board" accent="#E0B44C" />}
-            </div>
-            {(k.deltas?.sales != null || k.deltas?.delivered != null) && (
-              <div style={{ fontSize: 11, color: "var(--steel)", margin: "-4px 2px 12px" }}>
-                ▲▼ badges compare with the {k.deltas?.shiftAware ? "previous day shift (like-for-like)" : `previous ${period === "today" || period === "yesterday" ? "day" : period}`}. Fuller comparison in the panel below.
-              </div>
-            )}
+            {/* ── THE MONEY LINE — volume → revenue → margin → cash · each with its prior-period comparative ── */}
+            {(() => { const hc = d.heroCmp || {}; const lbl = hc.priorLabel || "prior period";
+              const cmpL = (o, money) => (o && o.pct != null ? { prev: (money ? "$" : "") + abbr(o.prev) + (money ? "" : " L"), pct: o.pct, label: lbl } : undefined);
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(165px,1fr))", gap: 12, marginBottom: 14 }}>
+                  <Hero label="FUEL SOLD" value={compact(k.salesLitres)} unit="L" sub={`${abbr(k.blendSales)} blend · ${abbr(k.dieselSales)} diesel${k.ulpSales ? " · " + abbr(k.ulpSales) + " ULP" : ""}`} cmp={cmpL(hc.volume, false)} onClick={() => goTo("sales")} />
+                  <Hero label="REVENUE" value={"$" + compact(k.cash)} sub={k.revenueMix ? `pump $${abbr(k.revenueMix.pump.revenue)} + commission $${abbr(k.revenueMix.coupon.commission)}` : null} accent="#3C9A52" cmp={cmpL(hc.revenue, true)} onClick={() => goTo("sales")} />
+                  {k.margin && <Hero label="GROSS MARGIN" value={"$" + compact(k.margin.total)} sub={k.margin.cpl != null ? `${(k.margin.cpl * 100).toFixed(1)}c / litre blended` : "by product ›"} accent="#C8A24B" cmp={cmpL(hc.margin, true)} onClick={() => goTo("margins")} />}
+                  {k.tenderMix && <Hero label="EXPECTED CASH" value={"$" + compact(k.tenderMix.cash)} sub="to bank & account for" accent="#E0B44C" cmp={cmpL(hc.cash, true)} onClick={() => goTo("collections")} />}
+                </div>
+              ); })()}
             {/* how we compare — day-before, same day last month, MTD vs last month */}
             {d.overviewCompare && <ComparisonPanel cmp={d.overviewCompare} />}
-            {/* revenue by tender — cash, DA card, coupon commission (pure revenue) */}
-            {k.tenderMix && <TenderMixPanel label="Revenue by tender" parts={[["Cash", k.tenderMix.cash, "#2B3990"], ["DA card", k.tenderMix.daCard, "#6BC048"], ["Petrotrade commission", k.tenderMix.commission, "#8FB8FF"]]} />}
-            {/* sales channel — DA own-channel vs Petrotrade volume + growth */}
-            {k.channelSplit && <ChannelSplitPanel ch={k.channelSplit} />}
-            {/* full stock position, split by where it is */}
-            <Panel style={{ marginBottom: 12 }} onClick={() => goTo("supply")}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <div className="lbl" style={{ marginBottom: 0 }}>Fuel on hand — where it is</div>
-                <div style={{ textAlign: "right" }}>
-                  <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: "var(--navy)" }}>{compact(k.stockTotal)} L</div>
-                  {k.stockValue ? <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>≈ ${compact(k.stockValue)} working capital · FIFO</div> : null}
-                </div>
+            {/* ── CASH POSITION — collection status + where the cash sits (cash is the priority) ── */}
+            {(d.cash || k.tenderMix) && (<>
+              <div className="lbl" style={{ margin: "6px 2px 8px" }}>Cash position</div>
+              <Panel style={{ marginBottom: 14 }}>
+                {d.cash && d.cash.expected != null && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 10 }}>
+                    <KpiCard label="Expected cash" value={"$" + abbr(d.cash.expected)} sub="should be collected" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.expected)} onClick={() => goTo("collections")} />
+                    <KpiCard label="Accounted for" value={"$" + abbr(d.cash.accounted)} sub="banked · sent to HQ · POS" tone="good" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.accounted)} onClick={() => goTo("collections")} />
+                    <KpiCard label="Unaccounted for" value={"$" + abbr(d.cash.unaccounted)} sub="expected − accounted" tone={d.cash.unaccounted > 0 ? "bad" : "good"} cmp={kpiCmp(d.cash.cmp && d.cash.cmp.unaccounted)} onClick={() => goTo("collections")} />
+                  </div>
+                )}
+                {d.cash && (d.cash.onHandAtSites != null || d.cash.heldAtHq != null) && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 10 }}>
+                    <KpiCard label="Cash held at sites" value={d.cash.onHandAtSites != null ? "$" + abbr(d.cash.onHandAtSites) : "—"} sub="not yet sent to HQ" tone={d.cash.onHandAtSites > 0 ? "bad" : undefined} onClick={() => goTo("collections")} />
+                    <KpiCard label="Cash held at HQ" value={d.cash.heldAtHq != null ? "$" + abbr(d.cash.heldAtHq) : "—"}
+                      sub={d.cash.heldAtHqMove != null ? `${d.cash.heldAtHqMove >= 0 ? "▲" : "▼"} $${abbr(Math.abs(d.cash.heldAtHqMove))} on ${d.cash.heldAtHqDate ? fmtD(d.cash.heldAtHqDate) : "the day"}` : (d.cash.heldAtHqDate ? `cash office · ${fmtD(d.cash.heldAtHqDate)}` : "cash-office closing balance")}
+                      subColor={d.cash.heldAtHqMove != null ? (d.cash.heldAtHqMove >= 0 ? "var(--ok)" : "var(--red)") : undefined}
+                      onClick={() => goTo("outflows")} />
+                    <KpiCard label="Total cash held" value={d.cash.totalHeld != null ? "$" + abbr(d.cash.totalHeld) : "—"} sub="sites + HQ" tone={d.cash.totalHeld > 0 ? "bad" : undefined} />
+                  </div>
+                )}
+                {d.outflows && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 12 }}>
+                    <KpiCard label="Cash paid out" value={"$" + abbr(d.outflows.total)} sub={`${d.outflows.count} payment${d.outflows.count === 1 ? "" : "s"}`} cmp={kpiCmp(d.outflows.totalCmp)} onClick={() => goTo("outflows")} />
+                    {(d.outflows.byCategory || []).slice(0, 2).map((c) => (
+                      <KpiCard key={c.category} label={c.category} value={"$" + abbr(c.total)} sub={`${c.n} payment${c.n === 1 ? "" : "s"} · paid out`} cmp={kpiCmp(c.cmp)} onClick={() => goTo("outflows")} />
+                    ))}
+                  </div>
+                )}
+                {k.tenderMix && <TenderMixPanel label="Revenue by tender" parts={[["Cash", k.tenderMix.cash, "#2B3990"], ["DA card", k.tenderMix.daCard, "#6BC048"], ["Petrotrade commission", k.tenderMix.commission, "#8FB8FF"]]} />}
+                <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Full banking &amp; collections on <b onClick={() => goTo("collections")} style={{ cursor: "pointer", color: "var(--blue)" }}>Cash inflows ›</b> · payouts on <b onClick={() => goTo("outflows")} style={{ cursor: "pointer", color: "var(--blue)" }}>Cash outflows ›</b></div>
+              </Panel>
+            </>)}
+            {/* ── STOCK HOLDINGS — what's on hand, by product and by location ── */}
+            <div className="lbl" style={{ margin: "6px 2px 8px" }}>Stock holdings</div>
+            <Panel style={{ marginBottom: 14, cursor: "pointer" }} onClick={() => goTo("supply")}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(108px,1fr))", gap: 10, marginBottom: 12 }}>
+                <KpiCard label="Fuel on hand" value={abbr(k.stockTotal) + " L"} sub={k.stockValue ? "≈ $" + abbr(k.stockValue) + " capital" : "at FIFO cost"} />
+                <KpiCard label="Days cover" value={(k.siteDaysCover ?? "—") + "d"} sub={`${k.stockoutCount} site${k.stockoutCount === 1 ? "" : "s"} at risk`} tone={k.stockoutCount ? "bad" : undefined} />
+                <KpiCard label="In transit" value={abbr(k.stockTransit) + " L"} sub={`${(d.supply.trucks || []).length} truck${(d.supply.trucks || []).length === 1 ? "" : "s"} on the road`} />
               </div>
+              {(() => {
+                const wh = d.supply.warehouses || [], sl = d.supply.siteList || [];
+                const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
+                const blend = sum(sl, (s) => s.blend) + sum(wh, (w) => w.products && w.products.Blend);
+                const diesel = sum(sl, (s) => s.diesel) + sum(wh, (w) => w.products && w.products.Diesel);
+                const ulp = sum(sl, (s) => s.ulp) + sum(wh, (w) => w.products && w.products.ULP);
+                return (blend + diesel + ulp) > 0 ? (<>
+                  <div className="lbl" style={{ margin: "2px 0 6px", fontSize: 10.5 }}>By product</div>
+                  <StockBar parts={[["Diesel", diesel, "#2B3990"], ["Blend", blend, "#C07A00"], ["ULP", ulp, "#6BC048"]]} total={blend + diesel + ulp} />
+                </>) : null;
+              })()}
+              <div className="lbl" style={{ margin: "12px 0 6px", fontSize: 10.5 }}>By location</div>
               <StockBar parts={[["Sites", k.stockSites, "#2B3990"], ["Warehouses", k.stockWarehouse, "#6BC048"], ["In transit", k.stockTransit, "#C07A00"]]} total={k.stockTotal} />
-              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8, textAlign: "right" }}>See full inventory ›</div>
+              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8, textAlign: "right" }}>Full inventory ›</div>
             </Panel>
-            {/* per-unit economics: sell / cost / margin per litre, per product */}
-            {k.margin && <MarginPanel margin={k.margin} />}
-            {/* price overview — our price vs market average & minimum */}
-            {d.prices?.byProduct && (
-              <Panel style={{ marginBottom: 12, padding: 0, overflow: "hidden" }} onClick={() => goTo("prices")}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px 8px" }}>
-                  <div className="lbl" style={{ marginBottom: 0 }}>DA price vs market ›</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{d.prices.asOf ? `as of ${fmtD(d.prices.asOf)}` : ""}</div>
+            {/* ── PER-LITRE ECONOMICS — sell / cost / margin per litre (full cost buildup on Margins) ── */}
+            {k.margin?.byProduct && (k.margin.byProduct || []).some((p) => p.litres > 0) && (
+              <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden", cursor: "pointer" }} onClick={() => goTo("margins")}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 14px 8px" }}>
+                  <div className="lbl" style={{ marginBottom: 0 }}>Per-litre economics ›</div>
+                  {k.margin.cpl != null && <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{(k.margin.cpl * 100).toFixed(1)}c/L blended</div>}
                 </div>
-                <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                    <Th>Product</Th><Th right>DA</Th><Th right>Mkt avg</Th><Th right>Mkt min</Th></tr></thead>
-                  <tbody>{["Blend", "Diesel"].map((p) => {
-                    const x = d.prices.byProduct[p] || {};
-                    const dearAvg = x.vsAvg != null && x.vsAvg > 0;   // above market avg = dearer
-                    const dearMin = x.vsMin != null && x.vsMin > 0;
-                    return (
-                      <tr key={p} style={{ borderTop: "1px solid var(--line)" }}>
-                        <Td>{p}</Td>
-                        <Td right style={{ fontWeight: 700 }}>{x.da != null ? "$" + x.da.toFixed(3) : "—"}</Td>
-                        <Td right style={{ color: dearAvg ? "var(--red)" : "var(--ok)" }}>{x.mktAvg != null ? "$" + x.mktAvg.toFixed(3) : "—"}{x.vsAvg != null ? <span style={{ fontSize: 11, color: "var(--steel)" }}> {x.vsAvg > 0 ? "+" : ""}{x.vsAvg.toFixed(3)}</span> : null}</Td>
-                        <Td right style={{ color: dearMin ? "var(--amber)" : "var(--ok)" }}>{x.mktMin != null ? "$" + x.mktMin.toFixed(3) : "—"}</Td>
-                      </tr>
-                    );
-                  })}</tbody>
-                </table>
-                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Green = at/below market · red = above market average</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Product</Th><Th right>Sell / L</Th><Th right>Cost / L</Th><Th right>Margin / L</Th></tr></thead>
+                    <tbody>{(k.margin.byProduct || []).filter((p) => p.litres > 0).map((p) => {
+                      const neg = p.cpl != null && p.cpl < 0;
+                      return (
+                        <tr key={p.product} style={{ borderTop: "1px solid var(--line)" }}>
+                          <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{p.product}</Td>
+                          <Td right style={{ fontWeight: 700 }}>{p.price != null ? "$" + p.price.toFixed(3) : "—"}</Td>
+                          <Td right style={{ color: "var(--steel)" }}>{p.cost != null ? "$" + p.cost.toFixed(3) : "—"}</Td>
+                          <Td right style={{ fontWeight: 700, color: neg ? "var(--red)" : "#3E7D22" }}>{p.cpl != null ? (p.cpl * 100).toFixed(1) + "c" : "—"}</Td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--steel)", padding: "6px 14px 10px" }}>Sell = invoiced price · Cost = landed (incl. duties + distribution) · tap for the full cost buildup ›</div>
               </Panel>
             )}
-            {/* quick alerts */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="card" style={{ padding: 14, borderLeft: `4px solid ${k.stockoutCount ? "var(--red)" : "var(--ok)"}`, cursor: "pointer" }} onClick={() => goTo("supply", "sec-stockout")}>
-                <div className="mono" style={{ fontSize: 24, fontWeight: 600, color: k.stockoutCount ? "var(--red)" : "var(--ok)" }}>{k.stockoutCount}</div>
-                <div className="lbl" style={{ marginBottom: 0 }}>Sites at stock-out risk →</div>
-              </div>
-              <div className="card" style={{ padding: 14, borderLeft: `4px solid ${d.workshop?.counts?.workshop ? "var(--amber)" : "var(--ok)"}`, cursor: "pointer" }} onClick={() => goTo("workshop")}>
-                <div className="mono" style={{ fontSize: 24, fontWeight: 600, color: d.workshop?.counts?.workshop ? "var(--amber)" : "var(--ok)" }}>{d.workshop?.counts?.workshop ?? "—"}</div>
-                <div className="lbl" style={{ marginBottom: 0 }}>Trucks in workshop →</div>
-              </div>
+            {/* ── PRICING vs market — are we competitive, and where to act ── */}
+            {d.prices?.byProduct && (<>
+              <div className="lbl" style={{ margin: "6px 2px 8px" }}>Pricing vs market</div>
+              <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden", cursor: "pointer" }} onClick={() => goTo("prices")}>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Product</Th><Th right>DA price</Th><Th right>Mkt avg</Th><Th right>Mkt min</Th><Th right>vs avg</Th></tr></thead>
+                    <tbody>{["Blend", "Diesel"].map((p) => { const x = d.prices.byProduct[p] || {}; const dear = x.vsAvg != null && x.vsAvg > 0;
+                      return (
+                        <tr key={p} style={{ borderTop: "1px solid var(--line)" }}>
+                          <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{p}</Td>
+                          <Td right style={{ fontWeight: 700 }}>{x.da != null ? "$" + x.da.toFixed(3) : "—"}</Td>
+                          <Td right style={{ color: "var(--steel)" }}>{x.mktAvg != null ? "$" + x.mktAvg.toFixed(3) : "—"}</Td>
+                          <Td right style={{ color: "var(--steel)" }}>{x.mktMin != null ? "$" + x.mktMin.toFixed(3) : "—"}</Td>
+                          <Td right style={{ fontWeight: 700, color: x.vsAvg == null ? "var(--steel)" : dear ? "var(--red)" : "var(--ok)" }}>{x.vsAvg == null ? "—" : `${x.vsAvg > 0 ? "+" : ""}${(x.vsAvg * 100).toFixed(1)}c`}</Td>
+                        </tr>
+                      ); })}</tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--steel)", padding: "8px 14px 10px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                  <span>Green = at/below market · red = above avg{d.prices.asOf ? ` · ${fmtD(d.prices.asOf)}` : ""}</span>
+                  {(d.prices.actions || []).length > 0 && <span style={{ color: "#B4801F", fontWeight: 700 }}>{d.prices.actions.length} price actions ›</span>}
+                </div>
+              </Panel>
+            </>)}
+            {/* ── BUSINESS HEALTH — the levers behind the P&L, each → its screen ── */}
+            <div className="lbl" style={{ margin: "6px 2px 8px" }}>Business health</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 14 }}>
+              <Stat label="Delivered" value={compact(k.litresDelivered)} unit="L" sub={`${k.deliveries} loads`}
+                onClick={() => setDrill({ title: "Delivered & loss — by product", sub: `${compact(k.litresDelivered)} L in ${k.deliveries} loads`, render: () => deliveriesProductTable(d.supply.deliveriesByProduct) })} />
+              <Stat label="Total fuel loss" value={k.totalLossPct != null ? k.totalLossPct + "%" : (k.deliveryLossPct != null ? k.deliveryLossPct + "%" : "—")} sub={k.totalLoss != null ? `${compact(k.totalLoss)} L · $${compact(k.totalLossValue)}` : "wet-stock + delivery"} tone={(k.totalLossPct ?? k.deliveryLossPct) > 1 ? "amber" : "ok"} onClick={() => goTo("losses")} />
+              <Stat label="Stock cover" value={k.siteDaysCover ?? "—"} unit="days" sub={`${k.stockoutCount} at risk`} tone={k.stockoutCount ? "red" : "ok"} onClick={() => goTo("supply", "sec-stockout")} />
+              {k.kmpl != null && <Stat label="Fuel efficiency" value={k.kmpl} unit="km/L" sub={d.fleet?.median ? `fleet median ${d.fleet.median}` : "fleet avg"} tone={d.fleet?.laggards ? "amber" : "ok"} onClick={() => goTo("fleet")} />}
+              {d.workshop?.availability != null && <Stat label="Fleet availability" value={d.workshop.availability + "%"} sub={`${d.workshop.counts.workshop}/${d.workshop.counts.total} in workshop`} tone={d.workshop.availability < 90 ? "amber" : "ok"} onClick={() => goTo("workshop")} />}
+              {k.channelSplit && <Stat label="DA channel share" value={k.channelSplit.daShare + "%"} sub={`${k.channelSplit.daGrowth >= 0 ? "▲" : "▼"} ${Math.abs(k.channelSplit.daGrowth)}% vs last mo · rest Petrotrade`} tone="ok" onClick={() => goTo("sales")} />}
+              {d.prices?.byProduct?.Blend && (() => { const b = d.prices.byProduct.Blend, di = d.prices.byProduct.Diesel; const c = (x) => (x == null ? "—" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}c`);
+                return <Stat label="Price vs market" value={c(b.vsAvg)} unit="blend" sub={`diesel ${c(di && di.vsAvg)} · − = below market`} tone={b.vsAvg > 0.02 ? "amber" : "ok"} onClick={() => goTo("prices")} />; })()}
             </div>
-            {/* 30-day trend — kept at the very bottom */}
+            {/* ── NEEDS ATTENTION — exception counts, tap straight to the list ── */}
+            {(() => {
+              const chips = [
+                { n: k.stockoutCount || 0, label: "Sites at stock-out risk", go: () => goTo("supply", "sec-stockout"), red: true },
+                { n: (d.workshop && d.workshop.counts && d.workshop.counts.workshop) || 0, label: "Trucks in workshop", go: () => goTo("workshop"), amber: true },
+                { n: (d.prices && d.prices.actions || []).length, label: "Price actions to review", go: () => goTo("prices"), amber: true },
+                { n: (d.fleet && d.fleet.exceptionCount) || 0, label: "Fuel-draw exceptions", go: () => goTo("fleet"), red: true },
+              ];
+              return (<>
+                <div className="lbl" style={{ margin: "6px 2px 8px" }}>Needs attention</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
+                  {chips.map((c) => { const col = c.n === 0 ? "var(--ok)" : c.red ? "var(--red)" : "var(--amber)";
+                    return (
+                      <div key={c.label} onClick={c.go} className="card" style={{ padding: "12px 13px", borderLeft: `4px solid ${col}`, cursor: "pointer" }}>
+                        <div className="mono" style={{ fontSize: 23, fontWeight: 600, color: col }}>{c.n}</div>
+                        <div className="lbl" style={{ marginBottom: 0 }}>{c.label} →</div>
+                      </div>
+                    ); })}
+                </div>
+              </>);
+            })()}
+            {/* ── PERFORMANCE — strongest & weakest site by volume ── */}
+            {d.sales && d.sales.top && d.sales.top.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                {[["Top site · volume", d.sales.top[0], "#3C9A52"], ["Weakest site · volume", d.sales.bottom[0], "#C0563A"]].map(([lbl, s, col]) => s && (
+                  <div key={lbl} className="card" style={{ padding: "12px 13px", cursor: "pointer" }} onClick={() => goTo("sales")}>
+                    <div className="lbl" style={{ marginBottom: 4 }}>{lbl}</div>
+                    <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site}</div>
+                    <div className="mono" style={{ fontSize: 12, color: col }}>{compact(s.litres)} L <span style={{ color: "var(--steel)" }}>· ${compact(s.cash)}</span></div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* 30-day trend */}
             {d.trend && d.trend.length > 1 && (
-              <Panel style={{ marginTop: 12, marginBottom: 0 }}>
+              <Panel style={{ marginBottom: 0 }}>
                 <div className="lbl" style={{ marginBottom: 8 }}>Last 30 days</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11.5, color: "var(--steel)", marginBottom: 2 }}>
                   <span>Sales volume</span><span className="mono">{compact(d.trend[d.trend.length - 1].litres)} L latest</span>
@@ -1893,9 +2237,23 @@ export function ExecutiveDashboard() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11.5, color: "var(--steel)", margin: "10px 0 2px" }}>
                   <span>Revenue</span><span className="mono">${compact(d.trend[d.trend.length - 1].revenue)} latest</span>
                 </div>
-                <Sparkline points={d.trend.map((t) => ({ litres: t.revenue }))} color="#6BC048" />
+                <Sparkline points={d.trend.map((t) => ({ litres: t.revenue }))} color="#3C9A52" />
               </Panel>
             )}
+          </>}
+
+          {/* ---------------- MARGINS (own screen — the per-litre economics off the Overview) ---------------- */}
+          {tab === "margins" && <>
+            <SectionHead title="Margins" sub="Gross-margin economics — sell, cost and margin per litre, by product" />
+            {!k.margin && <Note tone="amber" title="No margin data for this window">Margin needs invoiced revenue and a landed-cost basis for the period.</Note>}
+            {k.margin && <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, marginBottom: 14 }}>
+                <Hero label="GROSS MARGIN" value={"$" + compact(k.margin.total)} sub={k.margin.cpl != null ? `${(k.margin.cpl * 100).toFixed(1)}c/L blended` : null} accent="#C8A24B" />
+                <Hero label="REVENUE" value={"$" + compact(k.cash)} sub="invoiced" accent="#3C9A52" />
+                <Hero label="FUEL SOLD" value={compact(k.salesLitres)} unit="L" accent="#8FB8FF" />
+              </div>
+              <MarginPanel margin={k.margin} />
+            </>}
           </>}
 
           {/* ---------------- SALES ---------------- */}
@@ -1915,9 +2273,9 @@ export function ExecutiveDashboard() {
                 onClick={() => setDrill({ title: "Total volume — by site", sub: `${compact(d.sales.totalVolume)} L · diesel + blend + ULP`, render: siteSalesDrill(d.sales.sites, [["Blend", "blend"], ["Diesel", "diesel"], ["ULP", "ulp"], ["Total", "litres"]], "litres") })} />
               <Hero label="REVENUE" value={"$" + compact(d.sales.cash)} sub={d.sales.revenueMix ? `pump $${compact(d.sales.revenueMix.pump.revenue)} + coupon $${compact(d.sales.revenueMix.coupon.commission)}` : "invoiced · Sage"} accent="#6BC048"
                 onClick={() => setDrill({ title: "Revenue — by site", sub: `Invoiced (Sage) $${compact(d.sales.cash)}`, render: siteSalesDrill(d.sales.sites, [["Volume (L)", "litres"], ["Revenue", "cash", money0]], "cash") })} />
-              {d.sales.margin && <Hero label="GROSS MARGIN" value={"$" + compact(d.sales.margin.total)} sub={`${(d.sales.margin.cpl * 100).toFixed(1)}c/L`} accent="#C8A24B" />}
+              {d.sales.margin && <Hero label="GROSS MARGIN" value={"$" + compact(d.sales.margin.total)} sub={`${(d.sales.margin.cpl * 100).toFixed(1)}c/L`} accent="#C8A24B"
+                onClick={() => setDrill({ title: "Gross margin — by product", sub: `$${compact(d.sales.margin.total)} · ${(d.sales.margin.cpl * 100).toFixed(1)}c/L blended`, render: breakdownDrill((d.sales.margin.byProduct || []).filter((p) => p.litres > 0), ["Product", "product"], [["Litres", "litres", (v) => compact(v) + " L"], ["Gross margin", "gm", money0]], "gm") })} />}
             </div>
-            {d.sales.margin && <MarginPanel margin={d.sales.margin} />}
             {d.sales.tenderMix && <TenderMixPanel label="Revenue by tender" parts={[["Cash", d.sales.tenderMix.cash, "#2B3990"], ["DA card", d.sales.tenderMix.daCard, "#6BC048"], ["Petrotrade commission", d.sales.tenderMix.commission, "#8FB8FF"]]} />}
             {d.sales.channelSplit && <ChannelSplitPanel ch={d.sales.channelSplit} />}
             {d.sales.revenueMix && <RevenueMixPanel mix={d.sales.revenueMix} />}
@@ -1925,11 +2283,11 @@ export function ExecutiveDashboard() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
               <Panel style={{ padding: 0, overflow: "hidden" }}>
                 <div className="lbl" style={{ padding: "12px 14px 8px" }}>Top sites by volume</div>
-                <RankTable rows={d.sales.top} tone="var(--ok)" />
+                <RankTable rows={d.sales.top} tone="var(--ok)" onRow={(s) => setDrill(siteVolumeDrill(d.sales.sites, s))} />
               </Panel>
               <Panel style={{ padding: 0, overflow: "hidden" }}>
                 <div className="lbl" style={{ padding: "12px 14px 8px" }}>Lowest-selling sites</div>
-                <RankTable rows={d.sales.bottom} tone="var(--amber)" />
+                <RankTable rows={d.sales.bottom} tone="var(--amber)" onRow={(s) => setDrill(siteVolumeDrill(d.sales.sites, s))} />
               </Panel>
             </div>
           </>}
@@ -1946,10 +2304,43 @@ export function ExecutiveDashboard() {
                 onClick={() => setDrill({ title: "At sites — stock by product", sub: `${compact(d.supply.sites)} L across ${(d.supply.siteList || []).length} sites`, render: siteSalesDrill(d.supply.siteList, [["Blend", "blend"], ["Diesel", "diesel"], ["Total", "total"]], "total") })} />
               <Stat label="In warehouses" value={compact(d.supply.warehouse)} unit="L" sub={`${(d.supply.warehouses || []).length} depots`}
                 onClick={() => setDrill({ title: "In warehouses — stock by product", sub: `${compact(d.supply.warehouse)} L on hand`, render: warehouseStockDrill(d.supply.warehouses) })} />
-              <Stat label="On trucks" value={compact(d.supply.transit)} unit="L" sub={`${(d.supply.trucks || []).length} trips`} />
-              <Stat label="Total" value={compact(d.supply.total)} unit="L" />
+              <Stat label="On trucks" value={compact(d.supply.transit)} unit="L" sub={`${(d.supply.trucks || []).length} trips`}
+                onClick={() => setDrill({ title: "On trucks — goods in transit", sub: `${compact(d.supply.transit)} L across ${(d.supply.trucks || []).length} trip${(d.supply.trucks || []).length === 1 ? "" : "s"}`, render: trucksDrill(d.supply.trucks) })} />
+              <Stat label="Total" value={compact(d.supply.total)} unit="L"
+                onClick={() => setDrill({ title: "Total fuel — where it is", sub: `${compact(d.supply.total)} L · sites + warehouses + trucks`, render: totalSupplyDrill(d.supply) })} />
             </div>
-            <DeliveriesInProgress />
+            {/* stock-out risk — the one urgent exception on this screen, kept directly
+                under the KPI tiles (above the static where-the-fuel-sits detail tables) */}
+            {(() => { const watchSites = new Set((d.stockout || []).filter((s) => s.level === "watch").map((s) => s.site)).size;
+              const border = k.stockoutCount ? "var(--red)" : (d.stockout || []).length ? "var(--amber)" : "var(--ok)";
+              const heading = k.stockoutCount ? `${k.stockoutCount} ${k.stockoutCount === 1 ? "site" : "sites"} at stock-out risk`
+                : watchSites ? `${watchSites} ${watchSites === 1 ? "site" : "sites"} low on cover — watch`
+                : "All sites have healthy stock cover";
+              return (
+            <Panel id="sec-stockout" style={{ borderLeft: `4px solid ${border}`, scrollMarginTop: 12, marginBottom: 14 }}>
+              <div className="disp" style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 2 }}>{heading}</div>
+              <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 8 }}>At risk = under 1 day's cover (⚠), or under 5,000 L with under 2 days' cover — by product. Everything else is comfortably covered.</div>
+              {(d.stockout || []).length === 0 ? <div style={{ fontSize: 12, color: "var(--steel)" }}>No product is at stock-out risk right now.</div> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Product</Th><Th right>Cover</Th><Th right>Now</Th><Th right>End of shift</Th></tr></thead>
+                    <tbody>{["Blend", "Diesel"].flatMap((prod) => (d.stockout || []).filter((s) => s.product === prod)).map((s) => {
+                      const col = s.level === "risk" ? "var(--red)" : "var(--amber)";
+                      return (
+                        <tr key={s.site + s.product} onClick={() => setDrill({ title: `${s.site} · ${s.product}`, sub: `${s.daysCover}d cover · ${L(s.stock)} L now`, render: stockoutSiteDrill(s) })} style={{ borderTop: "1px solid var(--line)", background: s.level === "risk" ? "#FDECEA" : undefined, cursor: "pointer" }}>
+                          <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{s.level === "risk" ? "⚠ " : ""}{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                          <Td style={{ color: "var(--steel)" }}>{s.product}</Td>
+                          <Td right style={{ fontWeight: 700, color: col }}>{s.daysCover}d</Td>
+                          <Td right>{L(s.stock)}</Td>
+                          <Td right style={{ color: "var(--steel)" }}>{s.projectedEndShift != null ? "~" + L(Math.max(0, s.projectedEndShift)) : "—"}</Td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+              ); })()}
             <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
               <div className="lbl" style={{ padding: "12px 14px 8px" }}>Warehouses</div>
               <div style={{ overflowX: "auto" }}>
@@ -1977,8 +2368,8 @@ export function ExecutiveDashboard() {
                   <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th>Trip</Th><Th>Product</Th><Th right>Litres</Th><Th>Route</Th></tr></thead>
                     <tbody>{d.supply.trucks.map((t) => (
-                      <tr key={t.tripNo} style={{ borderTop: "1px solid var(--line)" }}>
-                        <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.truck}</Td>
+                      <tr key={t.tripNo} onClick={() => setDrill({ title: `${t.tripNo} · ${t.truck}`, sub: `${L(t.litres)} L ${t.product} · ${t.route}`, render: trucksDrill([t]) })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                        <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{t.truck}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                         <Td style={{ color: "var(--steel)" }}>{t.tripNo}</Td>
                         <Td>{t.product}</Td>
                         <Td right style={{ fontWeight: 700 }}>{L(t.litres)}</Td>
@@ -1992,39 +2383,15 @@ export function ExecutiveDashboard() {
             {/* deliveries + loss, split by product */}
             <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
               <div className="lbl" style={{ padding: "12px 14px 8px" }}>Delivered &amp; loss — by product</div>
-              {deliveriesProductTable(d.supply.deliveriesByProduct)}
+              {deliveriesProductTable(d.supply.deliveriesByProduct, (p) => setDrill({ title: `${p.product} — delivered & loss by site`, sub: `${L(p.loaded)} loaded · ${L(p.loss)} loss (${p.lossPct != null ? p.lossPct + "%" : "—"})`, render: productLossBySiteDrill(p) }))}
             </Panel>
-            {(() => { const watchSites = new Set((d.stockout || []).filter((s) => s.level === "watch").map((s) => s.site)).size;
-              const border = k.stockoutCount ? "var(--red)" : (d.stockout || []).length ? "var(--amber)" : "var(--ok)";
-              const heading = k.stockoutCount ? `${k.stockoutCount} ${k.stockoutCount === 1 ? "site" : "sites"} at stock-out risk`
-                : watchSites ? `${watchSites} ${watchSites === 1 ? "site" : "sites"} low on cover — watch`
-                : "All sites have healthy stock cover";
-              return (
-            <Panel id="sec-stockout" style={{ borderLeft: `4px solid ${border}`, scrollMarginTop: 12 }}>
-              <div className="disp" style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 2 }}>{heading}</div>
-              <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 8 }}>At risk = under 1 day's cover (⚠), or under 5,000 L with under 2 days' cover — by product. Everything else is comfortably covered.</div>
-              {(d.stockout || []).length === 0 ? <div style={{ fontSize: 12, color: "var(--steel)" }}>No product is at stock-out risk right now.</div> : (
-                <div style={{ overflowX: "auto" }}>
-                  <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Product</Th><Th right>Cover</Th><Th right>Now</Th><Th right>End of shift</Th></tr></thead>
-                    <tbody>{["Blend", "Diesel"].flatMap((prod) => (d.stockout || []).filter((s) => s.product === prod)).map((s) => {
-                      const col = s.level === "risk" ? "var(--red)" : "var(--amber)";
-                      return (
-                        <tr key={s.site + s.product} style={{ borderTop: "1px solid var(--line)", background: s.level === "risk" ? "#FDECEA" : undefined }}>
-                          <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{s.level === "risk" ? "⚠ " : ""}{s.site}</Td>
-                          <Td style={{ color: "var(--steel)" }}>{s.product}</Td>
-                          <Td right style={{ fontWeight: 700, color: col }}>{s.daysCover}d</Td>
-                          <Td right>{L(s.stock)}</Td>
-                          <Td right style={{ color: "var(--steel)" }}>{s.projectedEndShift != null ? "~" + L(Math.max(0, s.projectedEndShift)) : "—"}</Td>
-                        </tr>
-                      );
-                    })}</tbody>
-                  </table>
-                </div>
-              )}
-            </Panel>
-              ); })()}
           </>}
+
+          {/* ---------------- GOODS IN TRANSIT (own screen, off the inventory board) ---------------- */}
+          {tab === "transit" && <div id="transit" style={{ scrollMarginTop: 8 }}>
+            <SectionHead title="Goods in transit" sub="Every truck on the road or awaiting collection — loaded → truck dip → site received" />
+            <DeliveriesInProgress />
+          </div>}
 
           {/* ---------------- FLEET ---------------- */}
           {tab === "fleet" && <>
@@ -2032,9 +2399,12 @@ export function ExecutiveDashboard() {
             {!d.fleet?.asOf && <Note tone="amber" title="No card-draw data">Distance and efficiency come from fuel-card odometer readings; none are recorded for this period.</Note>}
             {(d.fleet?.vehicles || []).length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><ExportBtn onClick={() => exportExecFleet(d)} /></div>}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, marginBottom: 12 }}>
-              <Hero label="DISTANCE" value={compact(k.km)} unit="km" sub={d.fleet?.asOf ? `to ${fmtD(d.fleet.asOf)}` : "—"} accent="#8FB8FF" />
-              <Hero label="FUEL EFFICIENCY" value={k.kmpl ?? "—"} unit="km/L" sub={d.fleet?.basis === "rolling-90d" ? "fleet avg · 90-day" : "fleet avg"} accent="#6BC048" />
-              <Hero label="FUEL DRAWN" value={compact(d.fleet?.litres || 0)} unit="L" sub={`${d.fleet?.requests || 0} card draws`} />
+              <Hero label="DISTANCE" value={compact(k.km)} unit="km" sub={d.fleet?.asOf ? `to ${fmtD(d.fleet.asOf)}` : "—"} accent="#8FB8FF"
+                onClick={() => setDrill({ title: "Distance — by truck", sub: `${compact(k.km)} km · odometer gaps between card draws`, render: breakdownDrill(d.fleet?.vehicles || [], ["Truck", "vehicle"], [["90-day km", "km", (v) => L(v) + " km"]], "km") })} />
+              <Hero label="FUEL EFFICIENCY" value={k.kmpl ?? "—"} unit="km/L" sub={d.fleet?.basis === "rolling-90d" ? "fleet avg · 90-day" : "fleet avg"} accent="#6BC048"
+                onClick={() => setDrill({ title: "Fuel efficiency — by truck", sub: `Fleet ${k.kmpl ?? "—"} km/L = total km ÷ total litres`, render: breakdownDrill(d.fleet?.vehicles || [], ["Truck", "vehicle"], [["km/L", "kmpl", (v) => v], ["90-day km", "km", (v) => L(v) + " km"], ["Litres", "litres", (v) => L(v) + " L"]], "km", { sumCols: false, totalLabel: `Fleet ${k.kmpl ?? "—"} km/L`, note: "km/L is total km ÷ total litres — not a row average." }) })} />
+              <Hero label="FUEL DRAWN" value={compact(d.fleet?.litres || 0)} unit="L" sub={`${d.fleet?.requests || 0} card draws`}
+                onClick={() => setDrill({ title: "Fuel drawn — by truck", sub: `${compact(d.fleet?.litres || 0)} L · ${d.fleet?.requests || 0} card draws`, render: breakdownDrill(d.fleet?.vehicles || [], ["Truck", "vehicle"], [["Litres", "litres", (v) => L(v) + " L"], ["Fills", "fills", (v) => v]], "litres") })} />
             </div>
             {(d.fleet?.townKmpl != null || d.fleet?.roadKmpl != null) && (
               <div style={{ fontSize: 12, color: "var(--steel)", margin: "-2px 2px 12px", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "baseline" }}>
@@ -2043,10 +2413,6 @@ export function ExecutiveDashboard() {
                 <span style={{ opacity: 0.7 }}>· split by leg distance (approx)</span>
               </div>
             )}
-            {/* Approver over/under-allocation vs the system estimate — recorded daily. */}
-            <div style={{ borderTop: "1px solid var(--line)", margin: "6px 0 14px" }} />
-            <AllocationReport />
-            <div style={{ borderTop: "1px solid var(--line)", margin: "18px 0 14px" }} />
             {/* Bird's-eye: fleet health at a glance — tap any card for the full detail. */}
             {(d.fleet?.vehicles || []).length > 0 && (() => {
               const fleetTable = (title, note, rows, cols) => () => (
@@ -2094,6 +2460,10 @@ export function ExecutiveDashboard() {
               );
             })()}
             <div style={{ fontSize: 11, color: "var(--steel)", margin: "2px 2px" }}>Distance = odometer gaps between consecutive card draws. Town ~1.70 km/L, road ~2.52 km/L (blended here). Tap a card for the full breakdown.</div>
+            {/* Allocation vs system estimate — a related but SEPARATE sub-report, kept
+                below the fleet's own health summary so the fleet exceptions aren't buried. */}
+            <div style={{ borderTop: "1px solid var(--line)", margin: "18px 0 14px" }} />
+            <AllocationReport />
           </>}
 
           {/* ---------------- WORKSHOP ---------------- */}
@@ -2101,10 +2471,14 @@ export function ExecutiveDashboard() {
             {!d.workshop && <Note tone="amber" title="Workshop data unavailable" />}
             {d.workshop && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 12, marginBottom: 14 }}>
-                <Stat label="Availability" value={d.workshop.availability != null ? d.workshop.availability + "%" : "—"} tone={d.workshop.availability != null && d.workshop.availability < 90 ? "amber" : "ok"} />
-                <Stat label="In workshop" value={d.workshop.counts.workshop} unit={`/ ${d.workshop.counts.total}`} tone={d.workshop.counts.workshop ? "amber" : "ok"} />
-                <Stat label="Avg downtime" value={d.workshop.meanDowntime != null ? d.workshop.meanDowntime : "—"} unit="days" />
-                <Stat label="Repeat vehicles" value={(d.workshop.recurring || []).length} tone={(d.workshop.recurring || []).length ? "amber" : "ok"} />
+                <Stat label="Availability" value={d.workshop.availability != null ? d.workshop.availability + "%" : "—"} tone={d.workshop.availability != null && d.workshop.availability < 90 ? "amber" : "ok"}
+                  onClick={() => setDrill({ title: "Off the road — in the workshop", sub: `${d.workshop.counts.active}/${d.workshop.counts.total} vehicles available`, render: breakdownDrill(d.workshop.openCases || [], ["Vehicle", (r) => r.vehicle], [["Days down", "days", (v) => (v != null ? v + "d" : "—")]], "days", { sumCols: false, totalLabel: `${d.workshop.counts.workshop} off the road`, empty: "Every vehicle is on the road." }) })} />
+                <Stat label="In workshop" value={d.workshop.counts.workshop} unit={`/ ${d.workshop.counts.total}`} tone={d.workshop.counts.workshop ? "amber" : "ok"}
+                  onClick={() => setDrill({ title: "In the workshop now", sub: `${d.workshop.counts.workshop} of ${d.workshop.counts.total} vehicles`, render: breakdownDrill(d.workshop.openCases || [], ["Vehicle", (r) => r.vehicle], [["Fault", "description", (v, r) => v || r.title || "—"], ["Days", "days", (v) => (v != null ? v + "d" : "—")]], "days", { sumCols: false, totalLabel: `${d.workshop.counts.workshop} in workshop`, empty: "Nothing in the workshop." }) })} />
+                <Stat label="Avg downtime" value={d.workshop.meanDowntime != null ? d.workshop.meanDowntime : "—"} unit="days"
+                  onClick={() => setDrill({ title: "Downtime — by vehicle", sub: `Averages to ${d.workshop.meanDowntime ?? "—"} days`, render: breakdownDrill((d.workshop.openCases || []).filter((c) => c.days != null), ["Vehicle", (r) => r.vehicle], [["Days down", "days", (v) => v + "d"]], "days", { note: `Average of these ${(d.workshop.openCases || []).filter((c) => c.days != null).length} vehicles = ${d.workshop.meanDowntime ?? "—"} days.` }) })} />
+                <Stat label="Repeat vehicles" value={(d.workshop.recurring || []).length} tone={(d.workshop.recurring || []).length ? "amber" : "ok"}
+                  onClick={() => setDrill({ title: "Repeat offenders — back repeatedly", sub: `${(d.workshop.recurring || []).length} vehicle${(d.workshop.recurring || []).length === 1 ? "" : "s"}`, render: breakdownDrill(d.workshop.recurring || [], ["Vehicle", "vehicle"], [["Mostly", "top", (v) => v || "—"], ["Visits", "cases", (v) => v]], "cases", { sumCols: false, totalLabel: `${(d.workshop.recurring || []).length} vehicles`, empty: "No vehicle has repeated visits." }) })} />
               </div>
               {(d.workshop.recurring || []).length > 0 && (
                 <Panel style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
@@ -2167,13 +2541,11 @@ export function ExecutiveDashboard() {
           {/* ---------------- CASH BRIDGE — fuel sales → cash in the bank ---------------- */}
           {/* ---------------- CASH OUTFLOWS — cash paid out (cash & bank books) ---------------- */}
           {tab === "collections" && <div id="collections" style={{ scrollMarginTop: 8 }}>
-            {/* MERGED cash view for executives: the reconciliation (sales → expected
-                → received → variance + tender mix) AND how sites handled the cash
-                (accounted / unaccounted / on-hand + per-site table), one window. */}
-            <CashView embedded from={d.asOf?.periodStart} to={d.asOf?.date} />
-            <div style={{ borderTop: "2px solid var(--line)", margin: "22px 0 16px", paddingTop: 4 }}>
-              <span className="lbl" style={{ color: "var(--steel)" }}>How the cash was handled — by site</span>
-            </div>
+            {/* Cash inflows for executives: how each site handled the cash it took —
+                expected · sent to HQ · banked · unaccounted · cash on hand. The older
+                expected-vs-received "collections" reconciliation was dropped here (its
+                Received column had nothing to confirm against, so every row read as a
+                full variance and told the exec nothing). */}
             <CashInflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} />
           </div>}
           {tab === "outflows" && <div id="outflows" style={{ scrollMarginTop: 8 }}><CashOutflows embedded from={d.asOf?.periodStart} to={d.asOf?.date} /></div>}
@@ -2194,11 +2566,17 @@ export function ExecutiveDashboard() {
    come later from the FileMaker retail export. Ported to match the bot exactly —
    DAY = day-shift sales vs the previous day shift; NIGHT = the trading day's
    total (MAX of the cumulative day/night readings) vs the previous day. */
-function KpiCard({ label, value, tone, sub, subColor }) {
+function KpiCard({ label, value, tone, sub, subColor, onClick, cmp }) {
   return (
-    <div style={{ background: tone === "bad" ? "#FDECEC" : tone === "good" ? "#EDF7EE" : "#fff", border: `1px solid ${tone === "bad" ? "#F3C0C0" : tone === "good" ? "#BFE3C2" : "var(--line)"}`, borderRadius: 14, padding: "14px 16px", textAlign: "center" }}>
+    <div onClick={onClick} style={{ background: tone === "bad" ? "#FDECEC" : tone === "good" ? "#EDF7EE" : "#fff", border: `1px solid ${tone === "bad" ? "#F3C0C0" : tone === "good" ? "#BFE3C2" : "var(--line)"}`, borderRadius: 14, padding: "14px 16px", textAlign: "center", cursor: onClick ? "pointer" : undefined }}>
       <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: tone === "bad" ? "#B23B3B" : tone === "good" ? "#2E7D33" : "var(--navy)", letterSpacing: "-.01em" }}>{value}</div>
-      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".03em" }}>{label}</div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3, textTransform: "uppercase", letterSpacing: ".03em" }}>{label}{onClick ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</div>
+      {cmp && cmp.pct != null && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 4 }}>
+          <Delta v={cmp.pct} />
+          {cmp.prev != null && <span className="mono" style={{ fontSize: 10.5, color: "var(--steel)" }}>vs {cmp.prev}</span>}
+        </div>
+      )}
       {sub != null && sub !== "" && <div className="mono" style={{ fontSize: 11.5, marginTop: 4, fontWeight: 700, color: subColor || "var(--steel)" }}>{sub}</div>}
     </div>
   );
@@ -2207,6 +2585,7 @@ const coverTxt = (c) => c == null ? "—" : c > 30 ? ">30s" : `${c}s`;
 const dCover = (c) => c == null ? "—" : c > 60 ? ">60d" : `${c}d`;   // days-of-cover formatter
 function ShiftReportView({ shift, date = null }) {
   const [d, setD] = useState(null); const [err, setErr] = useState(null); const [key, setKey] = useState(0);
+  const [gd, setGd] = useState(null);   // KpiCard drills
   const isNight = shift === "night";
   // date comes from the screen's standard ribbon (Today/Yesterday pick a day; the
   // wider periods anchor to their end day). Null = latest day with data for this shift.
@@ -2218,8 +2597,11 @@ function ShiftReportView({ shift, date = null }) {
 
   const t = d.totals;
   const L = (v) => full(v) + "L";
+  const Lu = (v) => full(v) + " L";
   const arrow = (v) => v > 0 ? "▲" : v < 0 ? "▼" : "";
   const dTone = (v) => v > 0 ? "#2E7D33" : v < 0 ? "#C0563A" : "var(--steel)";
+  const bySite = (title, sub, cols, sortKey, opts) => setGd({ title, sub, render: breakdownDrill(d.sites || [], ["Site", "site"], cols, sortKey, opts) });
+  const outstanding = [...(d.missingFull || []).map((s) => ({ site: s, status: "not submitted" })), ...(d.missingShift || []).map((s) => ({ site: s, status: `${shift}-shift missing` }))];
 
   return (
     <>
@@ -2254,15 +2636,22 @@ function ShiftReportView({ shift, date = null }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
         <KpiCard label="Total sales" value={L(t.totalSales)}
           sub={t.salesDiffPct != null ? `${arrow(t.salesDiffPct)} ${Math.abs(t.salesDiffPct)}% vs prev day` : (t.prevTotalSales == null ? "no prev day" : "")}
-          subColor={dTone(t.salesDiffPct)} />
+          subColor={dTone(t.salesDiffPct)}
+          onClick={() => bySite("Total sales — by site", `${L(t.totalSales)} · ${shift} shift`, [["Total sales", "totalSales", Lu]], "totalSales")} />
         <KpiCard label="Sites reported" value={`${t.sitesReported}/${t.sitesTotal}`} tone={t.sitesReported >= t.sitesTotal ? "good" : undefined}
-          sub={t.sitesReported < t.sitesTotal ? `${t.sitesTotal - t.sitesReported} outstanding` : "all in"} />
-        <KpiCard label="Blend sales" value={L(t.blendSales)} sub={t.blendCover != null ? `${coverTxt(t.blendCover)} cover` : ""} />
-        <KpiCard label="Diesel sales" value={L(t.dieselSales)} sub={t.dieselCover != null ? `${coverTxt(t.dieselCover)} cover` : ""} />
-        {t.hasUlp && <KpiCard label="ULP sales" value={L(t.ulpSales)} sub={t.ulpCover != null ? `${coverTxt(t.ulpCover)} cover` : ""} />}
+          sub={t.sitesReported < t.sitesTotal ? `${t.sitesTotal - t.sitesReported} outstanding` : "all in"}
+          onClick={() => setGd({ title: "Outstanding sites", sub: `${t.sitesTotal - t.sitesReported} of ${t.sitesTotal} not yet in`, render: breakdownDrill(outstanding, ["Site", "site"], [["Status", "status", (v) => v]], null, { sumCols: false, totalLabel: `${outstanding.length} outstanding`, empty: "Every site has reported." }) })} />
+        <KpiCard label="Blend sales" value={L(t.blendSales)} sub={t.blendCover != null ? `${coverTxt(t.blendCover)} cover` : ""}
+          onClick={() => bySite("Blend sales — by site", `${L(t.blendSales)} · ${shift} shift`, [["Blend sales", "blendSales", Lu]], "blendSales")} />
+        <KpiCard label="Diesel sales" value={L(t.dieselSales)} sub={t.dieselCover != null ? `${coverTxt(t.dieselCover)} cover` : ""}
+          onClick={() => bySite("Diesel sales — by site", `${L(t.dieselSales)} · ${shift} shift`, [["Diesel sales", "dieselSales", Lu]], "dieselSales")} />
+        {t.hasUlp && <KpiCard label="ULP sales" value={L(t.ulpSales)} sub={t.ulpCover != null ? `${coverTxt(t.ulpCover)} cover` : ""}
+          onClick={() => bySite("ULP sales — by site", `${L(t.ulpSales)} · ${shift} shift`, [["ULP sales", "ulpSales", Lu]], "ulpSales")} />}
         <KpiCard label="Total stock" value={L(t.totalStock)} sub={t.cover != null ? `${coverTxt(t.cover)} network cover` : ""}
-          subColor={t.cover != null && t.cover < 2 ? "var(--red)" : "var(--steel)"} />
-        <KpiCard label="Low stock sites" value={t.lowStockCount} tone={t.lowStockCount > 0 ? "bad" : "good"} />
+          subColor={t.cover != null && t.cover < 2 ? "var(--red)" : "var(--steel)"}
+          onClick={() => bySite("Stock on hand — by site", `${L(t.totalStock)} · blend + diesel${t.hasUlp ? " + ULP" : ""}`, [["Blend", "blendStock", Lu], ["Diesel", "dieselStock", Lu], ...(t.hasUlp ? [["ULP", "ulpStock", Lu]] : [])], "blendStock")} />
+        <KpiCard label="Low stock sites" value={t.lowStockCount} tone={t.lowStockCount > 0 ? "bad" : "good"}
+          onClick={() => setGd({ title: "Low-stock sites", sub: `${t.lowStockCount} site${t.lowStockCount === 1 ? "" : "s"} low on cover`, render: breakdownDrill(d.sites || [], ["Site", "site"], [["Stock", "totalSales", (v, r) => full((r.blendStock || 0) + (r.dieselStock || 0) + (r.ulpStock || 0)) + " L"]], null, { filter: (s) => s.low, sumCols: false, totalLabel: `${t.lowStockCount} low`, empty: "No site is low on stock." }) })} />
       </div>
 
       {/* Stock cover by product — how long the network's stock lasts at the current rate */}
@@ -2326,7 +2715,7 @@ function ShiftReportView({ shift, date = null }) {
           </table>
         </div>
       </Panel>
-
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </>
   );
 }
@@ -2409,9 +2798,11 @@ function ExecPrices({ prices, onDrill }) {
           <tbody>{["Blend", "Diesel"].map((p) => {
             const x = prices.byProduct[p] || {};
             const dear = x.vsAvg != null && x.vsAvg > 0;
+            const pl = p.toLowerCase();
+            const openProd = () => onDrill && onDrill({ title: `${p} — DA vs market by site`, sub: `DA avg ${money3(x.da)} · market avg ${money3(x.mktAvg)}`, render: breakdownDrill(bySite.filter((s) => s.da && s.da[pl] != null), ["Site", "site"], [["DA", "site", (v, r) => money3(r.da[pl])], ["Mkt avg", "site", (v, r) => money3(r.market?.[pl]?.avg)], ["Mkt min", "site", (v, r) => money3(r.market?.[pl]?.min)]], null, { sumCols: false, totalLabel: "per surveyed site" }) });
             return (
-              <tr key={p} style={{ borderTop: "1px solid var(--line)" }}>
-                <Td>{p}</Td>
+              <tr key={p} onClick={openProd} style={{ borderTop: "1px solid var(--line)", cursor: onDrill ? "pointer" : undefined }}>
+                <Td>{p}{onDrill ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</Td>
                 <Td right style={{ fontWeight: 700 }}>{money3(x.da)}</Td>
                 <Td right>{money3(x.mktAvg)}</Td>
                 <Td right>{money3(x.mktMin)}</Td>
@@ -2561,6 +2952,7 @@ export function AllocationReport() {
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
+  const [drill, setDrill] = useState(null);
   const w = periodWindow(period, range);
   useEffect(() => {
     if (period === "range" && !(range.from && range.to)) return;
@@ -2570,6 +2962,8 @@ export function AllocationReport() {
   }, [period, range.from, range.to]);
   const vColor = (v) => (v > 0 ? "var(--red)" : v < 0 ? "#C77A15" : "var(--steel)");
   const vTxt = (v) => (v > 0 ? "+" : "") + L(v);
+  const Lu = (v) => L(v) + " L";
+  const devCols = [["Truck", "truck", (v) => v], ["Est.", "estimated", Lu], ["Alloc.", "allocated", Lu], ["Variance", "variance", (v) => vTxt(v)]];
   if (err) return <Note tone="red" title="Couldn't load the allocation report">{err}</Note>;
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading allocation report…</div></Panel>;
   const t = d.totals;
@@ -2577,11 +2971,16 @@ export function AllocationReport() {
     <Note tone="blue" title="Allocation vs system estimate">The app calculates an estimated allocation from the route and the truck&rsquo;s efficiency. The approver can allocate higher (<b style={{ color: "var(--red)" }}>over</b>) or lower (<b style={{ color: "#C77A15" }}>under</b>). This is the daily record of that variance across the fleet.</Note>
     <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))", gap: 12, marginBottom: 12 }}>
-      <Hero label="ESTIMATED" value={compact(t.estimated)} unit="L" accent="#8FB8FF" />
-      <Hero label="ALLOCATED" value={compact(t.allocated)} unit="L" />
-      <Hero label="NET VARIANCE" value={vTxt(t.variance)} unit="L" sub={t.estimated ? `${((t.variance / t.estimated) * 100).toFixed(1)}%` : ""} accent={t.variance > 0 ? "#E5604D" : t.variance < 0 ? "#C77A15" : "#6BC048"} />
-      <Hero label="OVER-ALLOCATED" value={t.overCount} sub={`+${compact(t.overLitres)} L`} accent="#E5604D" />
-      <Hero label="UNDER-ALLOCATED" value={t.underCount} sub={`${compact(t.underLitres)} L`} accent="#C77A15" />
+      <Hero label="ESTIMATED" value={compact(t.estimated)} unit="L" accent="#8FB8FF"
+        onClick={() => setDrill({ title: "Estimated allocation — by day", sub: `${compact(t.estimated)} L · system estimate from routes`, render: breakdownDrill(d.daily || [], ["Date", (r) => fmtD(r.day)], [["Requests", "requests", (v) => v], ["Estimated", "estimated", Lu]], "estimated") })} />
+      <Hero label="ALLOCATED" value={compact(t.allocated)} unit="L"
+        onClick={() => setDrill({ title: "Allocated — by day", sub: `${compact(t.allocated)} L · what approvers actually gave`, render: breakdownDrill(d.daily || [], ["Date", (r) => fmtD(r.day)], [["Requests", "requests", (v) => v], ["Allocated", "allocated", Lu]], "allocated") })} />
+      <Hero label="NET VARIANCE" value={vTxt(t.variance)} unit="L" sub={t.estimated ? `${((t.variance / t.estimated) * 100).toFixed(1)}%` : ""} accent={t.variance > 0 ? "#E5604D" : t.variance < 0 ? "#C77A15" : "#6BC048"}
+        onClick={() => setDrill({ title: "Net variance — by day", sub: `${vTxt(t.variance)} L · allocated − estimated`, render: breakdownDrill(d.daily || [], ["Date", (r) => fmtD(r.day)], [["Variance", "variance", (v) => vTxt(v)]], "variance") })} />
+      <Hero label="OVER-ALLOCATED" value={t.overCount} sub={`+${compact(t.overLitres)} L`} accent="#E5604D"
+        onClick={() => setDrill({ title: "Over-allocations", sub: `${t.overCount} approval${t.overCount === 1 ? "" : "s"} · +${compact(t.overLitres)} L over estimate`, render: breakdownDrill(d.deviations || [], ["Driver · date", (r) => `${r.driver} · ${fmtD(r.day)}`], devCols, "variance", { filter: (x) => x.variance > 0, totalLabel: `${t.overCount} over`, sumCols: false, empty: "No over-allocations in this window." }) })} />
+      <Hero label="UNDER-ALLOCATED" value={t.underCount} sub={`${compact(t.underLitres)} L`} accent="#C77A15"
+        onClick={() => setDrill({ title: "Under-allocations", sub: `${t.underCount} approval${t.underCount === 1 ? "" : "s"} · ${compact(t.underLitres)} L under estimate`, render: breakdownDrill(d.deviations || [], ["Driver · date", (r) => `${r.driver} · ${fmtD(r.day)}`], devCols, "variance", { filter: (x) => x.variance < 0, totalLabel: `${t.underCount} under`, sumCols: false, empty: "No under-allocations in this window." }) })} />
     </div>
     {(!d.daily || !d.daily.length) && <Note tone="amber" title="No fleet approvals to compare">No approved fleet fuel request carried a system estimate in this window.</Note>}
     {d.daily && d.daily.length > 0 && (<>
@@ -2590,8 +2989,8 @@ export function AllocationReport() {
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th right>Reqs</Th><Th right>Estimated</Th><Th right>Allocated</Th><Th right>Variance</Th><Th right>Over</Th><Th right>Under</Th></tr></thead>
           <tbody>{d.daily.map((r) => (
-            <tr key={r.day} style={{ borderTop: "1px solid var(--line)" }}>
-              <Td>{fmtD(r.day)}</Td><Td right>{r.requests}</Td><Td right>{full(r.estimated)}</Td><Td right>{full(r.allocated)}</Td>
+            <tr key={r.day} onClick={() => setDrill({ title: `Allocations · ${fmtD(r.day)}`, sub: `${r.requests} request${r.requests === 1 ? "" : "s"} · variance ${vTxt(r.variance)} L`, render: breakdownDrill((d.deviations || []).filter((x) => x.day === r.day), ["Driver", "driver"], devCols, "variance", { sumCols: false, empty: "No over/under-allocations this day — every allocation matched the estimate." }) })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+              <Td>{fmtD(r.day)}<span style={{ color: "var(--steel)" }}> ›</span></Td><Td right>{r.requests}</Td><Td right>{full(r.estimated)}</Td><Td right>{full(r.allocated)}</Td>
               <Td right style={{ fontWeight: 700, color: vColor(r.variance) }}>{vTxt(r.variance)}</Td>
               <Td right style={{ color: r.over ? "var(--red)" : "var(--steel)" }}>{r.over || "—"}</Td>
               <Td right style={{ color: r.under ? "#C77A15" : "var(--steel)" }}>{r.under || "—"}</Td>
@@ -2615,21 +3014,27 @@ export function AllocationReport() {
       </div></Panel>
       {!d.deviations?.length && <div style={{ fontSize: 12, color: "var(--ok)", padding: "8px 2px" }}>Every fleet allocation matched the system estimate exactly in this window.</div>}
     </>)}
+    {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
   </>);
 }
 
 export function MiddayDipView({ from = null, to = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
+  const [gd, setGd] = useState(null);
   useEffect(() => { const t = to || todayISO(); const f = from || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", f, t).then(setD).catch((e) => setErr(e.message)); }, [from, to]);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
   if (!Array.isArray(d.sites) || !d.sites.length) return <Note tone="amber" title="No midday dip yet">No site has submitted a midday tank dip for this window.</Note>;
+  const Lu = (v) => full(v) + " L";
   return (<>
     <Note tone="blue" title="Midday dip · latest available stock">Showing the <b>latest available site stock figures</b> — most sites as at {d.date ? fmtD(d.date) : "—"}. Today&rsquo;s midday dip is due around midday and may not be in yet; each site&rsquo;s own dip date is in the <b>At</b> column. Stock-only snapshot between the day and night shifts. <b>Cover</b> = how long the current stock lasts at the site&rsquo;s recent sales rate (days, and this shift). Lowest cover first.</Note>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
-      <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF" />
-      <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" sub={d.totals.daysCover != null ? `${dCover(d.totals.daysCover)} network cover` : ""} accent={d.totals.daysCover != null && d.totals.daysCover < 2 ? "#E5604D" : undefined} />
-      <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"} />
+      <Hero label="SITES DIPPED" value={d.totals.sites} accent="#8FB8FF"
+        onClick={() => setGd({ title: "Sites dipped", sub: `${d.totals.sites} site${d.totals.sites === 1 ? "" : "s"} · latest midday stock`, render: breakdownDrill(d.sites, ["Site", "site"], [["Total stock", "total", Lu], ["Days cover", "daysCover", (v) => (v == null ? "—" : v + "d")]], "total", { sumCols: false, totalLabel: `${d.totals.sites} sites` }) })} />
+      <Hero label="TOTAL STOCK" value={compact(d.totals.totalStock)} unit="L" sub={d.totals.daysCover != null ? `${dCover(d.totals.daysCover)} network cover` : ""} accent={d.totals.daysCover != null && d.totals.daysCover < 2 ? "#E5604D" : undefined}
+        onClick={() => setGd({ title: "Stock on hand — by site", sub: `${compact(d.totals.totalStock)} L · blend + diesel${d.hasUlp ? " + ULP" : ""}`, render: breakdownDrill(d.sites, ["Site", "site"], [["Blend", "blend", Lu], ["Diesel", "diesel", Lu], ...(d.hasUlp ? [["ULP", "ulp", Lu]] : []), ["Total", "total", Lu]], "total") })} />
+      <Hero label="LOW STOCK SITES" value={d.totals.low} accent={d.totals.low ? "#E5604D" : "#6BC048"}
+        onClick={() => setGd({ title: "Low-stock sites", sub: `${d.totals.low} site${d.totals.low === 1 ? "" : "s"} under cover`, render: breakdownDrill(d.sites, ["Site", "site"], [["Total", "total", Lu], ["Days cover", "daysCover", (v) => (v == null ? "—" : v + "d")]], "daysCover", { filter: (s) => s.status === "LOW", sumCols: false, totalLabel: `${d.totals.low} low`, empty: "No site is low on stock." }) })} />
     </div>
     {(d.totals.blendCover != null || d.totals.dieselCover != null) && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 12, marginBottom: 12 }}>
@@ -2643,8 +3048,8 @@ export function MiddayDipView({ from = null, to = null } = {}) {
       <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
         <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>At</Th><Th right>Blend</Th><Th right>Diesel</Th>{d.hasUlp && <Th right>ULP</Th>}<Th right>Total</Th><Th right>Days cover</Th><Th right>Shift cover</Th><Th>Status</Th></tr></thead>
         <tbody>{d.sites.filter((s) => rowMatches(s, q)).map((s) => (
-          <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "LOW" ? "#FDECEA" : "#fff" }}>
-            <Td>{s.status === "LOW" ? "⚠ " : ""}{s.site}</Td>
+          <tr key={s.site} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })} style={{ borderTop: "1px solid var(--line)", background: s.status === "LOW" ? "#FDECEA" : "#fff", cursor: "pointer" }}>
+            <Td>{s.status === "LOW" ? "⚠ " : ""}{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
             <Td style={{ color: "var(--steel)" }}>{s.at || "—"}</Td>
             <Td right>{full(s.blend)}</Td><Td right>{full(s.diesel)}</Td>{d.hasUlp && <Td right>{s.ulp ? full(s.ulp) : "—"}</Td>}
             <Td right style={{ fontWeight: 700 }}>{full(s.total)}</Td>
@@ -2654,6 +3059,7 @@ export function MiddayDipView({ from = null, to = null } = {}) {
           </tr>))}</tbody>
       </table>
     </div></Panel>
+    {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
   </>);
 }
 
@@ -2867,12 +3273,14 @@ export function WetstockView({ extWindow = null } = {}) {
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [gd, setGd] = useState(null);   // pill / row drills
   useEffect(() => {
     if (!extWindow && period === "range" && !(range.from && range.to)) return;
     const w = extWindow || periodWindow(period, range);
     setD(null); setErr(null); getWetstock(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message));
   }, [period, range.from, range.to, reloadKey]);
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
+  const Lu = (v) => L(v) + " L";
   const varCell = (v) => <Td right style={{ color: v < 0 ? "var(--red)" : v > 0 ? "var(--ok)" : "var(--steel)" }}>{v ? (v > 0 ? "+" : "") + L(v) : "—"}</Td>;
   const Shell = extWindow ? ({ children }) => <>{children}</> : Wrap;
   return (
@@ -2887,11 +3295,16 @@ export function WetstockView({ extWindow = null } = {}) {
       {d && d.sites.length > 0 && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={full(d.net) + "L"} label={`Total loss · ${d.days}d`} tone={d.critical ? "red" : d.watch ? "amber" : "ok"} />
-            {d.netValue != null && <CountPill n={"$" + full(d.netValue)} label="Loss at cost" tone={d.netValue > 0 ? (d.critical ? "red" : "amber") : "ok"} />}
-            <CountPill n={d.critical} label={`Critical (>${d.critAt ?? "1.0"}%)`} tone={d.critical ? "red" : "ok"} />
-            <CountPill n={d.watch} label={`Watch (>${d.watchAt ?? "0.5"}%)`} tone={d.watch ? "amber" : "ok"} />
-            {d.netRate != null && <CountPill n={d.netRate + "%"} label="Network rate" tone="ok" />}
+            <CountPill n={full(d.net) + "L"} label={`Total loss · ${d.days}d`} tone={d.critical ? "red" : d.watch ? "amber" : "ok"}
+              onClick={() => setGd({ title: "Total loss — by site", sub: `${full(d.net)} L · delivery + wet-stock`, render: breakdownDrill(d.sites, ["Site", "site"], [["Delivery", "deliveryLoss", Lu], ["Site", "siteLoss", Lu], ["Total loss", "totalLoss", Lu]], "totalLoss") })} />
+            {d.netValue != null && <CountPill n={"$" + full(d.netValue)} label="Loss at cost" tone={d.netValue > 0 ? (d.critical ? "red" : "amber") : "ok"}
+              onClick={() => setGd({ title: "Loss at cost — by site", sub: `$${full(d.netValue)} · loss valued at landed cost`, render: breakdownDrill(d.sites, ["Site", "site"], [["Loss at cost", "lossValue", $full]], "lossValue") })} />}
+            <CountPill n={d.critical} label={`Critical (>${d.critAt ?? "1.0"}%)`} tone={d.critical ? "red" : "ok"}
+              onClick={() => setGd({ title: `Critical sites (> ${d.critAt ?? "1.0"}%)`, sub: `${d.critical} site${d.critical === 1 ? "" : "s"} over the critical loss line`, render: breakdownDrill(d.sites, ["Site", "site"], [["Total loss", "totalLoss", Lu], ["$ cost", "lossValue", $full], ["%", "lossPct", (v) => (v != null ? v + "%" : "—")]], "lossPct", { filter: (s) => s.status === "critical", sumCols: false, totalLabel: `${d.critical} critical`, empty: "No site is critical in this window." }) })} />
+            <CountPill n={d.watch} label={`Watch (>${d.watchAt ?? "0.5"}%)`} tone={d.watch ? "amber" : "ok"}
+              onClick={() => setGd({ title: `Watch sites (> ${d.watchAt ?? "0.5"}%)`, sub: `${d.watch} site${d.watch === 1 ? "" : "s"} on the watch line`, render: breakdownDrill(d.sites, ["Site", "site"], [["Total loss", "totalLoss", Lu], ["$ cost", "lossValue", $full], ["%", "lossPct", (v) => (v != null ? v + "%" : "—")]], "lossPct", { filter: (s) => s.status === "watch", sumCols: false, totalLabel: `${d.watch} watch`, empty: "No site is on watch in this window." }) })} />
+            {d.netRate != null && <CountPill n={d.netRate + "%"} label="Network rate" tone="ok"
+              onClick={() => setGd({ title: "Network loss rate — by site", sub: `${d.netRate}% = ${full(d.net)} L lost ÷ ${full(d.sites.reduce((a, s) => a + (s.sold || 0), 0))} L sold`, render: breakdownDrill(d.sites, ["Site", "site"], [["Sold", "sold", Lu], ["Loss", "totalLoss", Lu]], "totalLoss", { note: `Rate is loss ÷ sold, so it doesn't add up like a sum — the two litre columns do.` }) })} />}
           </div>
           <Panel style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
@@ -2899,8 +3312,8 @@ export function WetstockView({ extWindow = null } = {}) {
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
                   <Th>Site</Th><Th right>Sold</Th><Th right>Delivery</Th><Th right>Site</Th><Th right>Total loss</Th><Th right>$ cost</Th><Th right>%</Th></tr></thead>
                 <tbody>{d.sites.map((s) => (
-                  <tr key={s.site} style={{ borderTop: "1px solid var(--line)", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff" }}>
-                    <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}</Td>
+                  <tr key={s.site} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })} style={{ borderTop: "1px solid var(--line)", background: s.status === "critical" ? "#FDECEA" : s.status === "watch" ? "#FFF7E6" : "#fff", cursor: "pointer" }}>
+                    <Td>{s.status === "critical" ? "⚠ " : ""}{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                     <Td right style={{ color: "var(--steel)" }}>{L(s.sold)}</Td>
                     <Td right style={{ color: s.deliveryLoss > 0 ? "var(--red)" : "var(--steel)" }}>{L(s.deliveryLoss)}</Td>
                     <Td right style={{ color: s.siteLoss > 0 ? "var(--red)" : "var(--steel)" }}>{L(s.siteLoss)}</Td>
@@ -2914,6 +3327,7 @@ export function WetstockView({ extWindow = null } = {}) {
           </Panel>
         </>
       )}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Shell>
   );
 }
@@ -3064,6 +3478,7 @@ export function CashView({ embedded = false, from = null, to = null } = {}) {
   const TONE = { critical: "var(--red)", watch: "var(--amber)", ok: "var(--ok)" };
   const $ = (v) => "$" + full(v);
   const [drill, setDrill] = useState(null);
+  const [gd, setGd] = useState(null);   // general per-site pill drill
   const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
   return (
     <Shell>
@@ -3078,10 +3493,14 @@ export function CashView({ embedded = false, from = null, to = null } = {}) {
       {d && (d.sites || []).length > 0 && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={$(d.sales)} label={`Sales · ${d.days}d`} tone="ok" />
-            <CountPill n={$(d.expectedCash)} label="Expected cash" tone="ok" />
-            <CountPill n={$(d.receivedCash)} label="Received cash" tone="ok" />
-            <CountPill n={$(d.cashDiff)} label="Variance" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"} />
+            <CountPill n={$(d.sales)} label={`Sales · ${d.days}d`} tone="ok"
+              onClick={() => setGd({ title: "Sales — by site", sub: `${$(d.sales)} · total takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Sales", "sales", $full]], "sales") })} />
+            <CountPill n={$(d.expectedCash)} label="Expected cash" tone="ok"
+              onClick={() => setGd({ title: "Expected cash — by site", sub: `${$(d.expectedCash)} · cash portion of takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Expected cash", "expectedCash", $full]], "expectedCash") })} />
+            <CountPill n={$(d.receivedCash)} label="Received cash" tone="ok"
+              onClick={() => setGd({ title: "Received cash — by site", sub: `${$(d.receivedCash)} · confirmed received`, render: breakdownDrill(d.sites, ["Site", "site"], [["Received", "confirmedReceived", $full]], "confirmedReceived") })} />
+            <CountPill n={$(d.cashDiff)} label="Variance" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"}
+              onClick={() => setGd({ title: "Variance — by site", sub: `${$(d.cashDiff)} · short (+) / over (−) vs expected`, render: breakdownDrill(d.sites, ["Site", "site"], [["Variance", "cashDiff", (v) => (v > 0 ? $full(v) : v < 0 ? `(${$full(-v)})` : "$0")]], "cashDiff") })} />
           </div>
           {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
           <Panel style={{ padding: 0, overflow: "hidden" }}>
@@ -3104,6 +3523,7 @@ export function CashView({ embedded = false, from = null, to = null } = {}) {
         </>
       )}
       {drill && <DetailSheet title={drill} sub="Day-end reconciliation · last 14 days" onClose={() => setDrill(null)}><SiteDayendDrill site={drill} /></DetailSheet>}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Shell>
   );
 }
@@ -3127,8 +3547,16 @@ export function SiteDeposit({ me }) {
   const [photo, setPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [pending, setPending] = useState([]);   // deposits declared in the cash submission, slip not in yet
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   useEffect(() => { if (!fixed) getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, [fixed]);
+  const loadPending = () => {
+    if (!fixed && !site) { setPending([]); return; }
+    getPendingDeposits(fixed ? undefined : site).then((r) => setPending(r.pending || [])).catch(() => {});
+  };
+  useEffect(loadPending, [fixed, site]);
+  // Prefill the form from a pending obligation (the site declared this to bank).
+  const fill = (o) => { set("tradingDate", o.tradingDate); set("amount", String(Math.round(o.pending))); if (!fixed) setSite(o.site); setMsg(null); };
 
   const capture = async () => {
     try { const p = await takeOdometerPhoto(); if (p?.dataUrl) setPhoto(p.dataUrl); }
@@ -3154,6 +3582,7 @@ export function SiteDeposit({ me }) {
       setMsg({ tone: "ok", title: "Deposit recorded", body: `$${L(Number(f.amount))} to ${f.bank.trim()} — sent to the cash office to confirm.` });
       setF({ tradingDate: f.tradingDate, depositDate: todayISO(), bank: "", amount: "", reference: "" });
       setPhoto(null);
+      loadPending();   // the obligation it fulfils should drop off the list
     } catch (err) { setMsg({ tone: "red", title: "Not recorded", body: err.message }); }
     finally { setBusy(false); }
   };
@@ -3161,6 +3590,28 @@ export function SiteDeposit({ me }) {
   return (
     <Wrap>
       <SectionHead title="Record a deposit" sub="Log each cash deposit you bank — the cash office confirms it against the day" />
+      {pending.length > 0 && (
+        <Panel style={{ marginBottom: 12, background: "#FFF7E6", border: "1.5px solid #F3D48A" }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".04em", fontSize: 13, fontWeight: 800, color: "#B4801F", marginBottom: 3 }}>To bank — declared in the cash submission</div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 9 }}>Bank the cash, then tap the deposit to fill the slip in below.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {pending.map((o, i) => (
+              <button type="button" key={i} onClick={() => fill(o)}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, textAlign: "left", padding: "9px 12px", borderRadius: 10, cursor: "pointer",
+                  background: "#fff", border: `1.5px solid ${o.overdue ? "#E7B4B0" : "var(--line)"}` }}>
+                <span>
+                  <b style={{ color: "var(--navy)", fontSize: 14 }}>${L(Math.round(o.pending))}</b>
+                  {!fixed && <span style={{ color: "var(--steel)", fontSize: 12 }}> · {o.site}</span>}
+                  <span style={{ color: "var(--steel)", fontSize: 11.5 }}> · cash from {o.tradingDate}</span>
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", color: "#fff", background: o.overdue ? "#B23B3B" : "#B4801F", borderRadius: 20, padding: "2px 9px" }}>
+                  {o.overdue ? "OVERDUE" : `by 3pm ${o.dueDate}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      )}
       <Panel>
         <form onSubmit={send}>
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
@@ -3193,6 +3644,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   const [reloadKey, setReloadKey] = useState(0);
   const [drill, setDrill] = useState(null);
   const [siteDrill, setSiteDrill] = useState(null);
+  const [gd, setGd] = useState(null);   // general pill drill
   const [onlyOpen, setOnlyOpen] = useState(true);
   useEffect(() => { setD(null); setErr(null); const w = extWindow || periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, extWindow && extWindow.from, extWindow && extWindow.to, reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
@@ -3225,10 +3677,14 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
       {d && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={$(d.summary.expected)} label="Expected cash" tone="ok" />
-            <CountPill n={$(d.summary.received)} label="Received cash" tone="ok" />
-            <CountPill n={$(d.summary.openShort != null ? d.summary.openShort : d.summary.shortfall)} label="Still short (open)" tone={(d.summary.openShort ?? d.summary.shortfall) > 0 ? "red" : "ok"} />
-            <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"} />
+            <CountPill n={$(d.summary.expected)} label="Expected cash" tone="ok"
+              onClick={() => setGd({ title: "Expected cash — by site & day", sub: `${$(d.summary.expected)} · every day in this window`, render: breakdownDrill(d.rows, ["Site · day", (r) => `${r.site} · ${fmtD(r.date)}`], [["Expected", "expected", $full]], "expected") })} />
+            <CountPill n={$(d.summary.received)} label="Received cash" tone="ok"
+              onClick={() => setGd({ title: "Received cash — by site & day", sub: `${$(d.summary.received)} · confirmed received`, render: breakdownDrill(d.rows, ["Site · day", (r) => `${r.site} · ${fmtD(r.date)}`], [["Received", "received", $full]], "received") })} />
+            <CountPill n={$(d.summary.openShort != null ? d.summary.openShort : d.summary.shortfall)} label="Still short (open)" tone={(d.summary.openShort ?? d.summary.shortfall) > 0 ? "red" : "ok"}
+              onClick={() => setGd({ title: "Still short — open days by site", sub: "cash expected but not yet banked/confirmed", render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Still short", "unbanked", $full]], "unbanked") })} />
+            <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"}
+              onClick={() => setGd({ title: "Open days — by site", sub: `${d.summary.openDays} day-close${d.summary.openDays === 1 ? "" : "s"} still open`, render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Oldest", "oldest", (v) => fmtD(v)]], "openDays", { sumCols: false, totalLabel: `${d.summary.openDays} open` }) })} />
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
@@ -3301,6 +3757,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
         </div>
       </DetailSheet>}
       {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} readOnly={readOnly} onDone={() => { setDrill(null); setSiteDrill(null); reload(); }} /></DetailSheet>}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Wrap>
   );
 }
@@ -3516,6 +3973,43 @@ function UnaccountedDrill({ days, from, to }) {
   );
 }
 
+// Takings → cash top-line (Sales · Expected · Received · Variance + tender mix),
+// lifted from the old Cash-collections view. It opens the Cash-inflows screen with
+// the same summary the executives asked to keep, above the per-site accounting.
+// Same data sources as that view (getCashRecon for expected/received/variance,
+// getCash for takings + tender mix) so the numbers match verbatim. Renders nothing
+// while loading or when there's no cash in the window — never an empty block.
+function CashReconSummary({ days, from, to }) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let live = true;
+    if (!days) return;
+    Promise.all([getCashRecon(days, from, to), getCash(days, from, to).catch(() => null)])
+      .then(([rec, cash]) => {
+        if (!live) return;
+        let sales = 0, expected = 0, received = 0, variance = 0;
+        for (const r of (rec.rows || [])) { expected += r.expected || 0; received += r.received || 0; variance += r.variance || 0; }
+        for (const s of (cash?.sites || [])) { sales += s.expected || 0; }
+        setD({ sales, expected, received, variance, tender: cash?.tender });
+      })
+      .catch(() => { if (live) setD(null); });
+    return () => { live = false; };
+  }, [days, from, to]);
+  const $ = (v) => "$" + full(v);
+  if (!d || (!d.expected && !d.sales)) return null;
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <CountPill n={$(d.sales)} label="Sales" tone="ok" />
+        <CountPill n={$(d.expected)} label="Expected cash" tone="ok" />
+        <CountPill n={$(d.received)} label="Received cash" tone="ok" />
+        <CountPill n={$(d.variance)} label="Variance" tone={Math.abs(d.variance) > d.expected * 0.01 ? "red" : "ok"} />
+      </div>
+      {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
+    </>
+  );
+}
+
 export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   // standalone → the STANDARD Today/Yesterday/Month/Year/Range ribbon like every
   // other screen; embedded → follow the parent Bird's-eye window (from/to props).
@@ -3525,6 +4019,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
   const [carriedDrill, setCarriedDrill] = useState(false);
   const [unaccDrill, setUnaccDrill] = useState(false);
+  const [gd, setGd] = useState(null);   // general per-site drill sheet
   const w = embedded ? { from, to, days: 90 } : periodWindow(period, range);
   const effFrom = w.from, effTo = w.to;
   useEffect(() => {
@@ -3551,9 +4046,12 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       )}
       {d && (d.expected > 0 || d.submitted > 0) && (
         <>
+          <CashReconSummary days={w.days || 90} from={effFrom} to={effTo} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
-            <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF" />
-            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048" />
+            <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF"
+              onClick={() => setGd({ title: "Expected cash — by site", sub: `${$(d.expected)} · the cash portion of takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Expected cash", "expected", $full]], "expected") })} />
+            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048"
+              onClick={() => setGd({ title: "Accounted for — by site", sub: `${$(d.submitted)} · sent to HQ + banked + swipe + mobile + petty + on-hand`, render: breakdownDrill(d.sites, ["Site", "site"], [["Accounted for", "submitted", $full]], "submitted") })} />
             <div onClick={() => setUnaccDrill(true)} style={{ cursor: "pointer" }} title="Tap for the per-site chase list">
               <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, (d.expected || 0) - (d.submitted || 0)))} sub="expected − accounted for · tap to drill ›" accent="#D96A5B" />
             </div>
@@ -3579,12 +4077,10 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <Panel style={{ marginBottom: 12 }}>
             <span className="lbl">How the cash was handled <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· in-app submissions; earlier days from the HQ-confirmed recon (received at HQ, banking, POS, petty)</span></span>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
-              <KpiCard label="Sent to HQ" value={$(d.hq)} />
-              <KpiCard label="Banked" value={$(d.banked)} />
-              <KpiCard label="Card swipe" value={$(d.swipe)} />
-              <KpiCard label="Mobile money" value={$(d.mobile)} />
-              <KpiCard label="Site petty cash" value={$(d.petty)} sub="also under Outflows" />
-              <KpiCard label="Cash on hand" value={$(d.onHand)} />
+              {[["Sent to HQ", "hq"], ["Banked", "banked"], ["Card swipe", "swipe"], ["Mobile money", "mobile"], ["Site petty cash", "petty"], ["Cash on hand", "onHand"]].map(([lab, key]) => (
+                <KpiCard key={key} label={lab} value={$(d[key])} sub={key === "petty" ? "also under Outflows" : undefined}
+                  onClick={() => setGd({ title: `${lab} — by site`, sub: `${$(d[key])} · sites that reported ${lab.toLowerCase()}`, render: breakdownDrill((d.sites || []).filter((s) => s.subDays), ["Site", "site"], [[lab, key, $full]], key, { empty: "No site reported this yet." }) })} />
+              ))}
             </div>
             <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Reconciliation — declared vs what actually arrived and banked — is on the <b>Cash office</b> screen.</div>
           </Panel>
@@ -3593,8 +4089,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
               <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Cash on hand at sites</Th></tr></thead>
               <tbody>{filtered.map((s) => (
-                <tr key={s.siteId} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff" }}>
-                  <Td>{s.site}{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
+                <tr key={s.siteId} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff", cursor: "pointer" }}>
+                  <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span>{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
                   <Td right style={{ fontWeight: 700 }}>{$(s.expected)}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.hq) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.banked) : "—"}</Td>
@@ -3612,6 +4108,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       )}
       {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
       {unaccDrill && <DetailSheet title="Unaccounted for" sub={`expected − accounted · ${effFrom && effTo ? `${fmtD(effFrom)} – ${fmtD(effTo)}` : "current window"}`} onClose={() => setUnaccDrill(false)}><UnaccountedDrill days={w.days || 90} from={effFrom} to={effTo} /></DetailSheet>}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Shell>
   );
 }
@@ -3625,6 +4122,7 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
   const [q, setQ] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [drill, setDrill] = useState(null);
+  const [gd, setGd] = useState(null);   // Total → by-category breakdown drill
   const isZig = currency === "ZiG";
   const apiCur = isZig ? "ZWL" : "USD";   // ZiG figures come from the ZWL book, converted
   // embedded → follow the Bird's-eye window; standalone → the STANDARD ribbon
@@ -3664,8 +4162,8 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
       {d && d.count === 0 && <Note tone="blue" title="No outflows yet">No {currency} outflows recorded for this window.</Note>}
       {d && d.count > 0 && (
         <>
-          <Panel style={{ marginBottom: 12 }}>
-            <div className="lbl" style={{ marginBottom: 4 }}>Total paid out{d.from ? ` · ${fmtD(d.from)} → ${fmtD(d.to)}` : ""}</div>
+          <Panel style={{ marginBottom: 12, cursor: "pointer" }} onClick={() => setGd({ title: "Total paid out — by category", sub: `${$(d.total)} · ${full(d.count)} payments`, render: breakdownDrill(d.byCategory, ["Category", "category"], [["Paid out", "total", $], ["Payments", "n", (v) => v]], "total") })}>
+            <div className="lbl" style={{ marginBottom: 4 }}>Total paid out{d.from ? ` · ${fmtD(d.from)} → ${fmtD(d.to)}` : ""} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></div>
             <div className="mono" style={{ fontSize: 30, fontWeight: 600, color: "var(--navy)" }}>{$(d.total)}</div>
             <div className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{full(d.count)} payments</div>
           </Panel>
@@ -3729,6 +4227,7 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
           ))}
         </DetailSheet>
       )}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Shell>
   );
 }
@@ -4145,22 +4644,25 @@ export function RetailDashboard() {
   // pick any other date.
   // default to YESTERDAY — reporting runs a day late, so today has no complete
   // figures yet; yesterday is the last full trading day.
-  const [date, setDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); });
+  // Standard period ribbon (Today · Yesterday · Month · Year · Range) — the retail
+  // board is a single-day snapshot, so a period resolves to its representative day
+  // (periodWindow.retailDate: today/yesterday direct; month/year → yesterday, the last
+  // full day; range → its end), exactly as the Watchlist feeds this same board.
+  const [period, setPeriod] = useState("yesterday");
+  const [range, setRange] = useState(defaultRange);
   const [which, setWhich] = useState("stock");
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [drill, setDrill] = useState(null);
+  const date = periodWindow(period, range).retailDate;
   const load = useCallback(() => {
     setData(null); setErr(null);
-    getRetail(date).then((d) => { setData(d); if (!date && d.date) setDate(d.date); }).catch((e) => setErr(e.message));
+    getRetail(date).then(setData).catch((e) => setErr(e.message));
   }, [date]);
   useEffect(() => { load(); }, [load]);
   // tap any site (on any board) → one sheet with its full picture for the day
   const openSite = (site) => setDrill({ title: site.name, sub: `${site.region ? site.region + " · " : ""}${fmtD(data.date)}`, render: retailSiteDetail(data, site) });
 
-  const ymd = (o) => { const dd = new Date(); dd.setDate(dd.getDate() - o); return dd.toISOString().slice(0, 10); };
-  const yday = ymd(1), tday = ymd(0);
-  const sel = date === tday ? "today" : date === yday ? "yesterday" : "pick";
   return (
     <Wrap>
       {/* Header — same look & feel as the Bird's-eye: title left, the day ribbon top-right. */}
@@ -4170,13 +4672,7 @@ export function RetailDashboard() {
           <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Stock · Price · Sales · showing <b style={{ color: "var(--navy)" }}>{fmtD(data?.date || date)}</b></div>
         </div>
         <div style={{ minWidth: 240, flex: "0 1 340px" }}>
-          <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["pick", "Pick a date"]]} value={sel}
-            onChange={(v) => { if (v === "today") setDate(tday); else if (v === "yesterday") setDate(yday); else setDate((dd) => (dd === tday || dd === yday ? ymd(2) : dd)); }} />
-          {sel === "pick" && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -6, marginBottom: 8 }}>
-              <input type="date" value={date} max={tday} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 160 }} />
-            </div>
-          )}
+          <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} showLabel={false} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
@@ -4290,12 +4786,12 @@ function retailSiteDetail(d, site) {
   };
 }
 
-const CountPill = ({ n, total, label, tone = "blue" }) => {
+const CountPill = ({ n, total, label, tone = "blue", onClick }) => {
   const c = { blue: "#2B3990", ok: "#4C9E2A", amber: "#C07A00", red: "#D63B2E" }[tone];
   return (
-    <div style={{ flex: 1, background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: "12px 14px", textAlign: "center" }}>
+    <div onClick={onClick} style={{ flex: 1, background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: "12px 14px", textAlign: "center", cursor: onClick ? "pointer" : undefined }}>
       <div className="mono" style={{ fontSize: 24, fontWeight: 600, color: c }}>{n}{total != null && <span style={{ fontSize: 14, color: "var(--steel)" }}>/{total}</span>}</div>
-      <div className="lbl" style={{ marginBottom: 0 }}>{label}</div>
+      <div className="lbl" style={{ marginBottom: 0 }}>{label}{onClick ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</div>
     </div>
   );
 };
@@ -4845,11 +5341,21 @@ export function TripTrack({ tripNo }) {
   );
   return (
     <div style={{ padding: "4px 2px 2px" }}>
-      {/* last known position */}
-      <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 8 }}>
-        Last seen <b style={{ color: "var(--navy)" }}>{t.last ? new Date(t.last.at).toLocaleString() : "—"}</b>
-        {t.last?.speedKmh != null ? ` · ${t.last.speedKmh} km/h` : ""}
-        {t.last ? ` · ${t.last.lat.toFixed(4)}, ${t.last.lon.toFixed(4)}` : ""}
+      {/* last known position — place name first (nearest known site), then speed + coords */}
+      <div style={{ marginBottom: 10 }}>
+        {t.last?.place?.name && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 15, fontWeight: 700, color: "var(--navy)", marginBottom: 3 }}>
+            <span>📍</span>
+            <span>{t.last.place.name}</span>
+          </div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 10px", fontSize: 12, color: "var(--steel)" }}>
+          <span>Last seen <b style={{ color: "var(--navy)" }}>{t.last ? new Date(t.last.at).toLocaleString() : "—"}</b></span>
+          <span className="mono" style={{ fontWeight: 700, color: t.last?.speedKmh > 3 ? "#3C9A52" : "var(--navy)" }}>
+            {t.last?.speedKmh != null ? `${t.last.speedKmh} km/h` : "speed —"}
+          </span>
+          {t.last && <span className="mono" style={{ fontSize: 11 }}>{t.last.lat.toFixed(4)}, {t.last.lon.toFixed(4)}</span>}
+        </div>
       </div>
       {/* per-drop distance + ETA */}
       {(t.destinations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 10 }}>
@@ -4860,6 +5366,24 @@ export function TripTrack({ tripNo }) {
             <span className="mono" style={{ fontSize: 12, whiteSpace: "nowrap", color: d.distanceKm == null ? "#3C9A52" : "var(--navy)" }}>{d.distanceKm == null ? "delivered ✓" : `${d.distanceKm} km · ~${d.etaMin} min`}</span>
           </div>))}
       </div>}
+      {/* WHERE IS THE TRUCK — a one-tap Google Maps directions link from the truck to
+          the next drop (no embedded map). */}
+      {t.last && (() => {
+        const pending = (t.destinations || []).filter((d) => !d.done && d.lat != null && d.lon != null);
+        const next = pending[0];
+        const gmaps = next
+          ? `https://www.google.com/maps/dir/?api=1&origin=${t.last.lat},${t.last.lon}&destination=${next.lat},${next.lon}&travelmode=driving`
+          : `https://www.google.com/maps/search/?api=1&query=${t.last.lat},${t.last.lon}`;
+        return (
+          <div style={{ marginBottom: 10 }}>
+            <a href={gmaps} target="_blank" rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 14px", borderRadius: 12, background: "#2B3990", color: "#fff", fontWeight: 700, fontSize: 13, textDecoration: "none", textAlign: "center" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+              {next ? `Google Maps — drive to ${next.site} (${next.distanceKm} km · ~${next.etaMin} min) ↗` : "Open truck location in Google Maps ↗"}
+            </a>
+          </div>
+        );
+      })()}
       {/* summary */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <S label="Distance" value={t.distanceKm + " km"} />
@@ -4874,7 +5398,11 @@ export function TripTrack({ tripNo }) {
         <div className="lbl" style={{ padding: "2px 4px 6px" }}>Stops</div>
         {t.stops.map((s, i, a) => (
           <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none", fontSize: 12 }}>
-            <span className="mono" style={{ color: "var(--steel)" }}>{s.lat.toFixed(4)}, {s.lon.toFixed(4)}</span>
+            <span style={{ minWidth: 0 }}>
+              {s.place?.name
+                ? <><span style={{ fontWeight: 600, color: "var(--navy)" }}>📍 {s.place.name}</span> <a href={`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}`} target="_blank" rel="noopener noreferrer" className="mono" style={{ color: "var(--steel)", fontSize: 10.5 }}>map ↗</a></>
+                : <span className="mono" style={{ color: "var(--steel)" }}>{s.lat.toFixed(4)}, {s.lon.toFixed(4)}</span>}
+            </span>
             <span style={{ whiteSpace: "nowrap" }}><b>{fmtDurMin(s.minutes)}</b> <span style={{ color: "var(--steel)" }}>from {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></span>
           </div>))}
       </div>}
@@ -4923,19 +5451,9 @@ export function DeliveriesInProgress() {
         {sub && <div style={{ fontSize: 9.5, color: tone === "#C0392B" ? "#C0392B" : "var(--steel)" }}>{sub}</div>}
       </div>
     );
-    const arrow = <div style={{ color: "var(--steel)", fontSize: 13, alignSelf: "center" }}>→</div>;
-    const dipped = t.truckDip > 0, anyDel = t.delivered > 0;
     return (
       <div style={{ display: "flex", alignItems: "stretch", gap: 2, margin: "8px 0", padding: "8px 4px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10 }}>
         {step("Loaded", `${full(t.qty)} L`, "at depot")}
-        {arrow}
-        {step("Truck dip", dipped ? `${full(t.truckDip)} L` : "—",
-          dipped ? (t.transitLoss > 0 ? `−${full(t.transitLoss)} L transit` : "no transit loss") : (t.collected ? "awaiting arrival" : "awaiting collection"),
-          dipped ? (t.transitLoss > 0 ? "#C0392B" : "var(--navy)") : "var(--steel)")}
-        {arrow}
-        {step("Site received", anyDel ? `${full(t.delivered)} L` : "—",
-          dipped && t.dischargeLoss > 0 ? `−${full(t.dischargeLoss)} L discharge` : (anyDel ? "received" : "not offloaded yet"),
-          anyDel ? (dipped && t.dischargeLoss > 0 ? "#C0392B" : "#1E7A3D") : "var(--steel)")}
       </div>
     );
   };
@@ -4965,8 +5483,7 @@ export function DeliveriesInProgress() {
                 <div style={{ width: `${t.progress}%`, height: "100%", background: "#2B3990" }} />
               </div>
               <div style={{ fontSize: 11, color: "var(--steel)" }}>{t.tripNo} · {t.truck}{t.driver ? ` · ${t.driver}` : ""} · {t.warehouse} {t.product} · {full(t.remaining)} L still on truck · started {fmtD(t.tripDate)}{t.collectedAt ? ` · collected ${t.collectedAt}` : ""}</div>
-              <button type="button" className="pill-ghost" style={{ padding: "5px 12px", fontSize: 12, marginTop: 9 }} onClick={() => setTrackFor((v) => (v === t.tripNo ? null : t.tripNo))}>{trackFor === t.tripNo ? "Hide track ▲" : "📍 Track truck ▾"}</button>
-              {trackFor === t.tripNo && <div style={{ marginTop: 8, borderTop: "1px solid var(--line)", paddingTop: 8 }}><TripTrack tripNo={t.tripNo} /></div>}
+              <div style={{ marginTop: 8, borderTop: "1px solid var(--line)", paddingTop: 8 }}><TripTrack tripNo={t.tripNo} /></div>
             </div>
           ))}
         </div>
@@ -5240,12 +5757,16 @@ export function InventoryView() {
         <>
           <div style={{ marginBottom: 14 }}>
             <Hero label="TOTAL FUEL ON HAND" value={full(d.grandTotal)} unit="L"
-              sub={d.grandValue ? `≈ $${full(d.grandValue)} working capital · at FIFO cost` : "depots + transit + sites"} />
+              sub={d.grandValue ? `≈ $${full(d.grandValue)} working capital · at FIFO cost` : "depots + transit + sites"}
+              onClick={() => setDrill({ title: "Total fuel — where it is", sub: `${full(d.grandTotal)} L`, render: breakdownDrill([{ where: "At depots", litres: d.warehouseTotal }, { where: "In transit", litres: d.transitNow }, { where: "At sites", litres: d.sitesTotal }], ["Where", "where"], [["Litres", "litres", (v) => full(v) + " L"]], "litres") })} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
-            <Stat label="At depots" value={full(d.warehouseTotal)} unit="L" sub={d.warehouseValue ? `$${full(d.warehouseValue)} · ${d.warehouses.length} depots` : `${d.warehouses.length} warehouses`} />
-            <Stat label="In transit" value={full(d.transitNow)} unit="L" tone="amber" sub={d.transitValue ? `$${full(d.transitValue)} · on trucks` : "on trucks"} />
-            <Stat label="At sites" value={full(d.sitesTotal)} unit="L" sub={d.sitesValue ? `$${full(d.sitesValue)} · ${d.siteCount} sites` : `${d.siteCount} sites`} />
+            <Stat label="At depots" value={full(d.warehouseTotal)} unit="L" sub={d.warehouseValue ? `$${full(d.warehouseValue)} · ${d.warehouses.length} depots` : `${d.warehouses.length} warehouses`}
+              onClick={() => setDrill({ title: "At depots — by warehouse", sub: `${full(d.warehouseTotal)} L on hand`, render: breakdownDrill(d.warehouses, ["Warehouse", "name"], [["Stock", "stock", (v) => full(v) + " L"]], "stock") })} />
+            <Stat label="In transit" value={full(d.transitNow)} unit="L" tone="amber" sub={d.transitValue ? `$${full(d.transitValue)} · on trucks` : "on trucks"}
+              onClick={() => setDrill({ title: "In transit — by truck", sub: `${full(d.transitNow)} L on ${(d.trucks || []).length} trip${(d.trucks || []).length === 1 ? "" : "s"}`, render: breakdownDrill(d.trucks, ["Truck", "truck"], [["Trip", "tripNo", (v) => v], ["Product", "product", (v) => v], ["Litres", "litres", (v) => full(v) + " L"]], "litres") })} />
+            <Stat label="At sites" value={full(d.sitesTotal)} unit="L" sub={d.sitesValue ? `$${full(d.sitesValue)} · ${d.siteCount} sites` : `${d.siteCount} sites`}
+              onClick={() => setDrill({ title: "At sites — by site", sub: `${full(d.sitesTotal)} L across ${d.siteCount} sites`, render: breakdownDrill(d.sites, ["Site", "site"], [["Blend", "blend", (v) => full(v) + " L"], ["Diesel", "diesel", (v) => full(v) + " L"], ["Total", "total", (v) => full(v) + " L"]], "total") })} />
           </div>
           {d.costParts && (
             <Panel style={{ marginBottom: 14 }}>
@@ -6612,6 +7133,54 @@ export function UnlockRequests() {
 // The dedicated GPS screen: every live trip, pick one, see the full journey —
 // route map, last seen, distance/duration, moving vs stopped, every stop (where
 // + how long), GPS gaps, and per-drop distance + ETA. The anti-pilferage log.
+// Manager screen: drivers trying to sign in on a NEW phone. Approve rebinds the
+// account to the new device; deny keeps it locked to the current one.
+export function DeviceRequests() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState(null), [key, setKey] = useState(0);
+  useEffect(() => { setErr(null); getDeviceRequests().then(setD).catch((e) => setErr(e.message)); }, [key]);
+  const decide = async (seq, approve) => { setBusy(seq); try { await decideDeviceRequest(seq, approve); setKey((k) => k + 1); } catch (e) { setErr(e.message); } finally { setBusy(null); } };
+  if (err) return <Wrap><SectionHead title="Device requests" /><Note tone="red" title="Couldn't load">{err} <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px" }} onClick={() => setKey((k) => k + 1)}>Retry</button></Note></Wrap>;
+  if (!d) return <Wrap><SectionHead title="Device requests" /><Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel></Wrap>;
+  const reqs = d.requests || [], pending = reqs.filter((r) => r.status === "pending"), past = reqs.filter((r) => r.status !== "pending");
+  return (
+    <Wrap>
+      <SectionHead title="Device requests" sub="A driver may only sign in on one phone. Approve to move them to a new phone, deny to keep them on the current one." />
+      <RefreshBar data={d} onRefresh={() => setKey((k) => k + 1)} />
+      {reqs.length === 0 && <Note tone="ok" title="Nothing to approve">Every driver is signed in on their own bound phone.</Note>}
+      {pending.length > 0 && <div className="lbl" style={{ margin: "6px 2px 8px" }}>Pending approval · {pending.length}</div>}
+      {pending.map((r) => (
+        <Panel key={r.seq} style={{ marginBottom: 10, borderLeft: "4px solid var(--amber)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+            <span style={{ fontWeight: 700, color: "var(--navy)", fontSize: 15 }}>{r.driver_name || r.actor_login}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{r.ref} · {r.requested_at}</span>
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--steel)", margin: "6px 0 11px", lineHeight: 1.5 }}>Trying to sign in on <b>{r.label || "a new phone"}</b>. Approving binds this account to the new phone — the old one stops working until the next change is approved.</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" disabled={busy === r.seq} onClick={() => decide(r.seq, true)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "var(--ok)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>{busy === r.seq ? "…" : "Approve new phone"}</button>
+            <button type="button" disabled={busy === r.seq} onClick={() => decide(r.seq, false)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--red)", background: "#fff", color: "var(--red)", fontWeight: 700, cursor: "pointer" }}>Deny</button>
+          </div>
+        </Panel>
+      ))}
+      {past.length > 0 && (<>
+        <div className="lbl" style={{ margin: "14px 2px 8px" }}>Recent decisions</div>
+        <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Driver</Th><Th>Ref</Th><Th>Phone</Th><Th>Decision</Th><Th>By</Th></tr></thead>
+            <tbody>{past.map((r) => (
+              <tr key={r.seq} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{r.driver_name || r.actor_login}</Td>
+                <Td style={{ color: "var(--steel)" }}>{r.ref}</Td>
+                <Td style={{ color: "var(--steel)" }}>{r.label || "—"}</Td>
+                <Td style={{ fontWeight: 700, color: r.status === "approved" ? "var(--ok)" : "var(--red)" }}>{r.status}</Td>
+                <Td style={{ color: "var(--steel)" }}>{r.decided_by || "—"}</Td>
+              </tr>))}</tbody>
+          </table>
+        </div></Panel>
+      </>)}
+    </Wrap>
+  );
+}
+
 export function JourneyTracking() {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [sel, setSel] = useState(null);

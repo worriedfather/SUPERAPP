@@ -25,18 +25,20 @@ export const setRemindersOn = (on) => localStorage.setItem(REMEMBER, on ? "on" :
 // Reminder set per role. Ids are stable so we can cancel/reschedule cleanly.
 function planFor(kind, site) {
   const who = site ? ` for ${site}` : "";
+  // `tab` deep-links a TAPPED reminder straight to the screen where the person acts,
+  // so a reminder never dead-ends on tap.
   if (kind === "site_manager" || kind === "retail_supervisor") return [
-    { id: 101, hour: 8,  minute: 0,  title: "DA price survey", body: `Submit today's price survey${who}.` },
-    { id: 102, hour: 8,  minute: 30, title: "DA night-shift figures", body: `Submit night-shift stock & sales${who}.` },
-    { id: 103, hour: 20, minute: 0,  title: "DA day-shift figures", body: `Submit day-shift stock & sales${who}.` },
+    { id: 101, hour: 8,  minute: 0,  title: "DA price survey", body: `Submit today's price survey${who}.`, tab: "submit" },
+    { id: 102, hour: 8,  minute: 30, title: "DA night-shift figures", body: `Submit night-shift stock & sales${who}.`, tab: "submit" },
+    { id: 103, hour: 20, minute: 0,  title: "DA day-shift figures", body: `Submit day-shift stock & sales${who}.`, tab: "submit" },
   ];
   if (kind === "depot" || kind === "logistics") return [
-    { id: 111, hour: 12, minute: 30, title: "DA reconciliation", body: "Submit today's warehouse reconciliation (Msasa / Feruka / Bulawayo)." },
-    { id: 112, hour: 17, minute: 0,  title: "DA delivery notes", body: "Log today's delivery notes." },
+    { id: 111, hour: 12, minute: 30, title: "DA reconciliation", body: "Submit today's warehouse reconciliation (Msasa / Feruka / Bulawayo).", tab: "recon" },
+    { id: 112, hour: 17, minute: 0,  title: "DA delivery notes", body: "Log today's delivery notes.", tab: "deliver" },
   ];
   if (kind === "yard") return [
-    { id: 121, hour: 8,  minute: 0,  title: "DA workshop — morning update", body: "Log the morning status on trucks in the workshop." },
-    { id: 122, hour: 17, minute: 0,  title: "DA workshop — evening update", body: "Log the end-of-day status on trucks in the workshop." },
+    { id: 121, hour: 8,  minute: 0,  title: "DA workshop — morning update", body: "Log the morning status on trucks in the workshop.", tab: "yardwork" },
+    { id: 122, hour: 17, minute: 0,  title: "DA workshop — evening update", body: "Log the end-of-day status on trucks in the workshop.", tab: "yardwork" },
   ];
   return [];
 }
@@ -88,9 +90,23 @@ export async function initLocalNotificationTaps(onOpenTab) {
   try {
     L.addListener("localNotificationActionPerformed", (e) => {
       const extra = (e && e.notification && e.notification.extra) || {};
-      if (extra.tab && typeof onOpenTab === "function") onOpenTab(extra.tab, extra);
+      // ALWAYS navigate — even a tab-less/stale notification opens the app to a real
+      // screen (goFocus falls back to home/inbox) instead of dead-ending on tap.
+      if (typeof onOpenTab === "function") onOpenTab(extra.tab || null, extra);
     });
   } catch { /* plugin without the listener API → no-op */ }
+}
+
+// Clear notifications already sitting in the tray — call on app open/resume so
+// stale ones (from an earlier session/build, or already acted on in-app) don't
+// linger and dead-end when tapped. Best-effort across local + push plugins.
+export async function clearDeliveredNotifications() {
+  const L = await ln();
+  if (L) { try { await L.removeAllDeliveredNotifications(); } catch { /* ignore */ } }
+  try {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    await PushNotifications.removeAllDeliveredNotifications();
+  } catch { /* plugin absent / web → nothing to clear */ }
 }
 
 export async function requestPermission() {
@@ -116,6 +132,7 @@ export async function syncReminders(kind, site) {
       notifications: plan.map((p) => ({
         id: p.id, title: p.title, body: p.body,
         schedule: { on: { hour: p.hour, minute: p.minute }, allowWhileIdle: true },
+        extra: { tab: p.tab },   // so a tapped reminder deep-links to its screen
       })),
     });
     return { scheduled: plan.length, native: true };
