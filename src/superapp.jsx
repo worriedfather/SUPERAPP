@@ -1709,6 +1709,7 @@ export function periodWindow(period, range) {
   const daysBetween = (a, b) => Math.round((a - b) / 86400000) + 1;           // inclusive
   if (period === "today") return { period, days: 1, date: todayISO, retailDate: todayISO, from: todayISO, to: todayISO, label: `Today · ${fmtD(todayISO)}` };
   if (period === "month") { const first = new Date(now.getFullYear(), now.getMonth(), 1); const days = daysBetween(today, first); return { period, days, date: ydISO, retailDate: ydISO, from: iso(first), to: ydISO, label: `This month · ${days} day${days === 1 ? "" : "s"}` }; }
+  if (period === "lastmonth") { const first = new Date(now.getFullYear(), now.getMonth() - 1, 1); const last = new Date(now.getFullYear(), now.getMonth(), 0); const days = daysBetween(last, first); const name = first.toLocaleString(undefined, { month: "long", year: "numeric" }); return { period, days, date: iso(last), retailDate: iso(last), from: iso(first), to: iso(last), label: `${name} · full month (${days} days)` }; }
   if (period === "year") { const first = new Date(now.getFullYear(), 0, 1); const days = daysBetween(today, first); return { period, days, date: ydISO, retailDate: ydISO, from: iso(first), to: ydISO, label: `Year to date · ${days} days` }; }
   if (period === "range") { const days = Math.max(1, daysBetween(new Date(range.to), new Date(range.from))); return { period, days, date: range.to, retailDate: range.to, from: range.from, to: range.to, label: `${fmtD(range.from)} → ${fmtD(range.to)} · ${days} days` }; }
   return { period: "yesterday", days: 1, date: ydISO, retailDate: ydISO, from: ydISO, to: ydISO, label: `Yesterday · ${fmtD(ydISO)}` };   // default (reporting runs a day late)
@@ -1721,7 +1722,7 @@ export function PeriodBar({ period, range, onPeriod, onRange, showLabel = true }
   const win = periodWindow(period, range);
   return (
     <div style={{ margin: "0 2px 8px" }}>
-      <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["month", "Month"], ["year", "Year"], ["range", "Range"]]} value={period} onChange={onPeriod} />
+      <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["month", "Month"], ["lastmonth", "Last month"], ["year", "Year"], ["range", "Range"]]} value={period} onChange={onPeriod} />
       {period === "range" && (
         <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -8, marginBottom: 10, flexWrap: "wrap" }}>
           <input type="date" value={range.from} max={range.to} onChange={(e) => onRange((r) => ({ ...r, from: e.target.value }))} style={{ maxWidth: 150 }} />
