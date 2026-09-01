@@ -6,6 +6,7 @@ export const STATIONS = [
   ["NOIC Msasa", -17.848, 31.133, true, null],
   ["Feruka Mutare", -18.9938, 32.5817, true, null],
   ["Chisumbanje", -20.8676, 32.2364, true, "Green Fuel Chisumbanje Ethanol plant (46JP+WGX)"],
+  ["Masimba Willowvale", -17.8833, 30.9686, "Masimba, Willowvale, Harare (bulk customer)"],
   ["Mutare 4th Street", -18.971749, 32.674684, "78/80 4th Street, Mutare"],
   ["Bulawayo Fairbridge", -20.136523, 28.621787, "Fairstar Farm, Harare Road, Bulawayo"],
   ["Bulawayo North End", -20.137319, 28.592282, "2A Robert Mugabe Way, Eastcot Avenue, Bulawayo"],
