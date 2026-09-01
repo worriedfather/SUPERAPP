@@ -6142,9 +6142,9 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse}
-              onChange={(v) => setF((s) => ({ ...s, warehouse: v, product: v === "Chisumbanje" ? "Ethanol" : (s.product === "Ethanol" ? "Diesel" : s.product) }))}
+              onChange={(v) => setF((s) => ({ ...s, warehouse: v, product: v === "Chisumbanje" ? "Ethanol" : s.product }))}
               options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP", "Ethanol"]} /></Field></div>
           </div>
           {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b>{overStock ? " — drops exceed this" : ""}</div>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -6166,12 +6166,12 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           </div>
           {f.trailer && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>trailer {f.trailer}{f.truckName ? ` · horse ${f.truckName}` : ""} <span style={{ color: "#9AA6B8" }}>(from master data)</span></div>}
           {/* drops */}
-          <div className="lbl" style={{ marginBottom: 6 }}>Drops — site &amp; litres</div>
+          <div className="lbl" style={{ marginBottom: 6 }}>{f.product === "Ethanol" ? "Drops — destination depot & litres" : "Drops — site & litres"}</div>
           {drops.map((d, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.warehouse === "Chisumbanje" ? "Depot…" : "Site…"} title="Drop site"
-                options={f.warehouse === "Chisumbanje"
-                  ? [{ value: "Msasa", label: "Msasa depot" }, { value: "Feruka", label: "Feruka depot" }]
+              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
+                options={f.product === "Ethanol"
+                  ? ["Msasa", "Feruka", "Chisumbanje"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
                   : sites.map((s) => ({ value: s.name, label: s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
               <input style={{ flex: 1 }} inputMode="decimal" placeholder="litres" value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
               {drops.length > 1 && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
