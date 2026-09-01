@@ -1598,7 +1598,10 @@ function trucksDrill(trucks) {
                 <Td style={{ color: "var(--steel)" }}>{t.tripNo}</Td>
                 <Td>{t.product}</Td>
                 <Td right style={{ fontWeight: 700 }}>{L(t.litres)}</Td>
-                <Td style={{ color: "var(--steel)" }}>{t.route || `${t.from} → ${(t.to || []).join(", ")}`}</Td>
+                <Td style={{ color: "var(--steel)" }}>
+                  {t.route || `${t.from} → ${(t.to || []).join(", ") || "all delivered"}`}
+                  {(t.deliveredTo || []).length > 0 && <div style={{ fontSize: 10.5, color: "var(--ok)" }}>✓ delivered: {t.deliveredTo.join(", ")}</div>}
+                </Td>
               </tr>
             ))}
             <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
