@@ -2037,7 +2037,7 @@ export function ExecutiveDashboard() {
           {asOfLabel && !SELF_PERIOD.includes(tab) && <div className="mono" style={{ fontSize: 11, color: d?.asOf?.isPartial && period === "today" ? "var(--amber)" : "var(--steel)", marginTop: 3 }}>Showing {pLabel.toLowerCase()} · {asOfLabel}</div>}
         </div>
         <div style={{ minWidth: 240, flex: "0 1 340px", display: SELF_PERIOD.includes(tab) ? "none" : undefined }}>
-          <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["month", "Month"], ["year", "Year"], ["range", "Range"]]} value={period} onChange={setPeriod} />
+          <Segmented options={[["today", "Today"], ["yesterday", "Yesterday"], ["month", "Month"], ["lastmonth", "Last month"], ["year", "Year"], ["range", "Range"]]} value={period} onChange={setPeriod} />
           {period === "range" && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: -8, marginBottom: 12, flexWrap: "wrap" }}>
               <input type="date" value={range.from} max={range.to} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} style={{ maxWidth: 150 }} />
