@@ -896,7 +896,8 @@ function App() {
   const [alerts, setAlerts] = useState(null);   // { count, items } — actionable items for this user
   const [toast, setToast] = useState(null);      // last-resort notice for any unhandled failure
   const [net, setNet] = useState(() => ({ online: typeof navigator === "undefined" || navigator.onLine, pending: outboxCount() }));
-  const [mustUpdate, setMustUpdate] = useState(false);   // server requires a newer build
+  const [mustUpdate, setMustUpdate] = useState(false);   // server requires a newer build (rare hard gate)
+  const [updateReady, setUpdateReady] = useState(false); // a newer build exists — soft, dismissible nudge
   // TINDER-STYLE GPS GATE (drivers, native app): with location OFF the app is a
   // brick — geo-lock, tracking and evidence all need it. Poll cheaply; the gate
   // lifts ITSELF the moment GPS comes back on (no "check again" tap needed).
@@ -919,21 +920,19 @@ function App() {
     let cancelled = false;
     const check = () => getHealth().then((h) => {
       if (cancelled || !h || h.__offline) return;
-      // NATIVE: hard update gate — block with an "update required" screen when this
-      // app is below the minimum build the server accepts. ANDROID ONLY: it sideloads,
-      // so the gate hands over a working APK. iOS is EXEMPT — Apple forbids in-app
-      // store links, so iOS updates through TestFlight/App Store, never a gate button.
-      if (isNative()) { if (!isIOS() && Number(h.minBuild) > APP_BUILD) setMustUpdate(true); return; }
-      // WEB: silently self-update a stale tab. `build` is the latest deployed web
-      // build; index.html is served no-store, so a reload fetches the current bundle.
-      // sessionStorage guard prevents a reload loop if an update can't complete.
-      if (Number(h.build) > APP_BUILD) {
-        try {
-          if (sessionStorage.getItem("da_reloaded_for") === String(h.build)) return;
-          sessionStorage.setItem("da_reloaded_for", String(h.build));
-          window.location.reload();
-        } catch { /* ignore */ }
-      }
+      const build = Number(h.build) || 0, minB = Number(h.minBuild) || 0;
+      if (build <= APP_BUILD) return;   // already on the latest — nothing to prompt
+      // HARD gate is kept ONLY as an emergency escape hatch: it fires when the server
+      // raises MIN_BUILD ABOVE the field (Android only; iOS never). Normally MIN_BUILD
+      // sits at/below field builds, so this stays dormant and users get the soft,
+      // NON-BLOCKING nudge below instead — request an update, don't trap them (owner,
+      // 2026-09-01: "request an update but don't block, on iOS and Android").
+      if (isNative() && !isIOS() && minB > APP_BUILD) { setMustUpdate(true); return; }
+      // SOFT nudge: a newer build exists. Dismissible; re-appears on a later poll until
+      // they act. Android downloads the APK; the iOS shell + web just reload to the
+      // latest. sessionStorage remembers a dismissal so it doesn't nag within a session.
+      try { if (sessionStorage.getItem("da_update_dismissed") === String(build)) return; } catch { /* ignore */ }
+      setUpdateReady(build);
     }).catch(() => {});
     // POLL, don't just check once: a tab/app left open must notice a new deploy on
     // its own (was one-shot on launch → an open tab never updated). Check on load,
@@ -1138,6 +1137,19 @@ function App() {
         );
       })()}
       <ReleaseNotesModal />
+      {updateReady && !mustUpdate && (
+        <div style={{ position: "fixed", top: "calc(env(safe-area-inset-top) + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 500, maxWidth: 460, width: "calc(100% - 24px)",
+          background: "#22345C", color: "#fff", borderRadius: 12, padding: "10px 12px", boxShadow: "0 8px 30px rgba(0,0,0,.35)", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 17, lineHeight: 1 }}>🔄</span>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>A new version is available.</span>
+          <button onClick={() => { try { if (isNative()) window.location.href = APK_URL; else window.location.reload(); } catch { /* ignore */ } }}
+            style={{ border: "none", background: "#6BC048", color: "#08260F", fontWeight: 800, borderRadius: 8, padding: "7px 13px", fontSize: 13, cursor: "pointer" }}>
+            {isNative() ? "Update" : "Refresh"}
+          </button>
+          <button onClick={() => { try { sessionStorage.setItem("da_update_dismissed", String(updateReady)); } catch { /* ignore */ } setUpdateReady(false); }}
+            aria-label="Dismiss" style={{ border: "none", background: "none", color: "#fff", fontSize: 19, cursor: "pointer", lineHeight: 1, opacity: .85 }}>×</button>
+        </div>
+      )}
       {outboxFail && (
         <div style={{ background: "#FDECEA", border: "1px solid #E4A79E", borderLeft: "4px solid #C0563A", borderRadius: 12, padding: "12px 14px", margin: "0 0 12px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
