@@ -5344,7 +5344,7 @@ export function ReconSubmit({ me }) {
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: 1 }}><Field label="Warehouse">
-              <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>{["Msasa", "Feruka", "Bulawayo"].map((w) => <option key={w}>{w}</option>)}</select></Field></div>
+              <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>{["Msasa", "Feruka", "Bulawayo", "Chisumbanje"].map((w) => <option key={w}>{w}</option>)}</select></Field></div>
             <div style={{ flex: 1 }}><Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field></div>
           </div>
           <LineGroup title="Opening (auto — yesterday's closing)" rows={opening} setRows={setOpening} cols={[["product", "Product", "product"], ["litres", "Litres", "num"]]} make={emptyLine} />
@@ -6141,8 +6141,10 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           {editing && <Note tone="blue" title={`Editing ${editing}`}>Change anything below and save. <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={resetForm}>Cancel edit</button></Note>}
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse}
+              onChange={(v) => setF((s) => ({ ...s, warehouse: v, product: v === "Chisumbanje" ? "Ethanol" : (s.product === "Ethanol" ? "Diesel" : s.product) }))}
+              options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP"]} /></Field></div>
           </div>
           {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b>{overStock ? " — drops exceed this" : ""}</div>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -6167,7 +6169,10 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
           <div className="lbl" style={{ marginBottom: 6 }}>Drops — site &amp; litres</div>
           {drops.map((d, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder="Site…" title="Drop site" options={sites.map((s) => ({ value: s.name, label: s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
+              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.warehouse === "Chisumbanje" ? "Depot…" : "Site…"} title="Drop site"
+                options={f.warehouse === "Chisumbanje"
+                  ? [{ value: "Msasa", label: "Msasa depot" }, { value: "Feruka", label: "Feruka depot" }]
+                  : sites.map((s) => ({ value: s.name, label: s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
               <input style={{ flex: 1 }} inputMode="decimal" placeholder="litres" value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
               {drops.length > 1 && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
             </div>
