@@ -778,8 +778,9 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
         : `You've accounted for ${dollars(Math.abs(variance))} MORE than today's ${dollars(expected)} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
       return;
     }
-    if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
-    if (n(f.banked) > 0 && !String(f.bank || "").trim()) { setMsg({ tone: "amber", title: "Which bank?", body: "Name the bank the deposit went to — it flows straight to the cash office to confirm." }); return; }
+    // Bank name + deposit slip are NOT asked for here — the site just declares the amount
+    // banked; the actual slip/bank is recorded on the deposit screen / confirmed by the cash
+    // office (owner, 2026-09-01: don't ask for bank + reference on the cash-handling screen).
     setBusy(true);
     try {
       const r = await postCash({
@@ -870,13 +871,7 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
           ))}
         </div>
         {n(f.banked) > 0 && (
-          <div style={{ marginTop: 4 }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 150px" }}><Field label="Bank"><input value={f.bank || ""} onChange={(e) => set("bank", e.target.value)} placeholder="which bank" /></Field></div>
-              <div style={{ flex: "1 1 150px" }}><Field label="Deposit ref"><input value={f.bankRef} onChange={(e) => set("bankRef", e.target.value)} placeholder="slip no." /></Field></div>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 2 }}>🔗 This deposit goes straight to the cash office to confirm — no need to re-enter it there.</div>
-          </div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 4 }}>🔗 This banked amount goes straight to the cash office to confirm — record the slip on the deposit screen when it's made.</div>
         )}
 
         {/* Accounted for + variance against expected */}

@@ -162,7 +162,15 @@ async function roadDistance(names, key) {
   if (pts.length < 2) return null;
   const [g, o] = await Promise.all([googleDist(pts), osmDist(pts)]);
   const iv = internalKm(names);
-  const internal = iv ? { source: "Internal estimate", km: iv, legs: [iv] } : null;
+  // The internal lookup gives a single round-trip TOTAL. Spread it across the resolved
+  // per-leg geodesic proportions so estimate() gets one leg per hop (names.length-1) and can
+  // classify town vs road — a single [iv] lump made estimate() bail (null litres, "— — —"),
+  // which blocked multi-stop routes like depot→drop→depot from submitting.
+  const internal = iv ? (() => {
+    const tl = tableDist(pts).legs, sum = tl.reduce((a, b) => a + b, 0);
+    const legs = (tl.length === names.length - 1 && sum > 0) ? tl.map((l) => Math.round(l * iv / sum)) : [iv];
+    return { source: "Internal estimate", km: iv, legs };
+  })() : null;
   // triangulate across Google, OpenStreetMap and the internal estimate.
   const sources = [g, o, internal].filter((s) => s && s.km > 0);
   // last-resort only (all three unavailable) — a geodesic guess so a distance
