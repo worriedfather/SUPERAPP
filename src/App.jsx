@@ -1604,12 +1604,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
 
   const lastOdo = card ? cards[card]?.lastOdo : null;
   const odoNum = parseFloat(odo);
-  const odoInvalid = odo !== "" && !isFinite(odoNum);                                           // not a number → block
-  // Not higher than the last recorded fill: FLAG, don't block. The truck may genuinely be at
-  // the same reading (barely moved, or the last figure was an HQ estimate), and a declined
-  // request must never lock the odometer — the final is recorded at APPROVAL, so the approver
-  // verifies this (owner, 2026-09-01: "we only record final after approval").
-  const odoNotHigher = odo !== "" && isFinite(odoNum) && lastOdo != null && odoNum <= lastOdo;
+  const odoBad = odo !== "" && (!isFinite(odoNum) || (lastOdo != null && odoNum <= lastOdo));
   const ocrGap = ocr.state === "read" && isFinite(odoNum) ? Math.abs(ocr.value - odoNum) : null;
   const ocrMismatch = ocrGap != null && ocrGap > OCR_TOLERANCE;
 
@@ -1632,7 +1627,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   else if (geo.state === "off") missing.push("GPS switched on (phone settings)");
   else if (geo.state !== "onsite") missing.push("GPS confirmation that you are at " + fuelStn);
   if (!odo) missing.push("the odometer reading");
-  else if (odoInvalid) missing.push("a valid odometer number");
+  else if (odoBad) missing.push("an odometer reading higher than " + L(lastOdo) + " km");
   if (!photo) missing.push("a photograph of the odometer");
   if (driver && isFleet && !end) missing.push("the end point of the journey");
   if (driver && !isFleet && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
@@ -1675,13 +1670,13 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     ? [
         { key: "vehicle", icon: "truck", accent: "#3E8E28", tint: "#E9F5E2", title: "Which truck today?", sub: "Pick your horse and trailer", done: vehicleOk },
         { key: "location", icon: "pin", accent: "var(--blue)", tint: "#E7ECFF", title: "Where are you?", sub: "The station you’re fuelling at", done: geo.state === "onsite" },
-        { key: "odometer", icon: "gauge", accent: "#C07A00", tint: "#FBEDD6", title: "Odometer", sub: "Type it, then photograph it", done: !!odo && !odoInvalid && !!photo },
+        { key: "odometer", icon: "gauge", accent: "#C07A00", tint: "#FBEDD6", title: "Odometer", sub: "Type it, then photograph it", done: !!odo && !odoBad && !!photo },
         { key: "journey", icon: "route", accent: "#7A5AF0", tint: "#EDE8FD", title: "Your journey", sub: "Where are you delivering?", done: journeyOk },
       ]
     : [
         { key: "vehicle", icon: "truck", accent: "#3E8E28", tint: "#E9F5E2", title: "What are you fuelling?", sub: "Pick the vehicle or equipment", done: !!veh },
         { key: "location", icon: "pin", accent: "var(--blue)", tint: "#E7ECFF", title: "Where are you?", sub: "The station you’re fuelling at", done: geo.state === "onsite" },
-        { key: "odometer", icon: "gauge", accent: "#C07A00", tint: "#FBEDD6", title: "Odometer", sub: "Type it, then photograph it", done: !!odo && !odoInvalid && !!photo },
+        { key: "odometer", icon: "gauge", accent: "#C07A00", tint: "#FBEDD6", title: "Odometer", sub: "Type it, then photograph it", done: !!odo && !odoBad && !!photo },
         { key: "usage", icon: "drop", accent: "#7A5AF0", tint: "#EDE8FD", title: "What’s it for?", sub: "Litres and purpose", done: parseFloat(ask) > 0 },
       ];
   const steps = locked ? base : [{ key: "who", icon: "user", accent: "var(--blue)", tint: "#E7ECFF", title: "Who’s requesting?", sub: "Select your name", done: !!driver }, ...base];
@@ -1740,10 +1735,9 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     if (k === "odometer") return (
       <>
         <Field label={lastOdo != null ? `Reading on the dash — last recorded ${L(lastOdo)} km` : "Reading on the dash"}>
-          <input inputMode="numeric" value={odo} onChange={(e) => setOdo(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 214530" style={{ borderColor: odoInvalid ? "var(--red)" : odoNotHigher ? "var(--amber)" : undefined }} />
+          <input inputMode="numeric" value={odo} onChange={(e) => setOdo(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 214530" style={{ borderColor: odoBad ? "var(--red)" : undefined }} />
         </Field>
-        {odoInvalid && <div style={{ color: "var(--red)", fontSize: 13, marginTop: -8, marginBottom: 10 }}>Enter the odometer as a number.</div>}
-        {odoNotHigher && <div style={{ color: "var(--amber)", fontSize: 12.5, marginTop: -8, marginBottom: 10 }}>Not higher than the last recorded {L(lastOdo)} km — you can still submit; the approver will verify the reading.</div>}
+        {odoBad && <div style={{ color: "var(--red)", fontSize: 13, marginTop: -8, marginBottom: 10 }}>Must be higher than the last recorded reading of {L(lastOdo)} km.</div>}
         <button onClick={capture} className="disp" style={{ width: "100%", padding: 14, fontSize: 14, fontWeight: 700, borderRadius: 100, marginBottom: 12, background: photo ? "#fff" : "var(--ink)", color: photo ? "var(--ink)" : "#fff", border: photo ? "1.5px solid var(--line)" : "none" }}>{photo ? "Retake photo" : "Photograph the odometer"}</button>
         {photo && <img src={photo} alt="Odometer" style={{ maxWidth: "100%", maxHeight: 170, borderRadius: 14, border: "1.5px solid var(--line)", marginBottom: 10, display: "block" }} />}
         {ocr.state === "reading" && <Flag tone="amber" title="Reading the photograph…">This takes a few seconds.</Flag>}
