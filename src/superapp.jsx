@@ -5375,7 +5375,7 @@ export function TripTrack({ tripNo, compact = false }) {
   useEffect(() => { let live = true; setT(null); setErr(null); getTripTrack(tripNo).then((r) => { if (live) setT(r); }).catch((e) => { if (live) setErr(e.message); }); return () => { live = false; }; }, [tripNo, key]);
   if (err) return <div style={{ fontSize: 12, color: "var(--red)", padding: "8px 2px" }}>Couldn't load the track. <button type="button" className="pill-ghost" style={{ padding: "4px 10px", marginLeft: 6 }} onClick={() => setKey((k) => k + 1)}>Retry</button></div>;
   if (!t) return <div style={{ fontSize: 12, color: "var(--steel)", padding: "8px 2px" }}>Loading track…</div>;
-  if (!t.hasTrack) return <div style={{ fontSize: 12, color: "var(--steel)", padding: "8px 2px" }}>No GPS recorded yet — it starts once the driver confirms collection and moves.</div>;
+  if (!t.hasTrack) return <div style={{ fontSize: 12, color: "var(--steel)", padding: "8px 2px" }}>No GPS from this truck yet. Tracking runs in the driver's app from when they request the fuel allocation until the last drop — no track on a truck that's already on the road means their phone isn't sending location (app closed, location permission off, or no signal).</div>;
   const S = ({ label, value, tone }) => (
     <div style={{ flex: "1 1 30%", textAlign: "center", padding: "8px 6px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10 }}>
       <div className="mono" style={{ fontWeight: 700, fontSize: 15, color: tone || "var(--navy)" }}>{value}</div>
