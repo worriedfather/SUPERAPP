@@ -2019,9 +2019,9 @@ export function ExecutiveDashboard() {
     return () => clearTimeout(timer);
   }, [tab, focusSec, d]);
   const k = d?.kpis;
-  const pLabel = { yesterday: "Yesterday", today: "Today", month: "This month", year: "This year", range: "Range" }[period];
+  const pLabel = { yesterday: "Yesterday", today: "Today", month: "This month", lastmonth: "Last month", year: "This year", range: "Range" }[period] || "This period";
   // noun used in comparative labels ("vs the same MONTH last year", "vs the previous MONTH")
-  const cmpWord = { yesterday: "day", today: "day", month: "month", year: "period", range: "range" }[period] || "period";
+  const cmpWord = { yesterday: "day", today: "day", month: "month", lastmonth: "month", year: "period", range: "range" }[period] || "period";
   const asOfLabel = d?.asOf
     ? (period === "today" ? `${fmtD(d.asOf.date)} · ${d.asOf.shiftLabel}`
       : period === "yesterday" ? fmtD(d.asOf.date)
