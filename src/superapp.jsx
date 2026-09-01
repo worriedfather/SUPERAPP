@@ -759,12 +759,13 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   // "Unaccounted (short)" because the fallback double-counts cumulative shifts).
   const official = !!(exp && exp.basis === "official");
   const accounted = CASH_LEGS.reduce((a, l) => a + (l.key === "sentToHq" ? hqTotal : n(f[l.key])), 0);
-  // Reconcile against the TOTAL the site is holding — today's cash PLUS anything
-  // carried over from previous days ("total to remit") — not just today's slice.
-  // Cash the site can't move today is declared under "Cash on hand" and carries on.
+  // "total to remit" (today + carryover) is shown for context, but the SUBMISSION balances
+  // against TODAY's official cash only — the money the site actually has today. Carryover is
+  // chased on the deposit watchlist; blocking on it trapped sites whose carryover was a phantom
+  // (an earlier remittance not recorded as cleared) even after they'd fully accounted for today.
   const carryover = exp && Number(exp.carryover) > 0 ? n(exp.carryover) : 0;
   const remitDue = expected != null ? (exp && exp.totalDue != null ? n(exp.totalDue) : expected + carryover) : null;
-  const variance = remitDue != null ? remitDue - accounted : null;   // + = short / unaccounted
+  const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted (TODAY)
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
@@ -773,8 +774,8 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
     // dollar before it goes in (server enforces this too). Managers may override.
     if (!isManager && official && variance != null && Math.abs(variance) >= 1) {
       setMsg({ tone: "amber", title: "Doesn't balance — not submitted", body: variance > 0
-        ? `${dollars(Math.abs(variance))} of the ${dollars(remitDue)} to remit${carryover > 0 ? ` (today's ${dollars(expected)} + ${dollars(carryover)} carried over)` : ""} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
-        : `You've accounted for ${dollars(Math.abs(variance))} MORE than the ${dollars(remitDue)} to remit — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
+        ? `${dollars(Math.abs(variance))} of today's ${dollars(expected)} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
+        : `You've accounted for ${dollars(Math.abs(variance))} MORE than today's ${dollars(expected)} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
       return;
     }
     if (n(f.banked) > 0 && !f.bankRef.trim()) { setMsg({ tone: "amber", title: "Deposit reference required", body: "Enter the deposit-slip reference for the amount banked." }); return; }
@@ -1551,6 +1552,7 @@ function warehouseStockDrill(warehouses) {
     const rows = warehouses || [];
     if (!rows.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>No warehouse data yet.</div>;
     const prods = ["Blend", "Diesel", "ULP"];
+    if (rows.some((w) => ((w.products && w.products.Ethanol) || 0) > 0)) prods.splice(2, 0, "Ethanol");   // ethanol column only when a depot (Chisumbanje) holds it
     const tot = {}; prods.forEach((p) => tot[p] = rows.reduce((s, w) => s + ((w.products && w.products[p]) || 0), 0));
     const totAll = rows.reduce((s, w) => s + (w.stock || 0), 0);
     return (
@@ -6341,8 +6343,8 @@ export function WarehouseImports({ me }) {
         <form onSubmit={send}>
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 150px" }}><Field label="Warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "Ethanol", "ULP"]} /></Field></div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Supplier"><Picker value={f.supplier} onChange={set("supplier")} title="Supplier" options={SUP} /></Field></div>
