@@ -4128,32 +4128,43 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
             <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Reconciliation — declared vs what actually arrived and banked — is on the <b>Cash office</b> screen.</div>
           </Panel>
           <FilterBox value={q} onChange={setQ} />
-          <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
-            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Cash on hand at sites</Th></tr></thead>
-              <tbody>{filtered.map((s) => {
-                // Unaccounted floored at 0 (server). A site that remitted MORE than today's
-                // expected is banking a PRIOR day's held cash — shown as $0 + a "+ prior"
-                // note, not a confusing negative.
-                const unacc = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
-                const prior = s.overRemit || Math.max(0, s.submitted - s.expected);
-                return (
-                <tr key={s.siteId} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff", cursor: "pointer" }}>
-                  <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span>{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
-                  <Td right style={{ fontWeight: 700 }}>{$(s.expected)}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.hq) : "—"}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.banked) : "—"}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.swipe) : "—"}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.mobile) : "—"}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.petty) : "—"}</Td>
-                  <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
-                  <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : unacc > 50 ? "var(--red)" : "var(--ok)" }}>{!s.subDays ? "—" : `$${L(unacc)}`}{prior > 50 && <span style={{ color: "var(--steel)", fontWeight: 400, fontSize: 10 }}> · +{$(prior)} prior</span>}</Td>
-                  <Td right style={{ fontWeight: (s.carriedDeclared || 0) > 50 ? 700 : 400, color: (s.carriedDeclared || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carriedDeclared || 0)}</Td>
-                </tr>
-                );
-              })}</tbody>
-            </table>
-          </div></Panel>
+          {/* Phone-first: one card per site (no sideways scroll). The key numbers are on
+              two lines; the status badge flags the exception; tap opens the full breakdown
+              (every channel + prior-day cash) in a detail sheet. */}
+          <Panel style={{ padding: 0, overflow: "hidden" }}>
+            {filtered.map((s) => {
+              const unacc = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
+              const prior = s.overRemit || Math.max(0, s.submitted - s.expected);
+              const notSub = s.subDays === 0;
+              const badge = notSub ? { t: "not submitted", c: "#B4801F", bg: "#FBEFD2" }
+                : unacc > 50 ? { t: `$${L(unacc)} short`, c: "#fff", bg: "#B23B3B" }
+                : { t: "✓ balanced", c: "#2F7D3B", bg: "#E4F3E6" };
+              // build a short, non-zero-only channel summary so the sub-line stays compact
+              const bits = notSub ? [] : [
+                s.hq > 50 && `HQ ${$(s.hq)}`, s.banked > 50 && `bank ${$(s.banked)}`,
+                s.swipe > 50 && `swipe ${$(s.swipe)}`, s.mobile > 50 && `mobile ${$(s.mobile)}`,
+                s.petty > 50 && `petty ${$(s.petty)}`, s.onHand > 50 && `on-till ${$(s.onHand)}`,
+              ].filter(Boolean);
+              return (
+                <div key={s.siteId} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 14px", borderTop: "1px solid var(--line)", background: notSub ? "#FFF9EE" : "#fff", cursor: "pointer" }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Exp <b style={{ color: "var(--ink)" }}>{$(s.expected)}</b>{bits.length ? " · " + bits.join(" · ") : (notSub ? "" : " · —")}
+                    </div>
+                    {(prior > 50 || (s.carriedDeclared || 0) > 50) && (
+                      <div style={{ fontSize: 10.5, color: "#B4801F", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {prior > 50 && `+${$(prior)} prior-day cash banked`}{prior > 50 && (s.carriedDeclared || 0) > 50 ? " · " : ""}{(s.carriedDeclared || 0) > 50 && `${$(s.carriedDeclared)} still on hand`}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 700, color: badge.c, background: badge.bg, borderRadius: 20, padding: "3px 10px", whiteSpace: "nowrap" }}>{badge.t}</span>
+                </div>
+              );
+            })}
+            {filtered.length === 0 && <div style={{ padding: 16, color: "var(--steel)", fontSize: 13 }}>No sites match.</div>}
+          </Panel>
         </>
       )}
       {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
