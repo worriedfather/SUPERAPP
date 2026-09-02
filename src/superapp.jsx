@@ -4027,32 +4027,44 @@ function UnaccountedDrill({ days, from, to }) {
 // while loading or when there's no cash in the window — never an empty block.
 function CashReconSummary({ days, from, to }) {
   const [d, setD] = useState(null);
+  const [gd, setGd] = useState(null);
   useEffect(() => {
     let live = true;
     if (!days) return;
     Promise.all([getCashRecon(days, from, to), getCash(days, from, to).catch(() => null)])
       .then(([rec, cash]) => {
         if (!live) return;
-        let sales = 0, expected = 0, received = 0, variance = 0, petty = 0;
-        for (const r of (rec.rows || [])) { expected += r.expected || 0; received += r.received || 0; variance += r.variance || 0; petty += r.petty || 0; }
-        for (const s of (cash?.sites || [])) { sales += s.expected || 0; }
-        setD({ sales, expected, received, variance, petty, tender: cash?.tender });
+        // aggregate the per-site-day recon rows into ONE row per site so each headline
+        // figure can drill down by site.
+        const bySite = {};
+        for (const r of (rec.rows || [])) {
+          const g = bySite[r.siteId] || (bySite[r.siteId] = { siteId: r.siteId, site: r.site, sales: 0, expected: 0, petty: 0, received: 0, variance: 0 });
+          g.expected += r.expected || 0; g.petty += r.petty || 0; g.received += r.received || 0; g.variance += r.variance || 0;
+        }
+        for (const s of (cash?.sites || [])) { const g = bySite[s.siteId] || (bySite[s.siteId] = { siteId: s.siteId, site: s.site, sales: 0, expected: 0, petty: 0, received: 0, variance: 0 }); g.sales += s.expected || 0; }
+        const sites = Object.values(bySite);
+        const sum = (k) => sites.reduce((a, s) => a + (s[k] || 0), 0);
+        setD({ sales: sum("sales"), expected: sum("expected"), received: sum("received"), variance: sum("variance"), petty: sum("petty"), tender: cash?.tender, sites });
       })
       .catch(() => { if (live) setD(null); });
     return () => { live = false; };
   }, [days, from, to]);
   const $ = (v) => "$" + full(v);
   if (!d || (!d.expected && !d.sales)) return null;
+  const drill = (title, key, fmt) => setGd({ title: `${title} — by site`, sub: `${$(d[key])} · tap a site for its day-by-day detail`,
+    render: breakdownDrill(d.sites, ["Site", "site"], [[title, key, fmt || $full]], key) });
   return (
     <>
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-        <CountPill n={$(d.sales)} label="Sales" tone="ok" />
-        <CountPill n={$(d.expected)} label="Expected cash" tone="ok" />
-        <CountPill n={$(d.petty)} label="Petty cash" tone="ok" />
-        <CountPill n={$(d.received)} label="Received cash" tone="ok" />
-        <CountPill n={$(d.variance)} label="Still to reach HQ" tone={Math.abs(d.variance) > d.expected * 0.01 ? "red" : "ok"} />
+        <CountPill n={$(d.sales)} label="Sales" tone="ok" onClick={() => drill("Sales", "sales")} />
+        <CountPill n={$(d.expected)} label="Expected cash" tone="ok" onClick={() => drill("Expected cash", "expected")} />
+        <CountPill n={$(d.petty)} label="Petty cash" tone="ok" onClick={() => drill("Petty cash", "petty")} />
+        <CountPill n={$(d.received)} label="Received cash" tone="ok" onClick={() => drill("Received cash", "received")} />
+        <CountPill n={$(d.variance)} label="Still to reach HQ" tone={Math.abs(d.variance) > d.expected * 0.01 ? "red" : "ok"}
+          onClick={() => setGd({ title: "Still to reach HQ — by site", sub: `${$(d.variance)} · expected − petty − received (still owed / unconfirmed at HQ)`, render: breakdownDrill(d.sites, ["Site", "site"], [["Still to reach HQ", "variance", (v) => (v > 0 ? $full(v) : v < 0 ? `(${$full(-v)})` : "$0")]], "variance") })} />
       </div>
       {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
+      {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </>
   );
 }
