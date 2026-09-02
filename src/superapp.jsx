@@ -4093,10 +4093,10 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
             <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF"
               onClick={() => setGd({ title: "Expected cash — by site", sub: `${$(d.expected)} · the cash portion of takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Expected cash", "expected", $full]], "expected") })} />
-            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history`} accent="#6BC048"
+            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history${d.overRemit > 50 ? ` · incl. ${$(d.overRemit)} prior-day cash` : ""}`} accent="#6BC048"
               onClick={() => setGd({ title: "Accounted for — by site", sub: `${$(d.submitted)} · sent to HQ + banked + swipe + mobile + petty + on-hand`, render: breakdownDrill(d.sites, ["Site", "site"], [["Accounted for", "submitted", $full]], "submitted") })} />
             <div onClick={() => setUnaccDrill(true)} style={{ cursor: "pointer" }} title="Tap for the per-site chase list">
-              <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, (d.expected || 0) - (d.submitted || 0)))} sub="expected − accounted for · tap to drill ›" accent="#D96A5B" />
+              <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, d.unaccounted != null ? d.unaccounted : (d.expected || 0) - (d.submitted || 0)))} sub="today's expected − accounted (prior-day remittances net to $0) · tap to drill ›" accent="#D96A5B" />
             </div>
             <div onClick={() => setCarriedDrill(true)} style={{ cursor: "pointer" }} title="Tap for the day-by-day ledger">
               <Hero label="CASH ON HAND AT SITES" value={$(d.carriedDeclared || 0)} sub="confirmed by the sites · not yet sent to HQ · cumulative · tap to drill ›" accent="#E0B44C" />
@@ -4131,7 +4131,13 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
               <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Sent to HQ</Th><Th right>Banked</Th><Th right>Card swipe</Th><Th right>Mobile money</Th><Th right>Site petty cash</Th><Th right>Cash on hand</Th><Th right>Unaccounted for</Th><Th right>Cash on hand at sites</Th></tr></thead>
-              <tbody>{filtered.map((s) => (
+              <tbody>{filtered.map((s) => {
+                // Unaccounted floored at 0 (server). A site that remitted MORE than today's
+                // expected is banking a PRIOR day's held cash — shown as $0 + a "+ prior"
+                // note, not a confusing negative.
+                const unacc = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
+                const prior = s.overRemit || Math.max(0, s.submitted - s.expected);
+                return (
                 <tr key={s.siteId} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })} style={{ borderTop: "1px solid var(--line)", background: s.subDays === 0 ? "#FFF7E6" : "#fff", cursor: "pointer" }}>
                   <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span>{s.subDays === 0 && <span style={{ fontSize: 10, color: "#B4801F" }}> · not submitted</span>}</Td>
                   <Td right style={{ fontWeight: 700 }}>{$(s.expected)}</Td>
@@ -4141,10 +4147,11 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.mobile) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.petty) : "—"}</Td>
                   <Td right style={{ color: "var(--steel)" }}>{s.subDays ? $(s.onHand) : "—"}</Td>
-                  <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : (s.expected - s.submitted) > 50 ? "var(--red)" : (s.expected - s.submitted) < -50 ? "var(--amber)" : "var(--ok)" }}>{!s.subDays ? "—" : (s.expected - s.submitted) === 0 ? "$0" : (s.expected - s.submitted) > 0 ? $(s.expected - s.submitted) : `(${$(Math.abs(s.expected - s.submitted))})`}</Td>
+                  <Td right style={{ fontWeight: 700, color: !s.subDays ? "var(--steel)" : unacc > 50 ? "var(--red)" : "var(--ok)" }}>{!s.subDays ? "—" : `$${L(unacc)}`}{prior > 50 && <span style={{ color: "var(--steel)", fontWeight: 400, fontSize: 10 }}> · +{$(prior)} prior</span>}</Td>
                   <Td right style={{ fontWeight: (s.carriedDeclared || 0) > 50 ? 700 : 400, color: (s.carriedDeclared || 0) > 50 ? "#B4801F" : "var(--steel)" }}>{$(s.carriedDeclared || 0)}</Td>
                 </tr>
-              ))}</tbody>
+                );
+              })}</tbody>
             </table>
           </div></Panel>
         </>
