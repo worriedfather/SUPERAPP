@@ -1399,7 +1399,9 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
               </div>
               <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {fmtD(t.date)}</div>
               <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 4 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
-              {onTrip && <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>}
+              {onTrip && (t.fuelRequested > 0
+                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}</div>
+                : <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>)}
             </div>))}
         </div>
       )}
@@ -1705,10 +1707,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         <Field label="Scheduled delivery trip">
           <Picker value={tripNo} title="Scheduled delivery trip" placeholder={myTrips.length ? "Select your trip…" : "No trip scheduled"}
             onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck) setHorse(t.truck); if (t.trailer) setTrailer(t.trailer); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
-            options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}${t.fuelRequested > 0 ? ` · already ${L(t.fuelRequested)}L fuelled` : ""}` }))} />
+            options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}${t.fuelRequested > 0 ? " · already fuelled" : ""}` }))} />
         </Field>
         {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. Fleet fuel is requested against a planned trip — ask logistics to schedule it first, then it appears here.</div>}
-        {tripNo && (() => { const t = myTrips.find((x) => x.tripNo === tripNo); return t && t.fuelRequested > 0 ? <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: -6, marginBottom: 11 }}>Trip {tripNo} already has <b>{L(t.fuelRequested)} L</b> requested — this adds another fill for the same run (a long haul refuels on the way). The trip's total is capped at 110% of the recommended fuel.</div> : null; })()}
+        {tripNo && (() => { const t = myTrips.find((x) => x.tripNo === tripNo); return t && t.fuelRequested > 0 ? <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>Trip {tripNo} already has a fuel request ({L(t.fuelRequested)} L) — a trip gets one allocation. If it needs more, the approver can load more than requested; you don't raise a second request.</div> : null; })()}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Horse"><Picker value={horse} onChange={(v) => { setHorse(v); setTrailer(""); }} placeholder="Select" title="Horse" options={horses.map((x) => x.code)} /></Field>
           <Field label="Trailer"><Picker value={trailer} onChange={setTrailer} placeholder="Select" title="Trailer" options={TRAILERS} /></Field>
