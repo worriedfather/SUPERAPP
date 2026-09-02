@@ -1705,9 +1705,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         <Field label="Scheduled delivery trip">
           <Picker value={tripNo} title="Scheduled delivery trip" placeholder={myTrips.length ? "Select your trip…" : "No trip scheduled"}
             onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck) setHorse(t.truck); if (t.trailer) setTrailer(t.trailer); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
-            options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}` }))} />
+            options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}${t.fuelRequested > 0 ? ` · already ${L(t.fuelRequested)}L fuelled` : ""}` }))} />
         </Field>
         {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. Fleet fuel is requested against a planned trip — ask logistics to schedule it first, then it appears here.</div>}
+        {tripNo && (() => { const t = myTrips.find((x) => x.tripNo === tripNo); return t && t.fuelRequested > 0 ? <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: -6, marginBottom: 11 }}>Trip {tripNo} already has <b>{L(t.fuelRequested)} L</b> requested — this adds another fill for the same run (a long haul refuels on the way). The trip's total is capped at 110% of the recommended fuel.</div> : null; })()}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Horse"><Picker value={horse} onChange={(v) => { setHorse(v); setTrailer(""); }} placeholder="Select" title="Horse" options={horses.map((x) => x.code)} /></Field>
           <Field label="Trailer"><Picker value={trailer} onChange={setTrailer} placeholder="Select" title="Trailer" options={TRAILERS} /></Field>
