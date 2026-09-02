@@ -3540,24 +3540,27 @@ export function CashView({ embedded = false, from = null, to = null } = {}) {
               onClick={() => setGd({ title: "Sales — by site", sub: `${$(d.sales)} · total takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Sales", "sales", $full]], "sales") })} />
             <CountPill n={$(d.expectedCash)} label="Expected cash" tone="ok"
               onClick={() => setGd({ title: "Expected cash — by site", sub: `${$(d.expectedCash)} · cash portion of takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Expected cash", "expectedCash", $full]], "expectedCash") })} />
+            <CountPill n={$(d.petty)} label="Petty cash" tone="ok"
+              onClick={() => setGd({ title: "Petty cash — by site", sub: `${$(d.petty)} · till spend netted out before cash is expected at HQ`, render: breakdownDrill(d.sites, ["Site", "site"], [["Petty cash", "petty", $full]], "petty") })} />
             <CountPill n={$(d.receivedCash)} label="Received cash" tone="ok"
-              onClick={() => setGd({ title: "Received cash — by site", sub: `${$(d.receivedCash)} · confirmed received`, render: breakdownDrill(d.sites, ["Site", "site"], [["Received", "confirmedReceived", $full]], "confirmedReceived") })} />
-            <CountPill n={$(d.cashDiff)} label="Variance" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"}
-              onClick={() => setGd({ title: "Variance — by site", sub: `${$(d.cashDiff)} · short (+) / over (−) vs expected`, render: breakdownDrill(d.sites, ["Site", "site"], [["Variance", "cashDiff", (v) => (v > 0 ? $full(v) : v < 0 ? `(${$full(-v)})` : "$0")]], "cashDiff") })} />
+              onClick={() => setGd({ title: "Received cash — by site", sub: `${$(d.receivedCash)} · confirmed received at HQ`, render: breakdownDrill(d.sites, ["Site", "site"], [["Received", "confirmedReceived", $full]], "confirmedReceived") })} />
+            <CountPill n={$(d.cashDiff)} label="Still to reach HQ" tone={Math.abs(d.cashDiff) > d.expectedCash * 0.01 ? "red" : "ok"}
+              onClick={() => setGd({ title: "Still to reach HQ — by site", sub: `${$(d.cashDiff)} · expected − petty − received (still owed / not yet confirmed at HQ)`, render: breakdownDrill(d.sites, ["Site", "site"], [["Still to reach HQ", "cashDiff", (v) => (v > 0 ? $full(v) : v < 0 ? `(${$full(-v)})` : "$0")]], "cashDiff") })} />
           </div>
           {d.tender && <TenderMixPanel label="How takings were tendered" parts={[["Cash", d.tender.cash, "#2B3990"], ["DA card", d.tender.daCard, "#6BC048"], ["Redan", d.tender.redan, "#C8A24B"], ["Petrotrade", d.tender.petro, "#8FB8FF"]]} />}
           <Panel style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                  <Th>Site</Th><Th right>Sales</Th><Th right>Expected cash</Th><Th right>Received cash</Th><Th right>Variance</Th></tr></thead>
+                  <Th>Site</Th><Th right>Sales</Th><Th right>Expected cash</Th><Th right>Petty</Th><Th right>Received cash</Th><Th right>Still to reach HQ</Th></tr></thead>
                 <tbody>{[...d.sites].sort((a, b) => (b.cashDiff || 0) - (a.cashDiff || 0)).map((s) => (
                   <tr key={s.site} onClick={() => setDrill(s.site)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (s.cashDiff || 0) > 50 ? "#FFF7E6" : "#fff" }}>
                     <Td>{s.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                     <Td right style={{ color: "var(--steel)" }}>{s.sales ? $(s.sales) : "—"}</Td>
                     <Td right style={{ fontWeight: 700 }}>{s.expectedCash != null ? $(s.expectedCash) : "—"}</Td>
+                    <Td right style={{ color: "var(--steel)" }}>{(s.petty || 0) > 0 ? $(s.petty) : "—"}</Td>
                     <Td right style={{ fontWeight: 600, color: s.confirmedReceived != null ? "var(--navy)" : "var(--steel)" }}>{s.confirmedReceived != null ? $(s.confirmedReceived) : "—"}</Td>
-                    <Td right style={{ fontWeight: 700, color: s.cashDiff == null ? "var(--steel)" : s.cashDiff > 50 ? "var(--red)" : s.cashDiff < -50 ? "var(--ok)" : "var(--steel)" }} title={s.cashDiff > 0 ? "cash short" : s.cashDiff < 0 ? "cash over" : "square"}>{s.cashDiff == null ? "—" : s.cashDiff === 0 ? "$0" : (s.cashDiff > 0 ? $(s.cashDiff) : `(${$(Math.abs(s.cashDiff))})`)}</Td>
+                    <Td right style={{ fontWeight: 700, color: s.cashDiff == null ? "var(--steel)" : s.cashDiff > 50 ? "var(--red)" : s.cashDiff < -50 ? "var(--ok)" : "var(--steel)" }} title={s.cashDiff > 0 ? "still owed to HQ" : s.cashDiff < 0 ? "over" : "square"}>{s.cashDiff == null ? "—" : s.cashDiff === 0 ? "$0" : (s.cashDiff > 0 ? $(s.cashDiff) : `(${$(Math.abs(s.cashDiff))})`)}</Td>
                   </tr>
                 ))}</tbody>
               </table>
