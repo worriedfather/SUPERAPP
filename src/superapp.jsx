@@ -6172,7 +6172,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
               <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
                 options={f.product === "Ethanol"
                   ? ["Msasa", "Feruka", "Chisumbanje"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
-                  : sites.map((s) => ({ value: s.name, label: s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
+                  : sites.map((s) => ({ value: s.name, label: s.pool ? `${s.name} · staging pool` : s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
               <input style={{ flex: 1 }} inputMode="decimal" placeholder="litres" value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
               {drops.length > 1 && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
             </div>
@@ -6208,11 +6208,16 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
                   {fmtD(t.date)} · {t.warehouse} → {L(t.qty)}L {t.product} · {t.driver || "—"}{t.truck ? " · " + t.truck : ""}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}{t.endPoint ? ` · ↩ returns to ${t.endPoint}` : ""}</div>
-                {/* logistics can amend/cancel a trip until deliveries start */}
-                {t.status === "scheduled" && (
-                  <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+                {/* logistics can amend a trip any time before it's fully delivered/closed
+                    (a live trip's already-delivered drops are protected server-side);
+                    cancel only before collection */}
+                {t.status !== "delivered" && t.status !== "completed" && t.status !== "cancelled" && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
                     <button type="button" className="pill-ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => startEdit(t)}>Edit</button>
-                    <button type="button" className="pill-ghost" disabled={cancelling === t.tripNo} style={{ padding: "6px 14px", fontSize: 12, color: "var(--red)", borderColor: "var(--red)" }} onClick={() => doCancel(t)}>{cancelling === t.tripNo ? "Cancelling…" : "Cancel"}</button>
+                    {t.status === "scheduled" && (
+                      <button type="button" className="pill-ghost" disabled={cancelling === t.tripNo} style={{ padding: "6px 14px", fontSize: 12, color: "var(--red)", borderColor: "var(--red)" }} onClick={() => doCancel(t)}>{cancelling === t.tripNo ? "Cancelling…" : "Cancel"}</button>
+                    )}
+                    {t.status !== "scheduled" && <span style={{ fontSize: 11, color: "var(--steel)", alignSelf: "center" }}>live trip — delivered stops are locked</span>}
                   </div>
                 )}
               </div>
