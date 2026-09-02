@@ -9,6 +9,7 @@ export const STATIONS = [
   ["Masimba Willowvale", -17.8833, 30.9686, "Masimba, Willowvale, Harare (bulk customer)"],
   ["Masimba Northgate", -17.6805, 31.1225, "Masimba, Northgate, Harare (bulk customer)"],
   ["REDEN Mine - Gweru", -19.2885, 29.5882, "REDEN Mine, Gweru (bulk customer)"],
+  ["Africa Chrome - Kwekwe", -18.9236, 30.2734, "Africa Chrome, Kwekwe (bulk customer)"],
   ["Mutare 4th Street", -18.971749, 32.674684, "78/80 4th Street, Mutare"],
   ["Bulawayo Fairbridge", -20.136523, 28.621787, "Fairstar Farm, Harare Road, Bulawayo"],
   ["Bulawayo North End", -20.137319, 28.592282, "2A Robert Mugabe Way, Eastcot Avenue, Bulawayo"],
