@@ -102,5 +102,9 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
-        beta_groups:
-          - "DA Team"        # auto-distribute each build to your TestFlight testers
+        # "DA Team" is an INTERNAL TestFlight group — internal groups receive each
+        # processed build AUTOMATICALLY, and Apple rejects an explicit assignment
+        # ("Cannot add internal group to a build"). So we do NOT list beta_groups:
+        # submit_to_testflight alone puts the build on TestFlight and internal testers
+        # get it. (If you later want EXTERNAL testers, make an external group in App
+        # Store Connect and add it here — that triggers a one-time Beta App Review.)
