@@ -4069,6 +4069,45 @@ function CashReconSummary({ days, from, to }) {
   );
 }
 
+// How a site's cash short arises: expected vs each channel it was placed into, and
+// the remainder that's unaccounted. Built from the site's own inflows row — no fetch.
+function CashSiteDrill({ s }) {
+  const $ = (v) => "$" + full(v);
+  const accounted = (s.hq || 0) + (s.banked || 0) + (s.swipe || 0) + (s.mobile || 0) + (s.petty || 0) + (s.onHand || 0);
+  const unacc = s.unaccounted != null ? s.unaccounted : Math.max(0, (s.expected || 0) - accounted);
+  const prior = s.overRemit || Math.max(0, (s.submitted || 0) - (s.expected || 0));
+  const Row = ({ label, val, strong, tone, indent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 2px", borderBottom: "1px solid var(--line)" }}>
+      <span style={{ color: tone || "var(--ink)", fontWeight: strong ? 700 : 400, paddingLeft: indent ? 12 : 0 }}>{label}</span>
+      <span className="mono" style={{ color: tone || "var(--navy)", fontWeight: strong ? 800 : 600, whiteSpace: "nowrap" }}>{$(val)}</span>
+    </div>
+  );
+  return (
+    <div style={{ padding: "4px 2px" }}>
+      <Row label="Expected cash (today)" val={s.expected || 0} strong />
+      <div style={{ fontSize: 11, color: "var(--steel)", textTransform: "uppercase", letterSpacing: ".04em", margin: "12px 0 2px" }}>Accounted for — where the cash went</div>
+      <Row label="Sent to HQ" val={s.hq || 0} indent />
+      <Row label="Banked" val={s.banked || 0} indent />
+      <Row label="Card swipe" val={s.swipe || 0} indent />
+      <Row label="Mobile money" val={s.mobile || 0} indent />
+      <Row label="Site petty cash" val={s.petty || 0} indent />
+      <Row label="Cash on hand (declared today)" val={s.onHand || 0} indent />
+      <div style={{ marginTop: 4 }}><Row label="= Accounted for" val={accounted} strong /></div>
+      <div style={{ marginTop: 10 }}><Row label={unacc > 50 ? "Short — unaccounted for" : "Balanced"} val={unacc} strong tone={unacc > 50 ? "var(--red)" : "#3C9A52"} /></div>
+      <div style={{ fontSize: 12.5, color: "var(--steel)", marginTop: 12, lineHeight: 1.55 }}>
+        The site placed <b>{$(accounted)}</b> of the <b>{$(s.expected || 0)}</b> expected today
+        {accounted > 0 ? <> (all of it via {[
+          s.hq > 0 && "Sent to HQ", s.banked > 0 && "Banked", s.swipe > 0 && "Card swipe",
+          s.mobile > 0 && "Mobile money", s.petty > 0 && "Petty cash", s.onHand > 0 && "Cash on hand",
+        ].filter(Boolean).join(", ") || "—"})</> : ""} — <b style={{ color: unacc > 50 ? "var(--red)" : "inherit" }}>{$(unacc)}</b> is not yet placed: not sent to HQ, not banked, not swiped, and not declared as cash still on hand. That gap is the short.
+        {prior > 50 && <> It also banked <b>{$(prior)}</b> of a previous day's cash on top of today's.</>}
+      </div>
+      {(s.carriedDeclared || 0) > 50 && <div style={{ fontSize: 12, color: "#B4801F", marginTop: 8 }}>Cash on hand at the site (cumulative, not yet sent to HQ): <b>{$(s.carriedDeclared)}</b></div>}
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>To clear the short: the site records the rest under Sent to HQ / Banked, or declares it under Cash on hand if it's still at the site.</div>
+    </div>
+  );
+}
+
 export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   // standalone → the STANDARD Today/Yesterday/Month/Year/Range ribbon like every
   // other screen; embedded → follow the parent Bird's-eye window (from/to props).
@@ -4162,7 +4201,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                 s.petty > 50 && `petty ${$(s.petty)}`, s.onHand > 50 && `on-till ${$(s.onHand)}`,
               ].filter(Boolean);
               return (
-                <div key={s.siteId} onClick={() => setGd({ title: s.site, sub: "day-end reconciliation · last 14 days", render: () => <SiteDayendDrill site={s.site} /> })}
+                <div key={s.siteId} onClick={() => setGd({ title: s.site, sub: "how the cash reconciles · this window", render: () => <CashSiteDrill s={s} /> })}
                   style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 14px", borderTop: "1px solid var(--line)", background: notSub ? "#FFF9EE" : "#fff", cursor: "pointer" }}>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></div>
