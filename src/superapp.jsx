@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
@@ -721,6 +721,40 @@ const CASH_LEGS = [
   { key: "petty", label: "Petty cash", hint: "spent from the till — keep the receipts", tone: "#B06A2C" },
   { key: "cashOnHand", label: "Cash on hand", hint: "float / not yet moved", tone: "#C8A24B" },
 ];
+// Persistent "sent to HQ — awaiting confirmation" notice. Derived (no manual dismiss):
+// it lists what a site declared sent to head office that the cash office hasn't yet
+// confirmed, and clears itself the moment they confirm/close the day.
+function HqPendingBanner({ site, forCashOffice = false }) {
+  const [d, setD] = useState(null);
+  useEffect(() => { let live = true; getHqPending(site).then((r) => { if (live) setD(r); }).catch(() => {}); return () => { live = false; }; }, [site]);
+  if (!d || !d.pending || !d.pending.length) return null;
+  const $ = (v) => "$" + full(v);
+  const overdue = d.pending.filter((o) => o.overdue).length;
+  return (
+    <div style={{ background: "#FFF7E6", border: "1px solid #F3D48A", borderLeft: `4px solid ${overdue ? "#B23B3B" : "#C79A2E"}`, borderRadius: 12, padding: "11px 14px", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: overdue ? "#B23B3B" : "#C79A2E", borderRadius: 20, padding: "2px 9px", whiteSpace: "nowrap" }}>Sent to HQ · awaiting confirmation</span>
+        <b style={{ color: "var(--navy)" }}>{$(d.total)}</b>
+        <span style={{ fontSize: 12, color: "var(--steel)" }}>· {d.count} {d.count === 1 ? "day" : "days"}{overdue ? ` · ${overdue} overdue` : ""}</span>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6, lineHeight: 1.5 }}>
+        {forCashOffice
+          ? "Sites report this cash was sent to head office but it's not confirmed received. Record the day-close to confirm — each line clears as you do."
+          : "You've reported this cash sent to head office; the cash office hasn't confirmed it yet. It clears on its own once they confirm — nothing to do unless it's overdue."}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
+        {d.pending.slice(0, 8).map((o, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
+            <span style={{ color: "var(--ink)" }}>{forCashOffice ? `${o.site} · ` : ""}{fmtD(o.tradingDate)}{o.overdue ? <b style={{ color: "#B23B3B" }}> · overdue</b> : ""}</span>
+            <span className="mono" style={{ color: "var(--navy)", fontWeight: 700 }}>{$(o.pending)}</span>
+          </div>
+        ))}
+        {d.pending.length > 8 && <span style={{ fontSize: 11, color: "var(--steel)" }}>+{d.pending.length - 8} more</span>}
+      </div>
+    </div>
+  );
+}
+
 function CashForm({ choice, site, date, shift, isManager, lock }) {
   const empty = { banked: "", bankRef: "", sentToHq: "", swipe: "", ecocash: "", petty: "", daCard: "", cashOnHand: "" };
   const [f, setF] = useState(empty);
@@ -808,6 +842,7 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
       <form onSubmit={send}>
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
         {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="cash" choice={choice} site={site} date={cashDate} shift={shift} />}
+        <HqPendingBanner site={choice.fixed ? undefined : site} />
 
         {/* Expected cash — pulled from the sales submission, not editable here */}
         <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
@@ -3718,6 +3753,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
       <SectionHead title="Cash office — banking reconciliation" sub={readOnly ? "Banked vs expected, by site and day — view only" : "Confirm site deposits, record the cash received, and close each day"} />
       {!extWindow && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
       <RefreshBar data={d} busy={!d && !err} onRefresh={reload} />
+      {!readOnly && <HqPendingBanner forCashOffice />}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && (

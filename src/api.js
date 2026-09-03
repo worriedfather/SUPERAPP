@@ -361,6 +361,8 @@ export const getExpectedCash = ({ site, date, shift } = {}) => {
 export const postCashDeposit = (b) => call("/api/cash/deposit", { method: "POST", body: b });
 // Pending deposit obligations — declared to bank (in the cash submission) but no slip in yet.
 export const getPendingDeposits = (site) => call(`/api/cash/deposit/pending${site ? `?site=${encodeURIComponent(site)}` : ""}`);
+// "Sent to HQ — awaiting cash-office confirmation" (auto-clears on confirmation).
+export const getHqPending = (site) => call(`/api/cash/hq-pending${site ? `?site=${encodeURIComponent(site)}` : ""}`);
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashShortfall = () => call('/api/cash/shortfall');
 export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/cash/inflows?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
