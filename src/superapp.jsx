@@ -4108,12 +4108,77 @@ function CashSiteDrill({ s }) {
   );
 }
 
+// ONE reconciling waterfall for the cash screen: Sales → (less non-cash tenders) →
+// Expected cash → (how the sites placed it) → Unaccounted, then the downstream
+// HQ-confirmation stage. Every line flows into the next and ties out exactly:
+//   Sales = Expected cash + DA card + Petrotrade + Redan
+//   Expected cash = Placed-against-today + Unaccounted
+//   Placed by sites = Placed-against-today + prior-day cash remitted today
+function CashWaterfall({ d, extra, onSite, onUnacc, onCarried }) {
+  const $ = (v) => "$" + full(v);
+  const t = extra?.tender || {};
+  const daCard = t.daCard || 0, petro = t.petro || 0, redan = t.redan || 0;
+  const sales = extra?.sales;
+  const expected = d.expected || 0;
+  const hq = d.hq || 0, banked = d.banked || 0, swipe = d.swipe || 0, mobile = d.mobile || 0, petty = d.petty || 0, onHand = d.onHand || 0;
+  const placed = d.submitted || 0, prior = d.overRemit || 0, against = Math.max(0, placed - prior);
+  const unacc = d.unaccounted != null ? d.unaccounted : Math.max(0, expected - against);
+  const received = extra?.received;
+  const awaitingHQ = Math.max(0, hq + banked - (received || 0));
+  const Row = ({ label, val, deduct, strong, total, tone, sub, onClick }) => (
+    <div onClick={onClick} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline",
+      padding: "9px 4px", borderTop: total ? "2px solid var(--navy)" : "1px solid var(--line)", cursor: onClick ? "pointer" : "default" }}>
+      <span style={{ paddingLeft: deduct ? 14 : 0, color: tone || (deduct ? "var(--steel)" : "var(--ink)"), fontWeight: strong || total ? 700 : 400 }}>
+        {deduct ? "less " : ""}{label}{onClick ? <span style={{ color: "var(--steel)", fontWeight: 400 }}> ›</span> : ""}
+        {sub && <span style={{ display: "block", fontSize: 10.5, color: "var(--steel)", fontWeight: 400 }}>{sub}</span>}
+      </span>
+      <span className="mono" style={{ whiteSpace: "nowrap", color: tone || (deduct ? "var(--steel)" : "var(--navy)"), fontWeight: strong || total ? 800 : 600 }}>
+        {deduct ? `(${$(val)})` : $(val)}
+      </span>
+    </div>
+  );
+  const Head = ({ children }) => <div style={{ fontSize: 11, color: "var(--steel)", textTransform: "uppercase", letterSpacing: ".04em", margin: "14px 0 0" }}>{children}</div>;
+  return (
+    <Panel style={{ marginBottom: 12 }}>
+      <span className="lbl">Cash reconciliation <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· sales down to what's reached head office</span></span>
+      <div style={{ marginTop: 6 }}>
+        <Row label="Sales — all tenders" val={sales == null ? 0 : sales} strong />
+        <Row label="DA card" val={daCard} deduct />
+        <Row label="Petrotrade" val={petro} deduct />
+        {redan > 0 && <Row label="Redan" val={redan} deduct />}
+        <Row label="Expected cash — to hand up" val={expected} total onClick={() => onSite("Expected cash", "expected")} />
+
+        <Head>How the sites placed it</Head>
+        <Row label="Sent to HQ" val={hq} onClick={() => onSite("Sent to HQ", "hq")} />
+        <Row label="Banked" val={banked} onClick={() => onSite("Banked", "banked")} />
+        <Row label="Card swipe" val={swipe} onClick={() => onSite("Card swipe", "swipe")} />
+        <Row label="Mobile money" val={mobile} onClick={() => onSite("Mobile money", "mobile")} />
+        <Row label="Petty cash" val={petty} onClick={() => onSite("Petty cash", "petty")} />
+        <Row label="Cash on hand — declared" val={onHand} onClick={() => onSite("Cash on hand", "onHand")} />
+        <Row label="Total placed by sites" val={placed} total />
+        {prior > 0 && <Row label="prior-day cash remitted today" val={prior} deduct sub="banked on top of today's — not against today's expected" />}
+        <Row label="Placed against today's expected" val={against} strong />
+        <Row label="Unaccounted" val={unacc} strong tone={unacc > 50 ? "var(--red)" : "#2F7D3B"} sub="expected not yet placed · tap to chase" onClick={onUnacc} />
+
+        <Head>Reached head office</Head>
+        <Row label="Confirmed received at HQ" val={received == null ? 0 : received} strong tone={(received || 0) > 0 ? "#2F7D3B" : "var(--steel)"} sub={(received || 0) === 0 ? "cash office confirms the next day" : undefined} />
+        <Row label="Awaiting HQ confirmation" val={awaitingHQ} sub="sent to HQ + banked, not yet confirmed at the cash office" />
+      </div>
+      <div onClick={onCarried} style={{ marginTop: 12, padding: "9px 11px", background: "#FBF4E2", border: "1px solid #EBD9A6", borderRadius: 10, cursor: "pointer", fontSize: 12, color: "#8A6516" }}>
+        Cash still on hand at sites (cumulative, not yet sent to HQ): <b>{$(d.carriedDeclared || 0)}</b> <span style={{ color: "var(--steel)" }}>· tap for the ledger ›</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Ties out: Sales = Expected cash + card + coupons · Expected cash = placed against today + unaccounted. The HQ-confirmation stage updates the day after, from the cash office day-close.</div>
+    </Panel>
+  );
+}
+
 export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   // standalone → the STANDARD Today/Yesterday/Month/Year/Range ribbon like every
   // other screen; embedded → follow the parent Bird's-eye window (from/to props).
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
   const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const [extra, setExtra] = useState(null);   // { sales, tender, received } — for the Sales→cash bridge + HQ-confirmed line
   const [q, setQ] = useState(""), [reloadKey, setReloadKey] = useState(0);
   const [carriedDrill, setCarriedDrill] = useState(false);
   const [unaccDrill, setUnaccDrill] = useState(false);
@@ -4123,8 +4188,16 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   useEffect(() => {
     if (embedded && !(effFrom && effTo)) return;
     if (!embedded && period === "range" && !(range.from && range.to)) return;
-    setD(null); setErr(null);
+    setD(null); setErr(null); setExtra(null);
     getCashInflows(w.days || 90, effFrom, effTo).then(setD).catch((e) => setErr(e.message));
+    // Sales (all tenders) + tender split for the Sales→Expected-cash bridge, and the
+    // HQ-CONFIRMED received figure (cash-office day-close) for the downstream line.
+    Promise.all([getCash(w.days || 90, effFrom, effTo).catch(() => null), getCashRecon(w.days || 90, effFrom, effTo).catch(() => null)])
+      .then(([cash, rec]) => {
+        let sales = 0; for (const s of (cash?.sites || [])) sales += s.expected || 0;   // Total Sales Value (all tenders)
+        let received = 0; for (const r of (rec?.rows || [])) received += r.received || 0; // HQ-confirmed
+        setExtra({ sales, tender: cash?.tender || null, received });
+      }).catch(() => setExtra({ sales: 0, tender: null, received: 0 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, range.from, range.to, from, to, embedded, reloadKey]);
   const $ = (v) => "$" + full(v);
@@ -4144,19 +4217,9 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
       )}
       {d && (d.expected > 0 || d.submitted > 0) && (
         <>
-          <CashReconSummary days={w.days || 90} from={effFrom} to={effTo} />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 12 }}>
-            <Hero label="EXPECTED CASH" value={$(d.expected)} accent="#8FB8FF"
-              onClick={() => setGd({ title: "Expected cash — by site", sub: `${$(d.expected)} · the cash portion of takings`, render: breakdownDrill(d.sites, ["Site", "site"], [["Expected cash", "expected", $full]], "expected") })} />
-            <Hero label="ACCOUNTED FOR" value={$(d.submitted)} sub={`${d.sitesSubmitted} site${d.sitesSubmitted === 1 ? "" : "s"} · in-app submissions + HQ-confirmed history${d.overRemit > 50 ? ` · incl. ${$(d.overRemit)} prior-day cash` : ""}`} accent="#6BC048"
-              onClick={() => setGd({ title: "Accounted for — by site", sub: `${$(d.submitted)} · sent to HQ + banked + swipe + mobile + petty + on-hand`, render: breakdownDrill(d.sites, ["Site", "site"], [["Accounted for", "submitted", $full]], "submitted") })} />
-            <div onClick={() => setUnaccDrill(true)} style={{ cursor: "pointer" }} title="Tap for the per-site chase list">
-              <Hero label="UNACCOUNTED FOR" value={$(Math.max(0, d.unaccounted != null ? d.unaccounted : (d.expected || 0) - (d.submitted || 0)))} sub="today's expected − accounted (prior-day remittances net to $0) · tap to drill ›" accent="#D96A5B" />
-            </div>
-            <div onClick={() => setCarriedDrill(true)} style={{ cursor: "pointer" }} title="Tap for the day-by-day ledger">
-              <Hero label="CASH ON HAND AT SITES" value={$(d.carriedDeclared || 0)} sub="confirmed by the sites · not yet sent to HQ · cumulative · tap to drill ›" accent="#E0B44C" />
-            </div>
-          </div>
+          <CashWaterfall d={d} extra={extra}
+            onSite={(label, key) => setGd({ title: `${label} — by site`, sub: `${$(d[key] || 0)} · tap a site for its full breakdown`, render: breakdownDrill(d.sites, ["Site", "site"], [[label, key, $full]], key) })}
+            onUnacc={() => setUnaccDrill(true)} onCarried={() => setCarriedDrill(true)} />
           {/* Sites that haven't submitted their cash handling — up top where it gets chased */}
           {(() => {
             const notSub = (d.sites || []).filter((s) => s.subDays === 0 && s.expected > 0);
@@ -4170,18 +4233,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
               </div>
             );
           })()}
-          {/* What the SITES SAY they did with the cash — their submissions, verbatim.
-              Reconciliation (expected vs confirmed received) lives on the Cash office screen. */}
-          <Panel style={{ marginBottom: 12 }}>
-            <span className="lbl">How the cash was handled <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· in-app submissions; earlier days from the HQ-confirmed recon (received at HQ, banking, POS, petty)</span></span>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginTop: 8 }}>
-              {[["Sent to HQ", "hq"], ["Banked", "banked"], ["Card swipe", "swipe"], ["Mobile money", "mobile"], ["Site petty cash", "petty"], ["Cash on hand", "onHand"]].map(([lab, key]) => (
-                <KpiCard key={key} label={lab} value={$(d[key])} sub={key === "petty" ? "also under Outflows" : undefined}
-                  onClick={() => setGd({ title: `${lab} — by site`, sub: `${$(d[key])} · sites that reported ${lab.toLowerCase()}`, render: breakdownDrill((d.sites || []).filter((s) => s.subDays), ["Site", "site"], [[lab, key, $full]], key, { empty: "No site reported this yet." }) })} />
-              ))}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Reconciliation — declared vs what actually arrived and banked — is on the <b>Cash office</b> screen.</div>
-          </Panel>
+          <span className="lbl" style={{ display: "block", marginBottom: 6 }}>By site</span>
           <FilterBox value={q} onChange={setQ} />
           {/* Phone-first: one card per site (no sideways scroll). The key numbers are on
               two lines; the status badge flags the exception; tap opens the full breakdown
