@@ -5296,11 +5296,20 @@ export function DeliverySubmit({ me, initial, onLeave }) {
                   options={trips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L ${t.product}` }))} /></Field>}
           {/* trip context — pre-populated from the schedule, not re-entered */}
           {trip && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 12px" }}>
-              {[["Truck", f.truckName], ["Reg", f.truckReg], ["From", trip.warehouse], ["Product", f.commodity]].filter((x) => x[1]).map(([k, v]) => (
-                <span key={k} className="mono" style={{ fontSize: 11, padding: "3px 9px", borderRadius: 100, background: "#F4F6FA", color: "var(--steel)" }}>{k}: <b style={{ color: "var(--navy)" }}>{v}</b></span>
-              ))}
-            </div>
+            <>
+              {f.tripNo && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0 8px", padding: "8px 11px", borderRadius: 10, background: "#EEF2FF", border: "1px solid #C9D4F5" }}>
+                  <span className="lbl" style={{ color: "#5B6B8C", margin: 0 }}>Trip</span>
+                  <span className="mono" style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)", letterSpacing: ".02em" }}>{f.tripNo}</span>
+                  <span style={{ fontSize: 11, color: "var(--steel)", marginLeft: "auto" }}>quote this to logistics if anything looks wrong</span>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 12px" }}>
+                {[["Truck", f.truckName], ["Reg", f.truckReg], ["From", trip.warehouse], ["Product", f.commodity]].filter((x) => x[1]).map(([k, v]) => (
+                  <span key={k} className="mono" style={{ fontSize: 11, padding: "3px 9px", borderRadius: 100, background: "#F4F6FA", color: "var(--steel)" }}>{k}: <b style={{ color: "var(--navy)" }}>{v}</b></span>
+                ))}
+              </div>
+            </>
           )}
           {/* COLLECTION GATE — the note can only be filed after the truck is collected. Collection
               is the DRIVER's step; logistics/admin may confirm it on the driver's behalf. The
@@ -6750,7 +6759,7 @@ export function ApprovedDeliveries({ onCapture } = {}) {
           </div>
         </Panel>
       )}
-      {note && <DetailSheet title={`Delivery note · ${note.dnNo}`} sub={`${note.site} · ${fmtD(note.date)}`} onClose={() => setNote(null)}><DeliveryNoteView d={note} /></DetailSheet>}
+      {note && <DetailSheet title={`Delivery note · ${note.dnNo}`} sub={`${note.tripNo ? note.tripNo + " · " : ""}${note.site} · ${fmtD(note.date)}`} onClose={() => setNote(null)}><DeliveryNoteView d={note} /></DetailSheet>}
     </Wrap>
   );
 }
@@ -6843,7 +6852,7 @@ function deliveryDetail(d) {
   const n = (v, u = " L") => (v == null ? "—" : L(v) + u);
   return () => (
     <>
-      <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{d.loadedFrom || "?"} → {d.deliveredTo || "?"} · {d.date || ""}{d.truckReg ? " · " + d.truckReg : ""}</div>
+      <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{d.tripNo ? d.tripNo + " · " : ""}{d.loadedFrom || "?"} → {d.deliveredTo || "?"} · {d.date || ""}{d.truckReg ? " · " + d.truckReg : ""}</div>
       {grp("Quantities", <>
         {row("Dispatched (ordered load)", n(d.qtyLoaded))}
         {row("Truck dip on arrival", n(d.truckDip))}
