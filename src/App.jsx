@@ -1597,6 +1597,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [pick, setPick] = useState("");
   const [ask, setAsk] = useState(init.mode === "general" ? String(init.calcLitres || "") : "");
   const [reason, setReason] = useState(init.mode === "general" ? (init.reason || "") : "");
+  // A FLEET driver can raise a GENERAL run (no scheduled trip — yard move / short errand),
+  // capped at 20 L. Off by default; a delivery is still trip-based.
+  const [general, setGeneral] = useState(false);
+  const FLEET_GEN_CAP = 20;
   const [sent, setSent] = useState(null);
   const [sendErr, setSendErr] = useState(null);
   const [sending, setSending] = useState(false);
@@ -1631,6 +1635,9 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
 
   const driver = drivers.find((d) => d.card === card);
   const isFleet = driver?.type === "fleet";
+  // A fleet driver on a scheduled DELIVERY (trip + route). A fleet GENERAL run skips the
+  // trip/route and just asks for litres (≤20). Retail is always the "ask litres" path.
+  const needTrip = isFleet && !general;
   const h = horses.find((x) => x.code === horse);
   const kmpl = h?.kmpl ?? FLEET_MEDIAN;
 
@@ -1701,15 +1708,15 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const ocrMismatch = ocrGap != null && ocrGap > OCR_TOLERANCE;
 
   const full = [fuelStn, ...drops, end].filter(Boolean);
-  const journeyOk = isFleet ? !!(fuelStn && end) : true;
-  const route = useRoute(isFleet && journeyOk ? full : [], gkey);
+  const journeyOk = needTrip ? !!(fuelStn && end) : true;
+  const route = useRoute(needTrip && journeyOk ? full : [], gkey);
   const km = route && !route.loading ? route.km : 0;
   const est = route && !route.loading ? estimate(full, route.legs, horse) : null;
-  const calc = isFleet && est ? est.rounded : null;
+  const calc = needTrip && est ? est.rounded : null;
   // For a 2nd/3rd request on a trip, the ask is the TOP-UP the server suggests (the extra
   // the grown route needs), not the whole-route estimate again — and it's held to the cap.
   const isTopUp = fuelCtx && fuelCtx.mode === "compose" && fuelCtx.sequence > 1;
-  const calcEff = isFleet ? (isTopUp && fuelCtx.suggested != null ? fuelCtx.suggested : calc) : null;
+  const calcEff = needTrip ? (isTopUp && fuelCtx.suggested != null ? fuelCtx.suggested : calc) : null;
   const openBal = card ? cards[card]?.balance ?? 0 : 0;
 
   const vehicleOk = isFleet ? !!(horse && trailer) : !!veh;
@@ -1725,10 +1732,11 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   if (!odo) missing.push("the odometer reading");
   else if (odoBad) missing.push("an odometer reading higher than " + L(lastOdo) + " km");
   if (!photo) missing.push("a photograph of the odometer");
-  if (driver && isFleet && !end) missing.push("the end point of the journey");
-  if (driver && !isFleet && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
+  if (driver && needTrip && !end) missing.push("the end point of the journey");
+  if (driver && !needTrip && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
+  if (driver && general && parseFloat(ask) > FLEET_GEN_CAP) missing.push(`a general run of ${FLEET_GEN_CAP} L or less`);
   // Trip already fuelled to its 120% cap and the route hasn't grown → nothing to top up.
-  const capBlocked = isFleet && fuelCtx && fuelCtx.mode === "compose" && fuelCtx.headroom != null && fuelCtx.headroom <= 0;
+  const capBlocked = needTrip && fuelCtx && fuelCtx.mode === "compose" && fuelCtx.headroom != null && fuelCtx.headroom <= 0;
   const ready = missing.length === 0 && !capBlocked;
 
   const send = async () => {
@@ -1741,15 +1749,15 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         start: fuelStn, drops, end,
         odo: odoNum, photo, ocr: ocr.state === "read" ? ocr.value : null, ocrConf: ocr.state === "read" ? ocr.conf : null,
         ocrState: ocr.state, ocrGap, ocrMismatch,
-        mode: isFleet ? "delivery" : "general", stops: isFleet ? full : [], km, kmpl,
+        mode: needTrip ? "delivery" : "general", stops: needTrip ? full : [], km, kmpl,
         distanceSource: route ? route.source : null, legs: route ? route.legs : null,
         locKm: est ? Math.round(est.locKm) : 0, hwyKm: est ? Math.round(est.hwyKm) : 0,
         blended: est ? +est.blended.toFixed(2) : kmpl,
-        calcLitres: isFleet ? calcEff : parseFloat(ask), reason: isFleet ? "" : reason, openingBalance: openBal,
-        tripNo: tripNo || null,
+        calcLitres: needTrip ? calcEff : parseFloat(ask), reason: needTrip ? "" : (general ? (reason || "general run") : reason), openingBalance: openBal,
+        tripNo: needTrip ? (tripNo || null) : null,
       });
-      const msg = `${isFleet ? calcEff : parseFloat(ask)} L requested at ${fuelStn}`;
-      setDrops([]); setEnd(""); setOdo(""); setAsk(""); setReason(""); setTripNo("");
+      const msg = `${needTrip ? calcEff : parseFloat(ask)} L requested at ${fuelStn}`;
+      setDrops([]); setEnd(""); setOdo(""); setAsk(""); setReason(""); setTripNo(""); setGeneral(false);
       setPhoto(null); setOcr({ state: "idle" }); setGeo({ state: "idle" }); setFuelStn(""); setStep(0);
       // ALWAYS show the explicit "Sent for approval" confirmation so there's no doubt it
       // went through — otherwise the form silently resets and it looks unsent (→ re-click).
@@ -1766,10 +1774,12 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   // ---- wizard steps: one focused task per screen (Tiimo-style) ----
   const base = isFleet
     ? [
-        { key: "vehicle", icon: "truck", accent: "#3E8E28", tint: "#E9F5E2", title: "Which truck today?", sub: "Pick your horse and trailer", done: vehicleOk },
+        { key: "vehicle", icon: "truck", accent: "#3E8E28", tint: "#E9F5E2", title: "Which truck today?", sub: general ? "General run · pick your horse" : "Trip, horse and trailer", done: vehicleOk },
         { key: "location", icon: "pin", accent: "var(--blue)", tint: "#E7ECFF", title: "Where are you?", sub: "The station you’re fuelling at", done: geo.state === "onsite" },
         { key: "odometer", icon: "gauge", accent: "#C07A00", tint: "#FBEDD6", title: "Odometer", sub: "Type it, then photograph it", done: !!odo && !odoBad && !!photo },
-        { key: "journey", icon: "route", accent: "#7A5AF0", tint: "#EDE8FD", title: "Your journey", sub: "Where are you delivering?", done: journeyOk },
+        needTrip
+          ? { key: "journey", icon: "route", accent: "#7A5AF0", tint: "#EDE8FD", title: "Your journey", sub: "Where are you delivering?", done: journeyOk }
+          : { key: "usage", icon: "drop", accent: "#7A5AF0", tint: "#EDE8FD", title: "General run", sub: `Litres (max ${FLEET_GEN_CAP}) & reason`, done: parseFloat(ask) > 0 && parseFloat(ask) <= FLEET_GEN_CAP },
       ]
     : [
         { key: "vehicle", icon: "truck", accent: "#3E8E28", tint: "#E9F5E2", title: "What are you fuelling?", sub: "Pick the vehicle or equipment", done: !!veh },
@@ -1792,13 +1802,19 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     );
     if (k === "vehicle") return isFleet ? (
       <>
-        <Field label="Scheduled delivery trip">
+        {/* Delivery (trip-based) vs a General run (no trip, max 20 L — yard move / short errand) */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button type="button" onClick={() => { setGeneral(false); }} className="disp" style={{ flex: 1, padding: "9px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: `1.5px solid ${!general ? "var(--blue)" : "var(--line)"}`, background: !general ? "#E7ECFF" : "#fff", color: !general ? "var(--blue)" : "var(--steel)" }}>Delivery trip</button>
+          <button type="button" onClick={() => { setGeneral(true); setTripNo(""); setDrops([]); setEnd(""); }} className="disp" style={{ flex: 1, padding: "9px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: `1.5px solid ${general ? "var(--blue)" : "var(--line)"}`, background: general ? "#E7ECFF" : "#fff", color: general ? "var(--blue)" : "var(--steel)" }}>General run · max {FLEET_GEN_CAP} L</button>
+        </div>
+        {!general && <><Field label="Scheduled delivery trip">
           <Picker value={tripNo} title="Scheduled delivery trip" placeholder={myTrips.length ? "Select your trip…" : "No trip scheduled"}
             onChange={(v) => { setTripNo(v); const t = myTrips.find((x) => x.tripNo === v); if (t) { if (t.truck) setHorse(t.truck); if (t.trailer) setTrailer(t.trailer); setDrops((t.drops || []).map((d) => d.site)); setEnd(t.endPoint || ""); } }}
             options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}${t.fuelRequested > 0 ? " · already fuelled" : ""}` }))} />
         </Field>
-        {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. Fleet fuel is requested against a planned trip — ask logistics to schedule it first, then it appears here.</div>}
-        {fuelCtx && <FuelContextBanner ctx={fuelCtx} />}
+        {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. For a delivery, fuel is requested against a planned trip — ask logistics to schedule it, or switch to a General run above.</div>}
+        {fuelCtx && <FuelContextBanner ctx={fuelCtx} />}</>}
+        {general && <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: -4, marginBottom: 11 }}>General run — no trip needed, capped at {FLEET_GEN_CAP} L (yard move / short errand). You'll enter the litres after the odometer.</div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Horse"><Picker value={horse} onChange={(v) => { setHorse(v); setTrailer(""); }} placeholder="Select" title="Horse" options={horses.map((x) => x.code)} /></Field>
           <Field label="Trailer"><Picker value={trailer} onChange={setTrailer} placeholder="Select" title="Trailer" options={TRAILERS} /></Field>
@@ -1905,8 +1921,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     );
     if (k === "usage") return (
       <>
-        <Field label="Litres you are asking for"><input inputMode="numeric" value={ask} onChange={(e) => setAsk(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 40" /></Field>
-        <Field label="What it is for"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. generator, yard shunting" style={{ fontFamily: "Barlow" }} /></Field>
+        {general && <div style={{ marginBottom: 10, background: "#EEF2FF", border: "1px solid #C9D4F5", borderRadius: 10, padding: "9px 11px", fontSize: 12.5, color: "var(--navy)" }}>General fleet run — capped at <b>{FLEET_GEN_CAP} L</b>. For anything larger, use a scheduled delivery trip.</div>}
+        <Field label={general ? `Litres you are asking for (max ${FLEET_GEN_CAP})` : "Litres you are asking for"}><input inputMode="numeric" value={ask} onChange={(e) => setAsk(e.target.value.replace(/[^\d.]/g, ""))} placeholder={general ? `e.g. 20` : "e.g. 40"} style={{ borderColor: general && parseFloat(ask) > FLEET_GEN_CAP ? "var(--red)" : undefined }} /></Field>
+        {general && parseFloat(ask) > FLEET_GEN_CAP && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: -8, marginBottom: 10 }}>A general run is capped at {FLEET_GEN_CAP} L. Reduce it, or raise a delivery trip instead.</div>}
+        <Field label="What it is for"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={general ? "e.g. yard shunting, move to workshop" : "e.g. generator, yard shunting"} style={{ fontFamily: "Barlow" }} /></Field>
         <div style={{ marginTop: 8 }}><PumpHead caption="Requested" litres={parseFloat(ask) || null} /></div>
         {!ready && <div style={{ marginTop: 10, background: "#FBEDD6", border: "1px solid var(--amber)", borderRadius: 12, padding: "10px 12px", fontSize: 13 }}>Finish the earlier steps first: {missing.slice(0, 3).join(", ")}{missing.length > 3 ? "…" : ""}</div>}
       </>
