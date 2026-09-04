@@ -5286,14 +5286,21 @@ export function DeliverySubmit({ me, initial, onLeave }) {
               ))}
             </div>
           )}
-          {/* COLLECTION GATE — driver must confirm fuel collected from the depot before delivering */}
-          {trip && !trip.collected && (
+          {/* COLLECTION GATE — the note can only be filed after the truck is collected. Collection
+              is the DRIVER's step; logistics/admin may confirm it on the driver's behalf. The
+              copy is actor-correct so a supervisor isn't told they are "starting the journey". */}
+          {trip && !trip.collected && (() => {
+            const canConfirmOnBehalf = ["logistics", "depot", "admin", "operations_manager"].includes(me?.kind);
+            return (
             <div style={{ border: "1px solid #C9D4F5", background: "#EEF2FF", borderRadius: 12, padding: 14, margin: "4px 0 10px" }}>
-              <div style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 4 }}>🚚 Collect the fuel first</div>
-              <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 10, lineHeight: 1.5 }}>Confirm you've loaded and collected <b>{L(trip.qty)} L {trip.product}</b> from <b>{trip.warehouse}</b> before you head out. The delivery form unlocks once you confirm — this starts the journey.</div>
-              <button type="button" className="pill" disabled={collecting} style={{ width: "100%" }} onClick={() => confirmCollect(trip.tripNo)}>{collecting ? "Confirming…" : "✅ Confirm fuel collected — start journey"}</button>
+              <div style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 4 }}>🚚 Not collected yet</div>
+              <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: canConfirmOnBehalf ? 10 : 0, lineHeight: 1.5 }}>The driver hasn't confirmed collecting <b>{L(trip.qty)} L {trip.product}</b> from <b>{trip.warehouse}</b> yet. The delivery note can only be filed once the truck has been collected and offloaded here — the driver confirms collection at the depot.</div>
+              {canConfirmOnBehalf && (
+                <button type="button" className="pill" disabled={collecting} style={{ width: "100%" }} onClick={() => confirmCollect(trip.tripNo)}>{collecting ? "Confirming…" : "Confirm collection on the driver's behalf"}</button>
+              )}
             </div>
-          )}
+            );
+          })()}
           {(!trip || trip.collected) && (<>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 170px" }}><Field label="Drop site">
@@ -5736,8 +5743,6 @@ const DUE_STATUS = {
   arrive:   { label: "Confirm arrived at site", tone: "#2B3990", act: "arrived" },
   offload_confirm: { label: "Confirm offload completed", tone: "#2B3990", act: "offloaded", hint: "Tap when the truck has finished offloading into your tanks." },
   settling: { label: "Fuel settling — dip after the countdown", tone: "#C07A00" },
-  en_route: { label: "Delivery en route", tone: "var(--steel)" },
-  arrived:  { label: "Truck at your site — offloading", tone: "#C07A00" },
   awaiting_site: { label: "Delivered — waiting for the site to dip & file the note", tone: "var(--steel)" },  // driver's view; no action for him
   awaiting_note: { label: "File delivery note", tone: "#C07A00", tab: "deliver" },
   sign_off_yours: { label: "Sign off delivery note", tone: "#B23B3B", tab: "dapprove" },
@@ -5795,7 +5800,7 @@ export function DeliveriesDue({ onGo }) {
           }
           // Unknown status → a SAFE, non-actionable row (never default a driver into the
           // file-note screen, which would 403). Only a site role should land on capture.
-          const s = DUE_STATUS[p.status] || (p.role === 'site' ? DUE_STATUS.awaiting_note : { label: "In progress", tone: "var(--steel)" });
+          const s = DUE_STATUS[p.status] || (p.role === 'site' ? DUE_STATUS.awaiting_note : { label: "Waiting — no action needed from you right now", tone: "var(--steel)" });
           // driver leg steps render as ACTION cards, not list rows
           if (s.act) {
             const isBusy = busy === p.tripNo + p.site;

@@ -1411,7 +1411,18 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
               <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {fmtD(t.date)}</div>
               <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 4 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
               {t.fuelRequested > 0
-                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}<span style={{ color: "var(--steel)", fontWeight: 400 }}> · deliver from the “Deliveries due” list</span>{canRequest && <span style={{ color: "var(--amber)", fontWeight: 700 }}> · tap to top up if the route grew ›</span>}</div>
+                ? (() => {
+                    // State the TRUE next step from the drop-level counts, never a static
+                    // "on the road" — so this never contradicts "Deliveries due" above.
+                    const toArrive = t.toArrive || 0, awNote = t.awaitingNote || 0, awSign = t.awaitingSignoff || 0;
+                    let msg, tone = "#3C9A52";
+                    if (!t.collected) msg = `collect the load from ${t.warehouse}, then confirm each drop in “Deliveries due”`;
+                    else if (toArrive > 0) { msg = `on the road — ${toArrive} drop${toArrive > 1 ? "s" : ""} still to deliver · confirm each in “Deliveries due”`; tone = "#C07A00"; }
+                    else if (awSign > 0) { msg = `sign off ${awSign} delivery note${awSign > 1 ? "s" : ""} in “Deliveries due”`; tone = "#C07A00"; }
+                    else if (awNote > 0) msg = `all drops delivered — waiting for the site to dip & file. Nothing to do now.`;
+                    else msg = `all drops delivered.`;
+                    return <div style={{ fontSize: 11.5, color: tone, fontWeight: 700, marginTop: 8 }}>✓ Fuel requested {L(t.fuelRequested)} L · {msg}{canRequest && <span style={{ color: "var(--amber)", fontWeight: 700 }}> · tap to top up if the route grew ›</span>}</div>;
+                  })()
                 : (onTrip && <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>)}
             </div>);
           })}
