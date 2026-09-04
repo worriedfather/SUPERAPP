@@ -1999,8 +1999,10 @@ export function ExecutiveDashboard({ me } = {}) {
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   // Per-role section trims. Reporting accountants get the finance/ops feeds but not the
   // whole-business Overview, the Margins detail, or Cash outflows (owner, 2026-09).
-  const HIDE_SECTIONS = me && me.kind === "reporting_accountant" ? new Set(["sales", "margins"]) : new Set();
-  const firstTab = HIDE_SECTIONS.has("overview") ? "sales" : "overview";
+  const HIDE_SECTIONS = me && me.kind === "reporting_accountant"
+    ? new Set(["overview", "sales", "margins", "prices", "outflows", "nightshift", "dayshift", "midday", "fleet", "workshop"]) : new Set();
+  const SECTION_ORDER = ["overview", "sales", "margins", "prices", "collections", "outflows", "supply", "transit", "losses", "nightshift", "dayshift", "midday", "fleet", "workshop"];
+  const firstTab = SECTION_ORDER.find((k) => !HIDE_SECTIONS.has(k)) || "overview";
   const { tab, setTab, back, prev } = useNavStack(firstTab);
   // Cash inflows deliberately NOT here (owner, 2026-08-29): executives reach it
   // on the Retail board; the managers' Bird's-eye keeps its own copy. In its
