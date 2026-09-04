@@ -2000,6 +2000,8 @@ const RequestLine = ({ r }) => {
         <div className="mono" style={{ fontSize: 12 }}>{r.id} · {r.horse}{r.trailer ? ` ${r.trailer}` : ""} · {r.mode === "delivery" ? `${L(r.km)} km` : r.reason || "general use"}
           {r.ocrMismatch && <strong style={{ color: "var(--red)" }}> · odometer flag</strong>}</div>
         <div className="disp" style={{ fontSize: 11, color: c, fontWeight: 700 }}>{t}</div>
+        {r.status === "pending" && <div style={{ fontSize: 10.5, color: "var(--steel)", marginTop: 1 }}>with the fuel approver (logistics lead / Shaahid) — chase them if urgent</div>}
+        {r.status === "declined" && r.note && <div style={{ fontSize: 10.5, color: "var(--steel)", marginTop: 1 }}>“{r.note}” — edit &amp; resend, or ask your approver</div>}
       </div>
       <div className="mono" style={{ fontSize: 13, textAlign: "right" }}>
         {r.status === "pending" && <>asked {L(r.calcLitres)} L</>}
