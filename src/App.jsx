@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
-import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM } from "./data";
+import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM, ZONES } from "./data";
 import { resumeTracking, startTracking } from "./tripTracker.js";
 import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings, gpsEnabled } from "./device";
 import { readOdometer } from "./ocr";
@@ -16,14 +16,6 @@ import { Picker } from "./Picker.jsx";
 
 
 /* -------- consumption split between town work and open road -------- */
-const ZONES = {
-  HRE: ["DA Yard","NOIC Msasa","Glenara","Gletwyn","Graniteside","Speedscene","Waterfalls","Willowvale","Avondale",
-        "Greencroft","Kuwadzana","Dzivarasekwa","Mabvuku","Epworth","Chiremba","Kambuzuma","Southlea Park","Kirkman",
-        "Ardbennie","Kenneth Kaunda","Chitungwiza Chikwanha","Chitungwiza Zengeza","Chitungwiza Makoni"],
-  BYO: ["Bulawayo Fairbridge","Bulawayo North End","Bulawayo Fife Street","Bulawayo Khami","Bulawayo Luveve",
-        "Bulawayo Goderich","Bulawayo Ashys","Bulawayo Main Street","Cowdray Park"],
-  MUT: ["Mutare 4th Street","Feruka Mutare"],
-};
 const zoneOf = (n) => {
   const exact = Object.keys(ZONES).find((z) => ZONES[z].includes(n));
   if (exact) return exact;
