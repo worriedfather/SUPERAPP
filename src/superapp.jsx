@@ -1999,7 +1999,7 @@ export function ExecutiveDashboard({ me } = {}) {
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   // Per-role section trims. Reporting accountants get the finance/ops feeds but not the
   // whole-business Overview, the Margins detail, or Cash outflows (owner, 2026-09).
-  const HIDE_SECTIONS = me && me.kind === "reporting_accountant" ? new Set(["overview", "margins", "outflows"]) : new Set();
+  const HIDE_SECTIONS = me && me.kind === "reporting_accountant" ? new Set(["overview", "margins", "outflows", "collections", "fleet", "workshop"]) : new Set();
   const firstTab = me && me.kind === "reporting_accountant" ? "sales" : "overview";
   const { tab, setTab, back, prev } = useNavStack(firstTab);
   // Cash inflows deliberately NOT here (owner, 2026-08-29): executives reach it
@@ -3169,6 +3169,7 @@ export function ManagerBirdsEye({ me } = {}) {
   // detail tabs (day-end reconciliation, tank/status trends, cash banking).
   const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash", "inflows"])
     : (me && me.kind === "accounts_logistics") ? new Set(["inflows", "cash", "prices"])   // no cash inflows / cash banked / prices for this role
+    : (me && me.kind === "reporting_accountant") ? new Set(["inflows", "cash"])            // no cash inflows / cash banked for this role
     : new Set();
   const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));
   const $ = (v) => "$" + full(v);

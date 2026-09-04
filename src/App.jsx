@@ -608,7 +608,7 @@ const ROLE_TABS = {
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"], ["retail", "Sales & cash"], ["inflows", "Cash inflows"], ["dapprove", "Approve deliveries"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["intel", "Intelligence"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["birdseye", "Birds-eye"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["intel", "Intelligence"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
   accounts_logistics: [["hub", "Home"], ["birdseye", "Birds-eye"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["recon", "Warehouse"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["retail", "Retail"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
