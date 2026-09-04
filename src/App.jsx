@@ -571,8 +571,6 @@ const ROLE_TABS = {
   retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
-  // Operations manager: the full retail manager view (all sites).
-  operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["flow", "Delivery flow"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
   fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["trips", "Trips"], ["flow", "Delivery flow"],
