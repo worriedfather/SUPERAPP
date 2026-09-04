@@ -605,7 +605,7 @@ const ROLE_TABS = {
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
   accounts_logistics: [["hub", "Home"], ["cockpit", "Watchlist"], ["radar", "Radar"], ["recon", "Warehouse"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["retail", "Retail"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
