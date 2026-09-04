@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS,
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
-import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth } from "./api";
+import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext } from "./api";
 import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
@@ -1399,7 +1399,9 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
             // the request form. Once fuel is requested/collected, the card is NOT
             // clickable — the rest of the trip is driven by "Deliveries due" (confirm
             // arrival → sign off), so the driver is never bounced back to request fuel.
-            const canRequest = onTrip && (t.fuelRequested || 0) === 0 && !t.collected;
+            // A trip may be fuelled by more than one request (a top-up after logistics
+            // grow the route), so the card stays actionable until the truck is collected.
+            const canRequest = onTrip && !t.collected;
             return (
             <div key={t.tripNo} role={canRequest ? "button" : undefined} onClick={canRequest ? () => onTrip(t) : undefined} className="card" style={{ padding: 14, marginBottom: 10, borderLeft: "4px solid var(--amber)", cursor: canRequest ? "pointer" : "default" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
@@ -1409,7 +1411,7 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
               <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {fmtD(t.date)}</div>
               <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 4 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
               {t.fuelRequested > 0
-                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}<span style={{ color: "var(--steel)", fontWeight: 400 }}> · deliver from the “Deliveries due” list</span></div>
+                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}<span style={{ color: "var(--steel)", fontWeight: 400 }}> · deliver from the “Deliveries due” list</span>{canRequest && <span style={{ color: "var(--amber)", fontWeight: 700 }}> · tap to top up if the route grew ›</span>}</div>
                 : (onTrip && <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>)}
             </div>);
           })}
@@ -1519,6 +1521,53 @@ function DriverCard({ me, cards, requests }) {
 }
 
 /* ==================== DRIVER — request wizard ==================== */
+// Shows the multi-request picture for a trip: which request this is (1st/2nd/…), the
+// 110% cap on the running total, and — for a top-up — exactly what changed in the trip
+// (drops, distance) and the fuel adjustment that follows. Used on the driver's request
+// screen (compose) and on the approver's card (review) so both see the SAME thing.
+function FuelContextBanner({ ctx }) {
+  if (!ctx) return null;
+  const review = ctx.mode === "review";
+  const seq = ctx.sequence || 1;
+  const ord = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"][seq] || `${seq}th`;
+  const ch = ctx.changes;
+  const kmUp = ch && ch.kmDelta != null && ch.kmDelta !== 0;
+  const litUp = ch && ch.litresDelta != null && ch.litresDelta !== 0;
+  const box = { background: seq > 1 ? "#FFF6E9" : "#EEF2FF", border: `1px solid ${seq > 1 ? "#EAD3A0" : "#C9D4F5"}`, borderRadius: 12, padding: "11px 13px", marginBottom: 12, fontSize: 12.5, color: "var(--navy)", lineHeight: 1.55 };
+  const chip = (t, tone) => <span style={{ display: "inline-block", padding: "1px 7px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: tone === "add" ? "#E4F3E8" : "#FBE7E4", color: tone === "add" ? "#2C6B3F" : "#A23A2E", marginRight: 5, marginTop: 3 }}>{t}</span>;
+  return (
+    <div style={box}>
+      <div style={{ fontWeight: 800, marginBottom: 5 }}>
+        {seq > 1 ? `${ord} fuel request for this trip` : "First fuel request for this trip"}
+      </div>
+      {seq > 1 && ch && ch.changed && (
+        <div style={{ marginBottom: 7 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>What changed since the previous request:</div>
+          {(ch.dropsAdded || []).map((s, i) => <span key={"a" + i}>{chip("+ " + s, "add")}</span>)}
+          {(ch.dropsRemoved || []).map((s, i) => <span key={"r" + i}>{chip("− " + s, "rm")}</span>)}
+          {kmUp && <div style={{ marginTop: 4 }}>Distance: <b>{L(ch.kmPrev)} → {L(ch.kmNow)} km</b> <span style={{ color: ch.kmDelta > 0 ? "#A23A2E" : "#2C6B3F", fontWeight: 700 }}>({ch.kmDelta > 0 ? "+" : ""}{L(ch.kmDelta)} km)</span></div>}
+          {litUp && <div>Route fuel: <b>{L(ch.litresPrev)} → {L(ch.litresNow)} L</b> <span style={{ color: ch.litresDelta > 0 ? "#A23A2E" : "#2C6B3F", fontWeight: 700 }}>({ch.litresDelta > 0 ? "+" : ""}{L(ch.litresDelta)} L)</span></div>}
+        </div>
+      )}
+      {seq > 1 && ch && !ch.changed && (
+        <div style={{ marginBottom: 7, color: "var(--steel)" }}>The trip route hasn't changed since the last request.</div>
+      )}
+      <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>
+        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> (110%)</>}
+        {review
+          ? (ctx.alreadyAllocatedBefore > 0 && <> · earlier fills {L(ctx.alreadyAllocatedBefore)} L · this request {ctx.thisRequest ? L(ctx.thisRequest.litres) : "—"} L</>)
+          : (<> · already allocated {L(ctx.alreadyAllocated)} L · <b style={{ color: "var(--navy)" }}>{L(ctx.headroom)} L</b> headroom</>)}
+      </div>
+      {!review && ctx.headroom != null && ctx.headroom <= 0 && (
+        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the 110% cap — no more fuel can be added unless logistics grow the route.</div>
+      )}
+      {!review && seq > 1 && ctx.headroom > 0 && ctx.suggested != null && (
+        <div style={{ marginTop: 6, fontWeight: 700, color: "#8A5A00" }}>Suggested top-up: {L(ctx.suggested)} L</div>
+      )}
+    </div>
+  );
+}
+
 function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSent, initial }) {
   const locked = me && me.kind === "driver" ? me.card : null; // a driver is bound to their own card
   const init = initial || {};
@@ -1543,6 +1592,18 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [step, setStep] = useState(0);
   const [tripNo, setTripNo] = useState(init.tripNo || "");
   const [myTrips, setMyTrips] = useState([]);
+  const [fuelCtx, setFuelCtx] = useState(null);   // multi-request context for the picked trip
+  // When a trip is picked, pull its fuel context: which request this would be (1st/2nd/…),
+  // what the current route recommends, the 110% cap and remaining headroom, and — for a
+  // top-up — exactly what changed in the trip since the last request. Prefill the suggested
+  // top-up so the driver isn't guessing.
+  useEffect(() => {
+    setFuelCtx(null);
+    if (!tripNo) return;
+    let live = true;
+    getTripFuelContext(tripNo).then((c) => { if (live) setFuelCtx(c); }).catch(() => {});
+    return () => { live = false; };
+  }, [tripNo]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
   // arriving via "Request fuel for this trip": the trip number is preset before the
   // trip list loads — back-fill the horse, trailer, drops and end point once it does.
@@ -1634,6 +1695,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const km = route && !route.loading ? route.km : 0;
   const est = route && !route.loading ? estimate(full, route.legs, horse) : null;
   const calc = isFleet && est ? est.rounded : null;
+  // For a 2nd/3rd request on a trip, the ask is the TOP-UP the server suggests (the extra
+  // the grown route needs), not the whole-route estimate again — and it's held to the cap.
+  const isTopUp = fuelCtx && fuelCtx.mode === "compose" && fuelCtx.sequence > 1;
+  const calcEff = isFleet ? (isTopUp && fuelCtx.suggested != null ? fuelCtx.suggested : calc) : null;
   const openBal = card ? cards[card]?.balance ?? 0 : 0;
 
   const vehicleOk = isFleet ? !!(horse && trailer) : !!veh;
@@ -1651,7 +1716,9 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   if (!photo) missing.push("a photograph of the odometer");
   if (driver && isFleet && !end) missing.push("the end point of the journey");
   if (driver && !isFleet && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
-  const ready = missing.length === 0;
+  // Trip already fuelled to its 110% cap and the route hasn't grown → nothing to top up.
+  const capBlocked = isFleet && fuelCtx && fuelCtx.mode === "compose" && fuelCtx.headroom != null && fuelCtx.headroom <= 0;
+  const ready = missing.length === 0 && !capBlocked;
 
   const send = async () => {
     setSending(true); setSendErr(null);
@@ -1667,10 +1734,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         distanceSource: route ? route.source : null, legs: route ? route.legs : null,
         locKm: est ? Math.round(est.locKm) : 0, hwyKm: est ? Math.round(est.hwyKm) : 0,
         blended: est ? +est.blended.toFixed(2) : kmpl,
-        calcLitres: isFleet ? calc : parseFloat(ask), reason: isFleet ? "" : reason, openingBalance: openBal,
+        calcLitres: isFleet ? calcEff : parseFloat(ask), reason: isFleet ? "" : reason, openingBalance: openBal,
         tripNo: tripNo || null,
       });
-      const msg = `${isFleet ? calc : parseFloat(ask)} L requested at ${fuelStn}`;
+      const msg = `${isFleet ? calcEff : parseFloat(ask)} L requested at ${fuelStn}`;
       setDrops([]); setEnd(""); setOdo(""); setAsk(""); setReason(""); setTripNo("");
       setPhoto(null); setOcr({ state: "idle" }); setGeo({ state: "idle" }); setFuelStn(""); setStep(0);
       // ALWAYS show the explicit "Sent for approval" confirmation so there's no doubt it
@@ -1720,7 +1787,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
             options={myTrips.map((t) => ({ value: t.tripNo, label: `${t.tripNo} — ${t.warehouse} ${L(t.qty)}L → ${(t.drops || []).map((d) => d.site).join(", ")}${t.fuelRequested > 0 ? " · already fuelled" : ""}` }))} />
         </Field>
         {myTrips.length === 0 && <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>No trip scheduled for you yet. Fleet fuel is requested against a planned trip — ask logistics to schedule it first, then it appears here.</div>}
-        {tripNo && (() => { const t = myTrips.find((x) => x.tripNo === tripNo); return t && t.fuelRequested > 0 ? <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: -6, marginBottom: 11 }}>Trip {tripNo} already has a fuel request ({L(t.fuelRequested)} L) — a trip gets one allocation. If it needs more, the approver can load more than requested; you don't raise a second request.</div> : null; })()}
+        {fuelCtx && <FuelContextBanner ctx={fuelCtx} />}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Horse"><Picker value={horse} onChange={(v) => { setHorse(v); setTrailer(""); }} placeholder="Select" title="Horse" options={horses.map((x) => x.code)} /></Field>
           <Field label="Trailer"><Picker value={trailer} onChange={setTrailer} placeholder="Select" title="Trailer" options={TRAILERS} /></Field>
@@ -2037,6 +2104,12 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
   const [actErr, setActErr] = useState(null);
   const noteRef = useRef(null);
   const [step, setStep] = useState(0);
+  const [fuelCtx, setFuelCtx] = useState(null);
+  // Fetch the same trip fuel context the driver saw — so the approver knows this is the
+  // Nth request, what changed in the trip, and the distance/fuel adjustment behind it.
+  useEffect(() => {
+    if (isFleet && r.tripNo) getTripFuelContext(r.tripNo, r.id).then(setFuelCtx).catch(() => {});
+  }, [r.tripNo, r.id, isFleet]);
   const n = parseFloat(amt), diff = isFinite(n) ? n - r.calcLitres : 0;
   const doApprove = async () => {
     setActErr(null);
@@ -2098,6 +2171,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
     );
     if (k === "journey") return (
       <>
+        {fuelCtx && <FuelContextBanner ctx={fuelCtx} />}
         <div style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.7 }}>{r.stops.map((p, i) => <span key={i}>{i ? "  →  " : ""}<strong>{i + 1}</strong> {p}</span>)}</div>
         <RouteMap names={r.stops} route={{ km: r.km, legs: r.legs, source: r.distanceSource || "straight-line estimate" }} height={190} />
         <div style={{ marginTop: 12 }}><SplitPanel est={estimate(r.stops, r.legs, r.horse)} horse={r.horse} /></div>
@@ -2126,6 +2200,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
     if (k === "decide") return (
       <>
         <PumpHead caption="Driver’s estimate" litres={r.calcLitres} km={isFleet ? r.km : null} kmpl={r.kmpl} />
+        {fuelCtx && <div style={{ marginTop: 12 }}><FuelContextBanner ctx={fuelCtx} /></div>}
         {actErr && <div style={{ marginTop: 12 }}><Flag tone={actErr.tone} title={actErr.title}>{actErr.body}</Flag></div>}
         {!declining ? (
           <>
