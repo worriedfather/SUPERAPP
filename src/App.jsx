@@ -1206,7 +1206,7 @@ function App() {
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "incoming" && <DeliveriesInProgress />}
-        {tab === "deliverynotes" && <ApprovedDeliveries />}
+        {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site) => { setDeliverPrefill({ tripNo, site }); setTab("deliver"); }} />}
         {tab === "logistics" && <LogisticsDashboard />}
         {tab === "league" && <DriverLeague />}
         {tab === "inventory" && <InventoryView />}
@@ -1391,18 +1391,25 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
       {myTrips.length > 0 && (
         <div style={{ marginBottom: 18 }}>
           <SectionHead icon="route" title="Pending trips" tint="#FEF4E6" accent="#C07A00" />
-          {myTrips.map((t) => (
-            <div key={t.tripNo} role={onTrip ? "button" : undefined} onClick={onTrip ? () => onTrip(t) : undefined} className="card" style={{ padding: 14, marginBottom: 10, borderLeft: "4px solid var(--amber)", cursor: onTrip ? "pointer" : "default" }}>
+          {myTrips.map((t) => {
+            // Only a trip with NO fuel request yet (and not collected) taps through to
+            // the request form. Once fuel is requested/collected, the card is NOT
+            // clickable — the rest of the trip is driven by "Deliveries due" (confirm
+            // arrival → sign off), so the driver is never bounced back to request fuel.
+            const canRequest = onTrip && (t.fuelRequested || 0) === 0 && !t.collected;
+            return (
+            <div key={t.tripNo} role={canRequest ? "button" : undefined} onClick={canRequest ? () => onTrip(t) : undefined} className="card" style={{ padding: 14, marginBottom: 10, borderLeft: "4px solid var(--amber)", cursor: canRequest ? "pointer" : "default" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                 <span className="mono" style={{ fontWeight: 700, color: "var(--navy)" }}>{t.tripNo}</span>
                 <span className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{L(t.qty)} L {t.product}</span>
               </div>
               <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 3 }}>{t.warehouse}{t.truck ? " · " + t.truck : ""} · {fmtD(t.date)}</div>
               <div style={{ fontSize: 12, color: "var(--ink)", marginTop: 4 }}>{(t.drops || []).map((d) => `${d.site} ${L(d.qty)}L`).join(" · ")}</div>
-              {onTrip && (t.fuelRequested > 0
-                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}</div>
-                : <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>)}
-            </div>))}
+              {t.fuelRequested > 0
+                ? <div style={{ fontSize: 11.5, color: "#3C9A52", fontWeight: 700, marginTop: 8 }}>✓ Fuel requested — {L(t.fuelRequested)} L{t.collected ? " · collected, on the road" : " · collect from the depot"}<span style={{ color: "var(--steel)", fontWeight: 400 }}> · deliver from the “Deliveries due” list</span></div>
+                : (onTrip && <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 700, marginTop: 8 }}>Request fuel for this trip ›</div>)}
+            </div>);
+          })}
         </div>
       )}
       {declined.length > 0 && (

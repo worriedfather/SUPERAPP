@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
-  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries,
+  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
@@ -5738,6 +5738,7 @@ const DUE_STATUS = {
   settling: { label: "Fuel settling — dip after the countdown", tone: "#C07A00" },
   en_route: { label: "Delivery en route", tone: "var(--steel)" },
   arrived:  { label: "Truck at your site — offloading", tone: "#C07A00" },
+  awaiting_site: { label: "Delivered — waiting for the site to dip & file the note", tone: "var(--steel)" },  // driver's view; no action for him
   awaiting_note: { label: "File delivery note", tone: "#C07A00", tab: "deliver" },
   sign_off_yours: { label: "Sign off delivery note", tone: "#B23B3B", tab: "dapprove" },
   sign_off_other: { label: "Awaiting other sign-off", tone: "var(--steel)", tab: "dapprove" },
@@ -5792,7 +5793,9 @@ export function DeliveriesDue({ onGo }) {
               </div>
             );
           }
-          const s = DUE_STATUS[p.status] || DUE_STATUS.awaiting_note;
+          // Unknown status → a SAFE, non-actionable row (never default a driver into the
+          // file-note screen, which would 403). Only a site role should land on capture.
+          const s = DUE_STATUS[p.status] || (p.role === 'site' ? DUE_STATUS.awaiting_note : { label: "In progress", tone: "var(--steel)" });
           // driver leg steps render as ACTION cards, not list rows
           if (s.act) {
             const isBusy = busy === p.tripNo + p.site;
@@ -6673,16 +6676,38 @@ function DeliveryNoteView({ d }) {
   );
 }
 
-export function ApprovedDeliveries() {
+export function ApprovedDeliveries({ onCapture } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [note, setNote] = useState(null);
-  useEffect(() => { setD(null); setErr(null); getApprovedDeliveries(90).then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const [awaiting, setAwaiting] = useState(null);
+  useEffect(() => { setD(null); setErr(null); getApprovedDeliveries(90).then(setD).catch((e) => setErr(e.message)); getAwaitingNotes().then(setAwaiting).catch(() => {}); }, [reloadKey]);
   const list = (d && d.deliveries) || [];
+  const aw = (awaiting && awaiting.drops) || [];
   return (
     <Wrap>
-      <SectionHead title="Approved deliveries" sub="Signed-off delivery notes — tap one to view, print or download" />
+      <SectionHead title="Delivery notes" sub="Drops awaiting a note, and signed-off notes to view/print" />
       <RefreshBar data={d ? { asOf: todayISO() } : null} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {aw.length > 0 && (
+        <Panel style={{ marginBottom: 12, borderLeft: "4px solid #C79A2E" }}>
+          <span className="lbl" style={{ color: "#8A6516" }}>Awaiting delivery note · {aw.length} <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· driver arrived, note not captured yet</span></span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 8 }}>
+            {aw.map((x, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 10, background: x.hoursWaiting >= 24 ? "#FDF1F0" : "#FBF7EC", border: `1px solid ${x.hoursWaiting >= 24 ? "#EBC0BB" : "#EBD9A6"}` }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 13 }}>{x.site} · <span className="mono">{L(x.qty)} L {x.product}</span></div>
+                  <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{x.tripNo} · {x.driver} · arrived {x.hoursWaiting}h ago{x.hoursWaiting >= 24 ? " ⚠" : ""}</div>
+                  {x.noSiteCapture && <div style={{ fontSize: 10.5, color: "#B23B3B", marginTop: 2 }}>No site here to capture — re-allocate this drop (edit the trip) before it can be noted.</div>}
+                </div>
+                {!x.noSiteCapture && onCapture && (
+                  <button type="button" className="pill" style={{ padding: "7px 13px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => onCapture(x.tripNo, x.site)}>Capture note</button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>The site should capture these; logistics can capture on their behalf to clear the backlog. Each drop clears the moment its note is filed.</div>
+        </Panel>
+      )}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && list.length === 0 && <Note tone="ok" title="No approved deliveries yet">Once a delivery note is signed off by both the driver and the receiving site, it appears here.</Note>}
