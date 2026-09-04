@@ -5203,7 +5203,11 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   const qtyLoaded = num(f.qtyLoaded) || truckDip;
   const pickTrip = (tn) => {
     const t = trips.find((x) => x.tripNo === tn);
-    setF((s) => ({ ...s, tripNo: tn, ...(t ? { commodity: t.product, truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer, qtyLoaded: String(t.qty || s.qtyLoaded), site: (t.drops && t.drops[0] && t.drops[0].site) || s.site } : {}) }));
+    // "Quantity loaded at depot" on a delivery note is PER DROP — the litres dispatched to
+    // THIS site, not the whole truck. Auto-select the first drop and set the quantity to
+    // that drop's litres (never t.qty, the full load). pickDrop keeps them in step after.
+    const d0 = t && Array.isArray(t.drops) && t.drops[0];
+    setF((s) => ({ ...s, tripNo: tn, ...(t ? { commodity: t.product, truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer, qtyLoaded: String((d0 && d0.qty) || s.qtyLoaded), site: (d0 && d0.site) || s.site } : {}) }));
   };
   // temperature-corrected loss preview
   const preview = useMemo(() => {
