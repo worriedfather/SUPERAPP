@@ -4497,10 +4497,12 @@ export function ApprovalsHistory() {
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 560 }}>
               <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                <Th>When</Th><Th>Driver</Th><Th>Truck</Th><Th right>Req L</Th><Th right>Appr L</Th><Th>Outcome</Th></tr></thead>
+                <Th>When</Th><Th>Ref</Th><Th>Trip</Th><Th>Driver</Th><Th>Truck</Th><Th right>Req L</Th><Th right>Appr L</Th><Th>Outcome</Th></tr></thead>
               <tbody>{rows.map((r, i) => (
                 <tr key={r.ref + i} onClick={() => openDetail(r.ref)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
                   <Td style={{ whiteSpace: "nowrap", color: "var(--steel)" }}>{dt(r.decidedAt)}</Td>
+                  <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{r.ref}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{r.tripNo || "—"}</Td>
                   <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{r.driver}</Td>
                   <Td>{r.truck || "—"}</Td>
                   <Td right>{L(r.requested)}</Td>
@@ -6233,7 +6235,7 @@ function RouteSummary({ warehouse, drops, endPoint, product, truck }) {
   );
 }
 
-export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
+export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = false }) {
   const [sites, setSites] = useState([]);
   const [trips, setTrips] = useState([]);
   const [bal, setBal] = useState(null);
@@ -6243,7 +6245,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
   const [drops, setDrops] = useState([{ site: "", qty: "" }]);
   const [editing, setEditing] = useState(null);   // tripNo being edited, or null
   const [cancelling, setCancelling] = useState(null); // tripNo being cancelled
-  const [tab, setTab] = useState("new");           // "new" = schedule form · "review" = trip list
+  const [tab, setTab] = useState(readOnly ? "review" : "new");   // "new" = schedule form · "review" = trip list
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
   const resetForm = () => { setEditing(null); setF({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "", endPoint: "" }); setDrops([{ site: "", qty: "" }]); };
   const startEdit = (t) => {
@@ -6300,11 +6302,11 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
   const activeCount = trips.filter((t) => t.status === "scheduled" || t.status === "in_progress").length;
   return (
     <Wrap>
-      <SectionHead title="Deliveries" sub="Schedule trips and track the schedule" />
-      <div style={{ marginBottom: 14 }}>
+      <SectionHead title={readOnly ? "Trips" : "Deliveries"} sub={readOnly ? "Scheduled & in-progress trips (view only)" : "Schedule trips and track the schedule"} />
+      {!readOnly && <div style={{ marginBottom: 14 }}>
         <Segmented options={[["new", "Schedule new trip"], ["review", `Review trips${activeCount ? ` · ${activeCount}` : ""}`]]} value={tab} onChange={setTab} />
-      </div>
-      {tab === "new" && (
+      </div>}
+      {!readOnly && tab === "new" && (
       <Panel style={{ marginBottom: 14 }}>
         <form onSubmit={send}>
           {editing && <Note tone="blue" title={`Editing ${editing}`}>Change anything below and save. <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={resetForm}>Cancel edit</button></Note>}
@@ -6364,7 +6366,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div className="lbl" style={{ padding: "12px 14px 6px" }}>Scheduled &amp; in-progress trips</div>
-        {trips.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>No trips yet. <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px", fontSize: 12 }} onClick={() => setTab("new")}>Schedule one</button></div> :
+        {trips.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>No trips scheduled.{!readOnly && <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px", fontSize: 12 }} onClick={() => setTab("new")}>Schedule one</button>}</div> :
           trips.map((t) => {
             const c = STAT[t.status] || STAT.scheduled;
             return (
@@ -6380,7 +6382,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [] }) {
                 {/* logistics can amend a trip any time before it's fully delivered/closed
                     (a live trip's already-delivered drops are protected server-side);
                     cancel only before collection */}
-                {t.status !== "delivered" && t.status !== "completed" && t.status !== "cancelled" && (
+                {!readOnly && t.status !== "delivered" && t.status !== "completed" && t.status !== "cancelled" && (
                   <div style={{ display: "flex", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
                     <button type="button" className="pill-ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => startEdit(t)}>Edit</button>
                     {t.status === "scheduled" && (

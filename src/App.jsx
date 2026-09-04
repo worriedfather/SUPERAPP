@@ -436,6 +436,7 @@ const NAV_PATHS = {
   recon: <><path d="M3 21V8l9-5 9 5v13" /><path d="M3 21h18" /><rect x="9" y="13" width="6" height="8" /></>,
   inventory: <><path d="M3 7l9-4 9 4-9 4-9-4z" /><path d="M3 7v10l9 4 9-4V7" /><path d="M12 11v10" /></>,
   schedule: <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4M8 14h4" /></>,
+  trips: <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /><path d="M7 13h6M7 17h9" /></>,
   yardwork: <><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.3 2.3-2-2 2.3-2.3z" /></>,
   fleetstatus: <><rect x="1" y="7" width="13" height="9" rx="1.4" /><path d="M14 10h4l3 3v3h-7z" /><circle cx="6" cy="18" r="1.6" /><circle cx="17.5" cy="18" r="1.6" /></>,
   lube: <><path d="M9 3h6v3l-2 2v3H11V8L9 6z" /><path d="M11 11h2a4 4 0 0 1 4 4v5a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-5a4 4 0 0 1 4-4z" /></>,
@@ -575,7 +576,7 @@ const ROLE_TABS = {
   operations_manager: [["cockpit", "Watchlist"], ["radar", "Radar"], ["hub", "Home"], ["birdseye", "Birds-eye"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"], ["wetstock", "Losses"], ["cash", "Cash"], ["logistics", "Logistics"], ["flow", "Delivery flow"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
-  fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"],
+  fleet_manager: [["cockpit", "Watchlist"], ["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["trips", "Trips"], ["flow", "Delivery flow"],
                   ["cardsys", "Fuel drawn"], ["staff", "Staff assignment"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   approver: [["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["logistics", "Deliveries"],
              ["cardsys", "Fuel drawn"], ["intel", "Intelligence"]],
@@ -646,6 +647,7 @@ const MODULE_META = {
   deliverynotes: { label: "Delivery notes", group: "Logistics", desc: "Approved notes — view, print, download" },
   recon:     { label: "Warehouse", group: "Logistics", desc: "Imports & running balance" },
   schedule:  { label: "Schedule", group: "Logistics", desc: "Plan a delivery trip" },
+  trips:     { label: "Trips", group: "Logistics", desc: "Scheduled & in-progress trips (view only)" },
   logistics: { label: "Deliveries", group: "Logistics", desc: "Delivery performance" },
   flow: { label: "Delivery flow", group: "Logistics", desc: "Where each drop is stuck · who owes the next action" },
   league: { label: "Driver league", group: "Logistics", desc: "Driver performance, ranked" },
@@ -1210,6 +1212,7 @@ function App() {
         {tab === "deliver" && <DeliverySubmit me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "recon" && <WarehouseImports me={me} />}
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
+        {tab === "trips" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} readOnly />}
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "incoming" && <DeliveriesInProgress />}
         {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site) => { setDeliverPrefill({ tripNo, site }); setTab("deliver"); }} />}
@@ -2081,7 +2084,7 @@ const DecisionRow = ({ r, onClick }) => {
     <button onClick={onClick} style={{ width: "100%", textAlign: "left", background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: "11px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 14 }}>{r.driver}</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--steel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.id} · {r.horse}{r.mode === "delivery" ? ` · ${L(r.km)} km` : ""}{day ? ` · ${day}` : ""}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--steel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.id}{r.tripNo ? ` · ${r.tripNo}` : ""} · {r.horse}{r.mode === "delivery" ? ` · ${L(r.km)} km` : ""}{day ? ` · ${day}` : ""}</div>
       </div>
       <div style={{ textAlign: "right", flexShrink: 0 }}>
         <span className="disp" style={{ fontSize: 11, fontWeight: 700, color: st.c, background: st.bg, padding: "2px 8px", borderRadius: 100 }}>{st.label}</span>
@@ -2098,7 +2101,7 @@ const ApprovalRow = ({ r, onClick }) => (
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontWeight: 600, fontSize: 14 }}>{r.driver}</div>
-      <div className="mono" style={{ fontSize: 12, color: "var(--steel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.id} · {r.horse}{r.trailer ? ` ${r.trailer}` : ""} · {r.mode === "delivery" ? `${L(r.km)} km` : (r.reason || "general")}</div>
+      <div className="mono" style={{ fontSize: 12, color: "var(--steel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.id}{r.tripNo ? ` · ${r.tripNo}` : ""} · {r.horse}{r.trailer ? ` ${r.trailer}` : ""} · {r.mode === "delivery" ? `${L(r.km)} km` : (r.reason || "general")}</div>
       {r.ocrMismatch && <div className="disp" style={{ fontSize: 11, color: "var(--red)", fontWeight: 700, marginTop: 2 }}>⚠ Odometer flag</div>}
     </div>
     <div style={{ textAlign: "right", flexShrink: 0 }}>
