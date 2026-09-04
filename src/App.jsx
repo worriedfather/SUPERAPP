@@ -573,18 +573,14 @@ const ROLE_TABS = {
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
   // No warehouse — that's the logistics role.
-  fleet_manager: [["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["trips", "Trips"], ["flow", "Delivery flow"],
-                  ["cardsys", "Fuel drawn"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
-  approver: [["hub", "Home"], ["approver", "Approve"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["logistics", "Deliveries"],
-             ["cardsys", "Fuel drawn"]],
-  // Logistics: runs the warehouses. Submits warehouse + in-transit stock, logs
+  fleet_manager: [["hub", "Home"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["league", "Driver league"], ["fleetstatus", "Fleet status"], ["logistics", "Deliveries"], ["trips", "Trips"], ["flow", "Delivery flow"],
+                  ["cardsys", "Fuel drawn"], ["tracking", "Journey tracking"]],
+  // Logistics manager: runs the warehouses. Submits warehouse + in-transit stock, logs
   // deliveries, and sees the full inventory plus what the sites hold.
-  logistics: [["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["deliverynotes", "Delivery notes"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
-  logistics_manager: [["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
-  depot: [["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["tracking", "Journey tracking"]],
+  logistics_manager: [["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["tracking", "Journey tracking"]],
   // Logistics lead (Dave): the full logistics role PLUS driver management —
   // approves fuel requests and sees truck/driver efficiency.
-  logistics_lead: [["hub", "Home"], ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["retail", "Sites"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["staff", "Staff assignment"], ["tracking", "Journey tracking"]],
+  logistics_lead: [["hub", "Home"], ["deliver", "Delivery"], ["flow", "Delivery flow"], ["logistics", "Deliveries"], ["retail", "Sites"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["fleetstatus", "Fleet status"], ["tracking", "Journey tracking"]],
   // Executive: full access to everything EXCEPT raising fuel requests.
   // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
   // and no master data (master data is the admin role's alone).
@@ -594,11 +590,11 @@ const ROLE_TABS = {
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
   manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
   supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
-  retail_approver: [["hub", "Home"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  retail_approver: [["hub", "Home"], ["approvals", "My approvals"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
   // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
@@ -1537,7 +1533,7 @@ function DriverCard({ me, cards, requests }) {
 
 /* ==================== DRIVER — request wizard ==================== */
 // Shows the multi-request picture for a trip: which request this is (1st/2nd/…), the
-// 110% cap on the running total, and — for a top-up — exactly what changed in the trip
+// 120% cap on the running total, and — for a top-up — exactly what changed in the trip
 // (drops, distance) and the fuel adjustment that follows. Used on the driver's request
 // screen (compose) and on the approver's card (review) so both see the SAME thing.
 function FuelContextBanner({ ctx }) {
@@ -1568,13 +1564,13 @@ function FuelContextBanner({ ctx }) {
         <div style={{ marginBottom: 7, color: "var(--steel)" }}>The trip route hasn't changed since the last request.</div>
       )}
       <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>
-        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> (110%)</>}
+        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> (120%)</>}
         {review
           ? (ctx.alreadyAllocatedBefore > 0 && <> · earlier fills {L(ctx.alreadyAllocatedBefore)} L · this request {ctx.thisRequest ? L(ctx.thisRequest.litres) : "—"} L</>)
           : (<> · already allocated {L(ctx.alreadyAllocated)} L · <b style={{ color: "var(--navy)" }}>{L(ctx.headroom)} L</b> headroom</>)}
       </div>
       {!review && ctx.headroom != null && ctx.headroom <= 0 && (
-        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the 110% cap — no more fuel can be added unless logistics grow the route.</div>
+        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the 120% cap — no more fuel can be added unless logistics grow the route.</div>
       )}
       {!review && seq > 1 && ctx.headroom > 0 && ctx.suggested != null && (
         <div style={{ marginTop: 6, fontWeight: 700, color: "#8A5A00" }}>Suggested top-up: {L(ctx.suggested)} L</div>
@@ -1609,7 +1605,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [myTrips, setMyTrips] = useState([]);
   const [fuelCtx, setFuelCtx] = useState(null);   // multi-request context for the picked trip
   // When a trip is picked, pull its fuel context: which request this would be (1st/2nd/…),
-  // what the current route recommends, the 110% cap and remaining headroom, and — for a
+  // what the current route recommends, the 120% cap and remaining headroom, and — for a
   // top-up — exactly what changed in the trip since the last request. Prefill the suggested
   // top-up so the driver isn't guessing.
   useEffect(() => {
@@ -1731,7 +1727,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   if (!photo) missing.push("a photograph of the odometer");
   if (driver && isFleet && !end) missing.push("the end point of the journey");
   if (driver && !isFleet && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
-  // Trip already fuelled to its 110% cap and the route hasn't grown → nothing to top up.
+  // Trip already fuelled to its 120% cap and the route hasn't grown → nothing to top up.
   const capBlocked = isFleet && fuelCtx && fuelCtx.mode === "compose" && fuelCtx.headroom != null && fuelCtx.headroom <= 0;
   const ready = missing.length === 0 && !capBlocked;
 
