@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
-  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes,
+  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
@@ -6730,6 +6730,79 @@ export function ApprovedDeliveries({ onCapture } = {}) {
         </Panel>
       )}
       {note && <DetailSheet title={`Delivery note · ${note.dnNo}`} sub={`${note.site} · ${fmtD(note.date)}`} onClose={() => setNote(null)}><DeliveryNoteView d={note} /></DetailSheet>}
+    </Wrap>
+  );
+}
+
+// DELIVERY FLOW — every active drop, what stage it's stuck at, and WHO owes the next
+// move. Grouped by responsible party so logistics/ops can chase the right person.
+const FLOW_STAGE = {
+  "Awaiting collection": { tone: "#6B7A8D", hint: "Driver hasn't confirmed loading at the depot" },
+  "En route / confirm arrival": { tone: "#3A6EA5", hint: "Loaded — driver must confirm arrival at site" },
+  "Awaiting delivery note": { tone: "#C07A00", hint: "Arrived — site must dip & file the note" },
+  "Awaiting sign-off": { tone: "#8A4FBF", hint: "Note filed — waiting on a sign-off" },
+};
+const WHO_STYLE = {
+  "Driver": { bg: "#EEF4FB", bd: "#C9DDF2", fg: "#2C5A86" },
+  "Site": { bg: "#FBF6EC", bd: "#EBD9A6", fg: "#8A6516" },
+  "Logistics (re-allocate)": { bg: "#FDF1F0", bd: "#EBC0BB", fg: "#B23B3B" },
+};
+export function DeliveryFlow() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setD(null); setErr(null); getDeliveryFlow().then(setD).catch((e) => setErr(e.message)); }, [reloadKey]);
+  const drops = (d && d.drops) || [];
+  const order = ["Driver", "Site", "Logistics (re-allocate)"];
+  const groups = order.map((who) => [who, drops.filter((x) => x.waitingOn === who)]).filter(([, g]) => g.length);
+  return (
+    <Wrap>
+      <SectionHead title="Delivery flow" sub="Where every active drop is stuck — and who owes the next action" />
+      <RefreshBar data={d ? { asOf: todayISO() } : null} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && drops.length === 0 && <Note tone="ok" title="All clear">No deliveries are mid-flow — every active trip is either not yet started or fully signed off.</Note>}
+      {d && drops.length > 0 && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            {Object.entries(d.byStage || {}).map(([s, n]) => (
+              <div key={s} style={{ flex: "1 1 46%", minWidth: 130, padding: "9px 11px", borderRadius: 10, background: "var(--card)", border: "1px solid var(--line)", borderLeft: `4px solid ${(FLOW_STAGE[s] || {}).tone || "var(--steel)"}` }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "var(--navy)", lineHeight: 1 }}>{n}</div>
+                <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+          {groups.map(([who, g]) => {
+            const st = WHO_STYLE[who] || { bg: "var(--card)", bd: "var(--line)", fg: "var(--navy)" };
+            return (
+              <Panel key={who} style={{ marginBottom: 12, padding: 0, overflow: "hidden" }}>
+                <div style={{ padding: "10px 13px", background: st.bg, borderBottom: `1px solid ${st.bd}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 800, color: st.fg, fontSize: 13 }}>Waiting on: {who === "Logistics (re-allocate)" ? "Logistics" : who}</span>
+                  <span style={{ fontWeight: 700, color: st.fg, fontSize: 13 }}>{g.length}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {g.map((x, i) => {
+                    const late = x.hours != null && x.hours >= 24;
+                    return (
+                      <div key={i} style={{ padding: "10px 13px", borderTop: i ? "1px solid var(--line)" : "none" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 13 }}>{x.site} · <span className="mono">{L(x.qty)} L {x.product}</span></div>
+                            <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{x.tripNo} · {x.driver} · {x.truck}</div>
+                          </div>
+                          <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, color: "#fff", background: (FLOW_STAGE[x.stage] || {}).tone || "var(--steel)" }}>{x.stage}</span>
+                            {x.hours != null && <div style={{ fontSize: 10.5, color: late ? "var(--red)" : "var(--steel)", marginTop: 3, fontWeight: late ? 700 : 400 }}>{x.hours}h{late ? " ⚠" : ""}</div>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Panel>
+            );
+          })}
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>Each drop clears the moment its next action is done. "h" is hours since the last step. ⚠ = over 24h.</div>
+        </>
+      )}
     </Wrap>
   );
 }
