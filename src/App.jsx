@@ -24,7 +24,18 @@ const ZONES = {
         "Bulawayo Goderich","Bulawayo Ashys","Bulawayo Main Street","Cowdray Park"],
   MUT: ["Mutare 4th Street","Feruka Mutare"],
 };
-const zoneOf = (n) => Object.keys(ZONES).find((z) => ZONES[z].includes(n)) || "OTHER";
+const zoneOf = (n) => {
+  const exact = Object.keys(ZONES).find((z) => ZONES[z].includes(n));
+  if (exact) return exact;
+  // Master-data names carry a city prefix ("Bulawayo Fort Street") that the seed ZONES
+  // lists don't all have — infer the zone from the city word so a short intra-city hop
+  // is costed as town, not highway.
+  const s = String(n || "").toLowerCase();
+  if (s.startsWith("bulawayo") || s.includes("cowdray")) return "BYO";
+  if (s.startsWith("mutare") || s.includes("feruka")) return "MUT";
+  if (s.startsWith("harare")) return "HRE";
+  return "OTHER";
+};
 const effFor = (horse) => {
   const h = EFF.horse[horse];
   return { loc: h ? h.loc : EFF.local, hwy: h ? h.hwy : EFF.hwy, own: !!h, n: h ? h.nl + h.nh : 0 };
@@ -504,8 +515,9 @@ const PumpHead = ({ litres, km, kmpl, caption }) => (
     <div className="mono" style={{ fontSize: 48, lineHeight: 1, fontWeight: 500, color: "var(--lime)", letterSpacing: "-.02em" }}>
       {litres == null ? "– – –" : L(litres)}<span style={{ fontSize: 16, marginLeft: 8, color: "#8FA0C4" }}>L</span>
     </div>
-    {km != null && <div className="mono" style={{ fontSize: 12, color: "#9FB0D0", marginTop: 9 }}>
-      {L(km)} km · {kmpl.toFixed(2)} km/L planned</div>}
+    {km != null && kmpl != null && <div className="mono" style={{ fontSize: 12, color: "#9FB0D0", marginTop: 9 }}>
+      {L(km)} km · needs ~{L(Math.ceil(km / kmpl / 10) * 10)} L at {kmpl.toFixed(2)} km/L
+      {litres != null && Math.abs(litres - km / kmpl) / (km / kmpl) > 0.12 && <span style={{ color: "#E0B24A" }}> · this fill differs — see the trip breakdown below</span>}</div>}
   </div>
 );
 const Flag = ({ tone, title, children }) => {
@@ -2197,7 +2209,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
     );
     if (k === "decide" && readOnly) return (
       <>
-        <PumpHead caption="Driver’s estimate" litres={r.calcLitres} km={isFleet ? r.km : null} kmpl={r.kmpl} />
+        <PumpHead caption="Driver’s estimate" litres={r.calcLitres} km={isFleet ? r.km : null} kmpl={r.blended || r.kmpl} />
         <div style={{ marginTop: 16 }}>
           {r.status === "declined"
             ? <Flag tone="red" title="Declined — sent back to the driver">{r.note ? <span>“{r.note}”</span> : "No note recorded."}</Flag>
@@ -2210,7 +2222,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
     );
     if (k === "decide") return (
       <>
-        <PumpHead caption="Driver’s estimate" litres={r.calcLitres} km={isFleet ? r.km : null} kmpl={r.kmpl} />
+        <PumpHead caption="Driver’s estimate" litres={r.calcLitres} km={isFleet ? r.km : null} kmpl={r.blended || r.kmpl} />
         {fuelCtx && <div style={{ marginTop: 12 }}><FuelContextBanner ctx={fuelCtx} /></div>}
         {actErr && <div style={{ marginTop: 12 }}><Flag tone={actErr.tone} title={actErr.title}>{actErr.body}</Flag></div>}
         {!declining ? (
