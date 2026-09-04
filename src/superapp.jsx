@@ -5315,14 +5315,16 @@ export function DeliverySubmit({ me, initial, onLeave }) {
               is the DRIVER's step; logistics/admin may confirm it on the driver's behalf. The
               copy is actor-correct so a supervisor isn't told they are "starting the journey". */}
           {trip && !trip.collected && (() => {
-            const canConfirmOnBehalf = ["logistics", "depot", "admin", "operations_manager"].includes(me?.kind);
+            // Logistics (David Malan / Kuda / Ranga / Aalia), the yard lead (Shaahid) and admin
+            // may confirm collection on the driver's behalf — matches the /collect endpoint roles.
+            const canConfirmOnBehalf = ["logistics", "depot", "logistics_lead", "logistics_manager", "accounts_logistics", "yard_lead", "admin"].includes(me?.kind);
             const drv = trip.driver || "the driver";
             return (
             <div style={{ border: "1px solid #C9D4F5", background: "#EEF2FF", borderRadius: 12, padding: 14, margin: "4px 0 10px" }}>
               <div style={{ fontWeight: 700, color: "var(--navy)", marginBottom: 4 }}>🚚 Waiting on the driver — {trip.tripNo}</div>
               <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 8, lineHeight: 1.5 }}>You can't file this note yet. <b style={{ color: "var(--navy)" }}>{drv}</b> hasn't confirmed collecting <b>{L(trip.qty)} L {trip.product}</b> from <b>{trip.warehouse}</b> for this trip.</div>
               <div style={{ fontSize: 12, color: "var(--navy)", background: "#fff", border: "1px solid #C9D4F5", borderRadius: 8, padding: "8px 10px", marginBottom: canConfirmOnBehalf ? 10 : 0, lineHeight: 1.5 }}>
-                <b>To unblock:</b> ask <b>{drv}</b> to open DA OPS and tap <b>“Confirm collection”</b> on trip <b>{trip.tripNo}</b>. Can't reach them? Contact <b>logistics</b> — they can confirm it on the driver's behalf.
+                <b>To unblock:</b> ask <b>{drv}</b> to open DA OPS and tap <b>“Confirm collection”</b> on trip <b>{trip.tripNo}</b>. Can't reach them? <b>Logistics</b> or the <b>yard lead (Shaahid)</b> can confirm it on the driver's behalf.
               </div>
               {canConfirmOnBehalf && (
                 <button type="button" className="pill" disabled={collecting} style={{ width: "100%" }} onClick={() => confirmCollect(trip.tripNo)}>{collecting ? "Confirming…" : `Confirm collection on ${drv}'s behalf`}</button>
