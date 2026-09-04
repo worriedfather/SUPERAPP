@@ -3167,7 +3167,9 @@ export function ManagerBirdsEye({ me } = {}) {
 
   // Logistics-managers (Ranga, Kuda) get an operational bird's-eye without the finance
   // detail tabs (day-end reconciliation, tank/status trends, cash banking).
-  const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash", "inflows"]) : new Set();
+  const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash", "inflows"])
+    : (me && me.kind === "accounts_logistics") ? new Set(["inflows", "cash", "prices"])   // no cash inflows / cash banked / prices for this role
+    : new Set();
   const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));
   const $ = (v) => "$" + full(v);
   const lossCol = (s) => (s === "critical" ? "var(--red)" : s === "watch" ? "var(--amber)" : "var(--ok)");
