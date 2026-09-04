@@ -5829,7 +5829,9 @@ export function DeliveriesDue({ onGo }) {
           }
           // Unknown status → a SAFE, non-actionable row (never default a driver into the
           // file-note screen, which would 403). Only a site role should land on capture.
-          const s = DUE_STATUS[p.status] || (p.role === 'site' ? DUE_STATUS.awaiting_note : { label: "Waiting — no action needed from you right now", tone: "var(--steel)" });
+          let s = DUE_STATUS[p.status] || (p.role === 'site' ? DUE_STATUS.awaiting_note : { label: "Waiting — no action needed from you right now", tone: "var(--steel)" });
+          // Name WHO the block is waiting on (dependent roles) so the user knows who to chase.
+          if (p.status === 'sign_off_other') s = { ...s, label: p.role === 'site' ? `Signed — waiting on the driver to sign off ${p.tripNo}` : `Signed — waiting on the site (${p.site}) to sign off` };
           // driver leg steps render as ACTION cards, not list rows
           if (s.act) {
             const isBusy = busy === p.tripNo + p.site;
