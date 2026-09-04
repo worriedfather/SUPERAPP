@@ -1992,12 +1992,16 @@ function CashBridgePanel({ cb, scopeLabel, pLabel }) {
   );
 }
 
-export function ExecutiveDashboard() {
+export function ExecutiveDashboard({ me } = {}) {
   const [period, setPeriod] = useState("today");   // Overview defaults to Today (latest complete data day)
   const [range, setRange] = useState(() => { const t = new Date(); t.setDate(t.getDate() - 1); const f = new Date(t); f.setDate(f.getDate() - 6); return { from: f.toISOString().slice(0, 10), to: t.toISOString().slice(0, 10) }; });
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
-  const { tab, setTab, back, prev } = useNavStack("overview");
+  // Per-role section trims. Reporting accountants get the finance/ops feeds but not the
+  // whole-business Overview, the Margins detail, or Cash outflows (owner, 2026-09).
+  const HIDE_SECTIONS = me && me.kind === "reporting_accountant" ? new Set(["overview", "margins", "outflows"]) : new Set();
+  const firstTab = me && me.kind === "reporting_accountant" ? "sales" : "overview";
+  const { tab, setTab, back, prev } = useNavStack(firstTab);
   // Cash inflows deliberately NOT here (owner, 2026-08-29): executives reach it
   // on the Retail board; the managers' Bird's-eye keeps its own copy. In its
   // place: Cash collections — expected vs received per site, from the day-end.
@@ -2010,14 +2014,14 @@ export function ExecutiveDashboard() {
     ["supply", "Inventory"], ["transit", "Goods in transit"], ["losses", "Losses"],
     ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["midday", "Midday dip"],
     ["fleet", "Fleet"], ["workshop", "Workshop"],
-  ];
+  ].filter(([k]) => !HIDE_SECTIONS.has(k));
   const SECTION_RAIL = [
     ["overview", "Overview"],
     ["sales", "Sales"], ["margins", "Margins"], ["prices", "Prices"], ["collections", "Cash in"], ["outflows", "Cash out"],
     ["supply", "Inventory"], ["transit", "Transit"], ["losses", "Losses"],
     ["nightshift", "Night"], ["dayshift", "Day"], ["midday", "Midday"],
     ["fleet", "Fleet"], ["workshop", "Workshop"],
-  ];
+  ].filter(([k]) => !HIDE_SECTIONS.has(k));
   // These tabs embed self-fetching views that own their OWN period — the top period
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).

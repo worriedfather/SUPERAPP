@@ -1199,7 +1199,7 @@ function App() {
         {tab === "deposit" && <SiteDeposit me={me} />}
         {tab === "cashoffice" && <CashOffice />}
         {(tab === "digest" || tab === "radar") && <RadarView />}
-        {tab === "exec" && <ExecutiveDashboard />}
+        {tab === "exec" && <ExecutiveDashboard me={me} />}
         {tab === "birdseye" && <ManagerBirdsEye me={me} />}
         {tab === "hub" && <><DeliveriesDue onGo={goDeliver} /><Hub me={me} modules={tabs.filter(([k]) => k !== "hub")} onOpen={setTab} /></>}
         {tab === "inbox" && <Inbox items={alerts?.items || []} onOpen={setTab} />}
