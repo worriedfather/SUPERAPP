@@ -5234,7 +5234,11 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   // Deep-linked from a specific trip (Deliveries due / notification): the note is
   // bound to THAT trip — the driver can't swap to a different one.
   const [freed, setFreed] = useState(false);   // "New delivery note" releases the deep-link lock
-  const locked = !!(initial && initial.tripNo) && !freed;
+  // Lock to the deep-linked trip ONLY once it actually resolves in the loaded trip list.
+  // Otherwise (trip not in the list yet, or not returned for this site) fall back to the
+  // picker / "no scheduled trips" message instead of a dead 🔒 with no trip and a disabled
+  // drop — which left supervisors unable to pick a site or load tanks.
+  const locked = !!(initial && initial.tripNo) && !freed && trips.some((t) => t.tripNo === initial.tripNo);
   const pickDrop = (siteName) => {
     const d = tripDrops.find((x) => x.site === siteName);
     setF((s) => ({ ...s, site: siteName, ...(d && d.qty ? { qtyLoaded: String(d.qty) } : {}) }));
@@ -5297,7 +5301,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
         <form onSubmit={send}>
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           {trips.length === 0
-            ? <Note tone="amber" title="No scheduled trips">A delivery must be planned first. Logistics schedules the trip, then it appears here to deliver against.</Note>
+            ? <Note tone="amber" title="No scheduled trip to deliver against">{me && me.site ? <>No active delivery trip is scheduled to <b>{me.site}</b> right now, so there's nothing to file a note against. If a truck is here: ask <b>logistics</b> to schedule (or re-open) the trip to {me.site}. If you cover a different site, check your login is set to the right one.</> : <>A delivery must be planned first — logistics schedules the trip, then it appears here to deliver against. If a truck is here, ask logistics to schedule the trip.</>}</Note>
             : locked
               ? <Field label="Scheduled trip"><div className="mono" style={{ padding: "10px 12px", borderRadius: 10, background: "#F4F6FA", color: "var(--navy)", fontWeight: 700 }}>🔒 {f.tripNo}{trip ? ` — ${trip.warehouse} ${L(trip.qty)}L ${trip.product}` : ""}</div></Field>
               : <Field label="Scheduled trip"><Picker value={f.tripNo} onChange={pickTrip} placeholder="Select the trip…" title="Scheduled trip"
