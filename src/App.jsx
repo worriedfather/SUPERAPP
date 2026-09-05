@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS,
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
-import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext } from "./api";
+import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice } from "./api";
 import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
@@ -1177,6 +1177,7 @@ function App() {
         </div>
       )}
       <ErrorBoundary key={tab}><div className="rise">
+        <NoticeBanner onOpen={(n) => { if (n?.data?.tab) setTab(n.data.tab); }} />
         {tab === "dhome" && <><DeliveriesDue onGo={goDeliver} /><DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => goDeliver("deliver", null)} onApprove={() => setTab("dapprove")} onTrip={(t) => { setPrefill({ id: t.tripNo, tripNo: t.tripNo, mode: "delivery" }); setTab("drequest"); }} /></>}
         {tab === "dcard" && <DriverCard me={me} cards={cards} requests={requests} />}
         {(tab === "driver" || tab === "drequest") && <DriverMode key={prefill ? prefill.id : "new"} initial={prefill} me={me} drivers={drivers} horses={horses} onSubmit={submit} cards={cards} requests={requests} gkey={gkey} onSent={() => { setPrefill(null); if (me.kind === "driver") setTab("dhome"); }} />}
@@ -2005,6 +2006,34 @@ const Chip = ({ label, onRemove, tone }) => (
       style={{ background: "none", color: "var(--steel)", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>}
   </span>
 );
+
+// Persistent in-app notices (recovery results, bulk-note captures, …). Each clears the
+// moment the user taps it (opens) or dismisses it (×) — acked server-side. Shown to any
+// signed-in user; recipients are set when the notice is created.
+function NoticeBanner({ onOpen }) {
+  const [notices, setNotices] = useState([]);
+  useEffect(() => {
+    const load = () => getDriverNotices().then((r) => setNotices(r.notices || [])).catch(() => {});
+    load(); const t = setInterval(load, 60000); return () => clearInterval(t);
+  }, []);
+  if (!notices.length) return null;
+  const ack = async (n) => { setNotices((xs) => xs.filter((x) => x.id !== n.id)); try { await ackNotice({ noticeId: n.id }); } catch { /* ignore */ } };
+  const open = async (n) => { await ack(n); if (onOpen) onOpen(n); };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+      {notices.map((n) => (
+        <div key={n.id} className="card" style={{ padding: "12px 14px", borderLeft: "4px solid var(--blue)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ flex: 1, cursor: n.data && n.data.tab ? "pointer" : "default" }} onClick={() => open(n)}>
+            <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 13.5 }}>{n.title}</div>
+            <div style={{ fontSize: 12.5, color: "var(--steel)", marginTop: 2, lineHeight: 1.45 }}>{n.body}</div>
+            {n.data && n.data.tab && <div style={{ fontSize: 11.5, color: "var(--blue)", fontWeight: 700, marginTop: 4 }}>Tap to view ›</div>}
+          </div>
+          <button type="button" aria-label="Dismiss" onClick={() => ack(n)} style={{ border: "none", background: "none", color: "var(--steel)", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: 2 }}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const STATUS = {
   pending: ["Awaiting approval", "var(--amber)", "#FDF3E7"],

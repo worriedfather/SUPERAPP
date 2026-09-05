@@ -5155,6 +5155,8 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   const [sites, setSites] = useState([]);
   const [trips, setTrips] = useState([]);
   const [tanks, setTanks] = useState([]);            // per site-tank dips
+  const [bulkSite, setBulkSite] = useState(false);   // bulk customer: no tanks, driver records delivered qty
+  const [bulkQty, setBulkQty] = useState("");        // delivered quantity for a bulk drop
   const [comps, setComps] = useState([{ comp: "1", mm: "", litres: "", temp: "" }]); // truck compartments
   const [done, setDone] = useState(null);            // { dnNo }
   const [busy, setBusy] = useState(false);
@@ -5187,8 +5189,9 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   // load the site's tanks when the site (or trip product) changes — only the tanks
   // that match the trip's product are shown for dipping.
   useEffect(() => {
-    if (!f.site) { setTanks([]); setAllTanksCount(0); return; }
+    if (!f.site) { setTanks([]); setAllTanksCount(0); setBulkSite(false); return; }
     getSiteConfig(f.site).then((c) => {
+      setBulkSite(!!c.bulk);
       const all = c.tanks || [];
       setAllTanksCount(all.length);
       setTanks(all.filter((t) => productMatch(t.product, f.commodity)).map((t) => ({ ...emptyTank, tank: t.label, product: t.product })));
@@ -5198,7 +5201,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   const setTank = (i, k, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
   const setComp = (i, k, v) => setComps((cs) => cs.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
   const deliveredOf = (t) => Math.max(0, num(t.closeL) - num(t.openL));
-  const siteDip = tanks.reduce((a, t) => a + deliveredOf(t), 0);
+  const siteDip = bulkSite ? num(bulkQty) : tanks.reduce((a, t) => a + deliveredOf(t), 0);
   const truckDip = comps.reduce((a, c) => a + num(c.litres), 0);
   const qtyLoaded = num(f.qtyLoaded) || truckDip;
   const pickTrip = (tn) => {
@@ -5250,19 +5253,24 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   // Leaving the screen clears the deep-link so the trip lock doesn't stick to a stale
   // trip the next time the Delivery tab is opened manually.
   useEffect(() => () => { onLeave && onLeave(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  const valid = f.tripNo && f.site && f.density && tanks.some((t) => t.closeL !== "" && t.openL !== "");
+  const valid = f.tripNo && f.site && (bulkSite ? Number(bulkQty) > 0 : (f.density && tanks.some((t) => t.closeL !== "" && t.openL !== "")));
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
     if (!f.tripNo) return setMsg({ tone: "amber", title: "Almost there", body: "Pick the scheduled trip this delivery is for." });
     if (!f.site) return setMsg({ tone: "amber", title: "Almost there", body: "Pick the drop site." });
-    if (!(Number(f.density) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the density." });
-    if (!tanks.some((t) => t.closeL !== "" && t.openL !== "")) return setMsg({ tone: "amber", title: "Almost there", body: "Enter at least one tank's opening and closing dip." });
+    if (bulkSite) {
+      if (!(Number(bulkQty) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the delivered quantity for this bulk drop." });
+    } else {
+      if (!(Number(f.density) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the density." });
+      if (!tanks.some((t) => t.closeL !== "" && t.openL !== "")) return setMsg({ tone: "amber", title: "Almost there", body: "Enter at least one tank's opening and closing dip." });
+    }
     setBusy(true);
     try {
       const r = await postAppDelivery({
         dnDate: f.dnDate, tripNo: f.tripNo || null, site: f.site, commodity: f.commodity,
         density: f.density, qtyLoaded, truckReg: f.truckReg, truckName: f.truckName, trailer: f.trailer, note: f.note,
-        siteTanks: tanks.filter((t) => t.closeL !== "" || t.openL !== ""),
+        siteTanks: bulkSite ? [] : tanks.filter((t) => t.closeL !== "" || t.openL !== ""),
+        siteDip: bulkSite ? Number(bulkQty) : undefined,
         truckComps: comps.filter((c) => c.litres !== ""),
         deviceTime: new Date().toISOString(),
       });
@@ -5363,8 +5371,17 @@ export function DeliverySubmit({ me, initial, onLeave }) {
           <button type="button" className="pill-ghost" style={{ width: "100%", marginBottom: 6 }} onClick={() => setComps((cs) => [...cs, { comp: String(cs.length + 1), mm: "", litres: "", temp: "" }])}>+ Compartment</button>
           <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--steel)", marginBottom: 12 }}>Truck dip total: <b>{L(truckDip)} L</b></div>
 
-          {/* site tanks — opening / closing dips */}
-          <div className="lbl">Site tanks — opening &amp; closing dip {f.site ? `at ${f.site}` : ""} {f.site && f.commodity ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>· {f.commodity} tanks only</span> : ""}</div>
+          {/* BULK customer — no tanks: the driver records a single delivered quantity */}
+          {bulkSite && (
+            <div style={{ border: "1px solid #C9D4F5", background: "#EEF2FF", borderRadius: 12, padding: 14, marginBottom: 10 }}>
+              <div className="lbl" style={{ color: "#5B6B8C" }}>Bulk customer · {f.site}</div>
+              <div style={{ fontSize: 12, color: "var(--steel)", margin: "2px 0 8px", lineHeight: 1.5 }}>No on-site tanks here — record the quantity delivered (meter / weighbridge / customer receipt). This note is final; no second sign-off is needed.</div>
+              <Field label="Delivered quantity (L)"><input inputMode="decimal" value={bulkQty} onChange={(e) => setBulkQty(e.target.value.replace(/[^\d.]/g, ""))} placeholder="litres delivered" /></Field>
+              <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--navy)", marginTop: 4 }}>Dispatched {L(qtyLoaded)} L → delivered <b>{L(num(bulkQty))} L</b>{num(bulkQty) > 0 && qtyLoaded > 0 ? <span style={{ color: qtyLoaded - num(bulkQty) > 0 ? "var(--red)" : "var(--ok)" }}> · {qtyLoaded - num(bulkQty) > 0 ? "−" : "+"}{L(Math.abs(qtyLoaded - num(bulkQty)))} L</span> : ""}</div>
+            </div>
+          )}
+          {/* site tanks — opening / closing dips (retail sites only) */}
+          {!bulkSite && <><div className="lbl">Site tanks — opening &amp; closing dip {f.site ? `at ${f.site}` : ""} {f.site && f.commodity ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>· {f.commodity} tanks only</span> : ""}</div>
           {tanks.length === 0 ? <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 10 }}>{!f.site ? "Choose a site to load its tanks." : allTanksCount > 0 ? `No ${f.commodity} tanks configured at ${f.site}. Check the trip product, or add the tank in Master data.` : "This site has no tanks configured yet."}</div> :
             tanks.map((t, i) => (
               <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
@@ -5398,6 +5415,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
               </div>
             </Note>
           )}
+          </>}
           <Field label="Notes (optional)"><input value={f.note} onChange={(e) => set("note")(e.target.value)} /></Field>
           <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Submitting…" : "Submit for approval"}</button>
           <div style={{ fontSize: 11, color: "var(--steel)", textAlign: "center", marginTop: 8 }}>The DN number is generated automatically. Both driver and site must approve before it posts.</div>
