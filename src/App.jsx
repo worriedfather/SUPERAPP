@@ -275,7 +275,9 @@ const ON_SITE_RADIUS_M = 250;
 // how far it is from the recorded point, rather than blocking a driver who really
 // is at the station. Only a wildly-off fix (beyond this) is treated as wrong.
 // Once the 53 forecourts are surveyed, drop this back to strict 250 m enforcement.
-const SURVEY_TOLERANCE_M = 25000;
+// Owner rule (2026-09): a driver within 20 km of the station they picked may proceed;
+// only a fix beyond 20 km is treated as wrong-place and blocked.
+const SURVEY_TOLERANCE_M = 20000;
 const ROAD_FACTOR = 1.25;
 const PILFERAGE_TOLERANCE = 0.12;
 const OCR_TOLERANCE = 5; // km difference allowed between typed and photographed reading
