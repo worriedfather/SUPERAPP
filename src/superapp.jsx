@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
-  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow,
+  postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
@@ -6840,6 +6840,75 @@ export function DeliveryFlow() {
             );
           })}
           <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>Each drop clears the moment its next action is done. "h" is hours since the last step. ⚠ = over 24h.</div>
+        </>
+      )}
+    </Wrap>
+  );
+}
+
+// DRIVER RECOVERY — a driver sees, for each delivery they made that recorded a loss,
+// whether the receiving site's tank came back the next morning (calibration/settling
+// losses recover overnight). Recovery = the site's tank recon gain over the 3 days after.
+const REC_STATUS = {
+  recovered: { label: "Recovered", tone: "#2C6B3F", bg: "#E4F3E8" },
+  partial: { label: "Partly recovered", tone: "#8A5A00", bg: "#FBF1DC" },
+  short: { label: "Still short", tone: "#A23A2E", bg: "#FBE7E4" },
+  awaiting_dip: { label: "Awaiting next dip", tone: "#5F6B7C", bg: "#EEF1F5" },
+  no_loss: { label: "No loss", tone: "#2C6B3F", bg: "#E4F3E8" },
+};
+export function DriverRecovery() {
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [key, setKey] = useState(0);
+  useEffect(() => { setD(null); setErr(null); getDriverRecovery().then(setD).catch((e) => setErr(e.message)); }, [key]);
+  const list = (d && d.deliveries) || [];
+  const s = (d && d.summary) || {};
+  return (
+    <Wrap>
+      <SectionHead title="Delivery recovery" sub="Did the site's tank come back after your delivery?" />
+      <RefreshBar data={d ? { asOf: todayISO() } : null} busy={!d && !err} onRefresh={() => setKey((k) => k + 1)} />
+      <div style={{ fontSize: 12.5, color: "var(--steel)", margin: "0 2px 12px", lineHeight: 1.5 }}>
+        A delivery can read as a loss when the fuel hasn't settled or the tank is due for calibration. This shows the site's tank recon (gain/loss) in the days after each of your drops — so you can see how much came back.
+      </div>
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && list.length === 0 && <Note tone="ok" title="Nothing yet">Once you've delivered on a trip and the site's tank has been re-dipped, your deliveries and their recovery show here.</Note>}
+      {d && list.length > 0 && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            {[["With a loss", s.withLoss], ["Recovered", s.recovered], ["Awaiting dip", s.awaiting], ["Still short", s.short]].map(([lbl, n], i) => (
+              <div key={i} style={{ flex: "1 1 44%", minWidth: 120, padding: "9px 11px", borderRadius: 10, background: "var(--card)", border: "1px solid var(--line)" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "var(--navy)", lineHeight: 1 }}>{n ?? 0}</div>
+                <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>{lbl}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {list.map((x, i) => {
+              const st = REC_STATUS[x.status] || REC_STATUS.awaiting_dip;
+              return (
+                <Panel key={i} style={{ padding: "12px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{x.site} · <span className="mono">{x.product}</span></div>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, color: st.tone, background: st.bg, whiteSpace: "nowrap" }}>{st.label}</span>
+                  </div>
+                  <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3 }}>{x.dnNo} · {fmtD(x.date)} · dispatched {L(x.dispatched)} L → received {L(x.received)} L</div>
+                  {x.loss > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12.5, display: "flex", flexWrap: "wrap", gap: "2px 14px" }}>
+                      <span>Loss at delivery: <b style={{ color: "#A23A2E" }}>{L(x.loss)} L</b></span>
+                      <span style={{ color: "var(--steel)" }}>truck {L(x.truckLoss)} L · site {L(x.siteLoss)} L</span>
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--navy)" }}>
+                    {x.status === "recovered" && <>✓ The {x.product} tank came back <b style={{ color: "#2C6B3F" }}>+{L(x.recoveredL)} L</b> over the next few days — this loss recovered.</>}
+                    {x.status === "partial" && <>Tank came back <b style={{ color: "#8A5A00" }}>+{L(x.recoveredL)} L</b> of the {L(x.loss)} L so far — partly recovered.</>}
+                    {x.status === "short" && <>The tank hasn't come back yet ({L(x.recoveredL)} L) — still showing short. Flag it with your supervisor if it persists.</>}
+                    {x.status === "awaiting_dip" && <span style={{ color: "var(--steel)" }}>Waiting for the site's next tank dip to see if it recovers.</span>}
+                    {x.status === "no_loss" && <span style={{ color: "var(--steel)" }}>Clean delivery — no loss recorded.</span>}
+                  </div>
+                </Panel>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>Recovery is the site's tank recon (gain/loss) for that product in the 3 days after your drop — an indicator, not a per-litre trace. Persistent shortfalls should be raised with logistics.</div>
         </>
       )}
     </Wrap>

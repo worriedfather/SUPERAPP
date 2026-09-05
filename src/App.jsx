@@ -7,7 +7,7 @@ import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
+import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -445,6 +445,7 @@ const NAV_PATHS = {
   lubesales: <><rect x="4" y="3" width="16" height="18" rx="1.6" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   logistics: <><path d="M4 20V11" /><path d="M10 20V5" /><path d="M16 20v-6" /><path d="M2.5 20h19" /></>,
   flow: <><circle cx="5" cy="6" r="2" /><circle cx="5" cy="18" r="2" /><circle cx="19" cy="12" r="2" /><path d="M7 6h6a4 4 0 0 1 4 4M7 18h6a4 4 0 0 0 4-4" /></>,
+  recovery: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></>,
   cockpit: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3.5" /><path d="M12 1v3M12 20v3M1 12h3M20 12h3" /></>,
   radar: <><path d="M12 21a9 9 0 1 0-9-9" /><path d="M12 16a4 4 0 1 0-4-4" /><path d="M12 12l6-6" /></>,
   cashflow: <><path d="M2 19h20" /><path d="M4 19v-6" /><path d="M20 19v-6" /><path d="M4 13a8 8 0 0 1 16 0" /></>,
@@ -567,7 +568,7 @@ function TestBar() {
 const ROLE_TABS = {
   // Fleet driver: one home screen (balance, card, trips, pending status) with
   // buttons into the request wizard and the delivery-note form.
-  driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"]],   // filing delivery notes is the SITE's job — the driver approves
+  driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // filing delivery notes is the SITE's job — the driver approves; Recovery = did the site's tank come back
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
   retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
@@ -1209,6 +1210,7 @@ function App() {
         {tab === "schedule" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} />}
         {tab === "trips" && <ScheduleDelivery me={me} drivers={drivers} horses={horses} readOnly />}
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
+        {tab === "recovery" && <DriverRecovery />}
         {tab === "incoming" && <DeliveriesInProgress />}
         {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site) => { setDeliverPrefill({ tripNo, site }); setTab("deliver"); }} />}
         {tab === "flow" && <DeliveryFlow />}
