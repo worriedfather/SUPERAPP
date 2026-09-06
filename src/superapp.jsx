@@ -3740,7 +3740,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   useEffect(() => { setD(null); setErr(null); const w = extWindow || periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, extWindow && extWindow.from, extWindow && extWindow.to, reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
   const $ = (v) => "$" + full(v);
-  const rows = d ? (onlyOpen ? d.openItems : d.rows) : [];
+  const rows = d ? [...(onlyOpen ? d.openItems : d.rows)].sort((a, b) => String(a.site || "").localeCompare(String(b.site || "")) || String(a.date).localeCompare(String(b.date))) : [];
   // Open view: one line per site — the accumulated still-open exposure — instead of
   // one line per site-day (which runs to hundreds of rows). Tap a site to see its days.
   const bySite = (() => {
@@ -3756,7 +3756,9 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
       g.unbanked += (r.unbanked == null ? Math.max(0, (r.expected || 0) - (r.depConfirmed || 0)) : r.unbanked);
       if (r.date < g.oldest) g.oldest = r.date;
     }
-    return [...m.values()].sort((a, b) => b.unbanked - a.unbanked);
+    // Alphabetical by site — the cash office captures receipts down the list, so A→Z is
+    // fastest to find a site (the ranked "still short"/"open days" drills re-sort themselves).
+    return [...m.values()].sort((a, b) => String(a.site || "").localeCompare(String(b.site || "")));
   })();
   return (
     <Wrap>
