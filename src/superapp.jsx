@@ -6926,11 +6926,16 @@ export function DriverRecovery() {
                     {x.status === "awaiting_dip" && <span style={{ color: "var(--steel)" }}>Waiting for the site's next tank dip to see if it recovers.</span>}
                     {x.status === "no_loss" && <span style={{ color: "var(--steel)" }}>Clean delivery — no loss recorded.</span>}
                   </div>
+                  {x.loss > 0 && x.recoveryDips > 0 && (
+                    <div className="mono" style={{ marginTop: 5, fontSize: 10.5, color: "var(--steel)" }}>
+                      Recovery period: {fmtD(x.date)} → {x.windowOpen ? "now (open until the next delivery)" : fmtD(x.windowTo)} · {x.recoveryDips} dip{x.recoveryDips === 1 ? "" : "s"}
+                    </div>
+                  )}
                 </Panel>
               );
             })}
           </div>
-          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>Recovery is the site's tank recon (gain/loss) for that product in the 3 days after your drop — an indicator, not a per-litre trace. Persistent shortfalls should be raised with logistics.</div>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>Recovery is the site's tank recon (gain/loss) for that product over the whole period from your drop until the next delivery to that site — an indicator, not a per-litre trace. It stops accruing once new fuel lands. Persistent shortfalls should be raised with logistics.</div>
         </>
       )}
     </Wrap>
