@@ -128,6 +128,7 @@ async function call(path, { method = "GET", body, timeoutMs = 12000, _replay = f
     const err = new Error(data.error || `request failed (${res.status})`);
     err.status = res.status;
     err.transient = res.status >= 500;   // 5xx = server blip → an outbox replay should RETRY, not drop
+    err.already = !!data.already;         // benign "already recorded" → an outbox replay should DROP silently, not fail
     throw err;
   }
   if (method === "GET") writeCache(path, data);       // refresh the offline copy
@@ -163,6 +164,11 @@ export async function flushOutbox() {
         list = outboxAll(); list.shift(); outboxSave(list);
       } catch (e) {
         if (e && (e.offline || e.transient)) break;   // offline or server blip → keep item, retry later
+        // BENIGN DUPLICATE: the server says this write is ALREADY IN (the site filed it before,
+        // or it synced once already). It DID land — so drop it silently, never as a failure that
+        // tells the site to "redo it" (which they can't — it's locked). Count it as synced so the
+        // app refreshes and shows the recorded figure.
+        if (e && e.already) { sent++; list = outboxAll(); list.shift(); outboxSave(list); continue; }
         // permanent rejection: record WHY, remove from the live queue, keep it as a failure
         const fail = { ...item, error: (e && e.message) || "rejected", status: (e && e.status) || 0, failedAt: Date.now() };
         failures.push(fail);
