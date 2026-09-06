@@ -12,6 +12,7 @@ import {
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
+  getDayendComments, computeDayend, closeDayend,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
   getApprovalHistory, getApprovalDetail, downloadApprovalsCsv, getBankOutflows, getOutflowTxns,
@@ -402,7 +403,7 @@ export function SiteSubmit({ me }) {
             <div><span className="lbl" style={{ marginBottom: 1 }}>Shift (auto)</span><div className="disp" style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{shiftLabel(shift)}</div></div>
             <div style={{ textAlign: "right" }}><span className="lbl" style={{ marginBottom: 1 }}>Date</span><div className="mono" style={{ fontSize: 13 }}>{fmtD(date)}</div></div>
           </div>
-          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"]]} value={which} onChange={setWhich} />
+          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Day-End"]]} value={which} onChange={setWhich} />
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
           {cfgErr && <Note tone="red" title="Couldn't load this site">{cfgErr} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={loadCfg}>Retry</button></Note>}
           {/* All four forms stay MOUNTED and are shown/hidden with CSS, so switching
@@ -425,6 +426,9 @@ export function SiteSubmit({ me }) {
               {shift === "night"
                 ? <CashForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} lock={subStatus?.cash} />
                 : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>}
+            </div>
+            <div style={{ display: which === "dayend" ? "block" : "none" }}>
+              {which === "dayend" && <DayEndForm choice={choice} site={activeSite} date={date} isManager={isManager} />}
             </div>
           </>}
         </>
@@ -496,6 +500,14 @@ const sortTanks = (tanks) => [...(tanks || [])].sort(byProduct);
 function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
   const [tanks, setTanks] = useState(sortTanks(config.tanks).map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
+  // Pump meter readings (sites with configured pumps only). Enter once: each
+  // pump's OPENING is seeded from its last submitted CLOSING — the attendant
+  // types only the closing meter. Litres = closing − opening (shown live; the
+  // server recomputes and never trusts the client's arithmetic).
+  const lastPumpByLabel = Object.fromEntries((config.lastPumps || []).map((p) => [p.label, p]));
+  const [pumps, setPumps] = useState(sortTanks(config.pumps || []).map((p) => (
+    { label: p.label, product: p.product, tank: p.tank, opening: lastPumpByLabel[p.label]?.closing ?? "", closing: "" })));
+  const hasPumps = pumps.length > 0;
   // seed sales from the last submission (like tanks seed from lastStock) so
   // REOPENING to fix one tank doesn't blank the sales/tenders and overwrite them
   // with zeros (audit finding #10). Empty when there's no prior submission.
@@ -505,10 +517,47 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
     blendSales: seed(ls.blend_sales), dieselSales: seed(ls.diesel_sales), ulpSales: seed(ls.ulp_sales),
     cashSales: seed(ls.cash_sales), petroSales: seed(ls.petro_sales), daCardSales: seed(ls.dacard_sales),
   });
+  // which sales fields the user typed by hand — auto-fill from pumps never
+  // overwrites a hand-typed figure (validate-and-advise: we flag, not force)
+  const [salesTouched, setSalesTouched] = useState({});
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
-  const hasULP = (config.tanks || []).some((t) => t.product === "ULP");   // only sites with a ULP tank see the ULP field
+  const hasULP = (config.tanks || []).some((t) => t.product === "ULP") || (config.pumps || []).some((p) => p.product === "ULP");
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
-  const setS = (k, v) => setSales((s) => ({ ...s, [k]: v }));
+  const setS = (k, v) => { setSalesTouched((t) => ({ ...t, [k]: true })); setSales((s) => ({ ...s, [k]: v })); };
+
+  // per-pump litres + per-product totals from the meters
+  const pumpLitres = (p) => {
+    const o = Number(p.opening), c = Number(p.closing);
+    return p.opening !== "" && p.closing !== "" && Number.isFinite(o) && Number.isFinite(c) && c >= o ? +(c - o).toFixed(2) : null;
+  };
+  const pumpTotals = pumps.reduce((acc, p) => {
+    const l = pumpLitres(p);
+    if (l == null) return acc;
+    const k = p.product === "Diesel" ? "dieselSales" : (p.product === "ULP" || p.product === "Unleaded") ? "ulpSales" : "blendSales";
+    acc[k] = +((acc[k] || 0) + l).toFixed(2);
+    return acc;
+  }, {});
+  const setPump = (i, k, v) => setPumps((ps) => {
+    const next = ps.map((p, j) => (j === i ? { ...p, [k]: v } : p));
+    // enter once, flow through: completed meters fill the product's sales field
+    // live — unless the user already typed that field by hand
+    const totals = next.reduce((acc, p) => {
+      const o = Number(p.opening), c = Number(p.closing);
+      const l = p.opening !== "" && p.closing !== "" && Number.isFinite(o) && Number.isFinite(c) && c >= o ? c - o : null;
+      if (l == null) return acc;
+      const key = p.product === "Diesel" ? "dieselSales" : (p.product === "ULP" || p.product === "Unleaded") ? "ulpSales" : "blendSales";
+      acc[key] = +((acc[key] || 0) + l).toFixed(2);
+      return acc;
+    }, {});
+    setSales((s) => {
+      const out = { ...s };
+      for (const key of ["blendSales", "dieselSales", "ulpSales"]) {
+        if (!salesTouched[key] && totals[key] != null) out[key] = String(totals[key]);
+      }
+      return out;
+    });
+    return next;
+  });
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
   const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -528,6 +577,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
       const r = await postSiteSubmit({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
         tanks: tanks.map((t) => ({ label: t.label, product: t.product, litres: t.litres })),
+        pumps: pumps.map((p) => ({ label: p.label, product: p.product, opening: p.opening, closing: p.closing })),
         blendSales: sales.blendSales, dieselSales: sales.dieselSales, ulpSales: sales.ulpSales || null,
         cashSales: sales.cashSales || null, petroSales: sales.petroSales || null, daCardSales: sales.daCardSales || null,
         deviceTime: new Date().toISOString(),
@@ -559,6 +609,34 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
             <Num style={{ maxWidth: 150 }} value={t.litres} onChange={(v) => setTank(i, v)} placeholder="litres" />
           </div>
         ))}
+        {hasPumps && <>
+          <div style={{ height: 8 }} />
+          <span className="lbl">Pump meters (litre counters)</span>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8 }}>Opening carries over from the last submission — enter each pump&apos;s closing meter. Sales litres below fill in automatically.</div>
+          <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--steel)", padding: "0 2px 4px" }}>
+            <span style={{ flex: 1 }}>PUMP</span><span style={{ width: 108, textAlign: "center" }}>OPENING</span><span style={{ width: 108, textAlign: "center" }}>CLOSING</span><span style={{ width: 64, textAlign: "right" }}>SOLD</span>
+          </div>
+          {pumps.map((p, i) => {
+            const l = pumpLitres(p);
+            const bad = p.opening !== "" && p.closing !== "" && l == null;
+            return (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "6px 8px", borderRadius: 10, background: "#fff", border: `1px solid ${bad ? "var(--red, #C0392B)" : "var(--line)"}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12.5 }}>{p.label}</div>
+                  <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.product}{p.tank ? ` · ${p.tank}` : ""}</div>
+                </div>
+                <Num style={{ width: 108, padding: "9px 7px" }} value={p.opening} onChange={(v) => setPump(i, "opening", v)} placeholder="opening" />
+                <Num style={{ width: 108, padding: "9px 7px" }} value={p.closing} onChange={(v) => setPump(i, "closing", v)} placeholder="closing" />
+                <div className="mono" style={{ width: 64, textAlign: "right", fontSize: 12.5, fontWeight: 700, color: bad ? "var(--red, #C0392B)" : l ? "var(--navy)" : "var(--steel)" }}>{bad ? "↓ open" : l != null ? L(l) : "—"}</div>
+              </div>
+            );
+          })}
+          {Object.keys(pumpTotals).length > 0 && (
+            <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "2px 0 4px" }}>
+              Pumps sold: {["blendSales", "dieselSales", "ulpSales"].filter((k) => pumpTotals[k] != null).map((k) => `${L(pumpTotals[k])} ${k === "blendSales" ? "blend" : k === "dieselSales" ? "diesel" : "ULP"}`).join(" · ")}
+            </div>
+          )}
+        </>}
         <div style={{ height: 8 }} />
         <span className="lbl">Total sales this shift (litres)</span>
         <div style={{ display: "flex", gap: 10 }}>
@@ -567,6 +645,13 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
           {hasULP && <div style={{ flex: 1 }}><Field label="ULP sold"><Num value={sales.ulpSales} onChange={(v) => setS("ulpSales", v)} /></Field></div>}
         </div>
         {config.lastSales && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 4 }}>Last: {L(config.lastSales.blend_sales)} blend · {L(config.lastSales.diesel_sales)} diesel sold</div>}
+        {hasPumps && ["blendSales", "dieselSales", "ulpSales"].some((k) => pumpTotals[k] != null && sales[k] !== "" && Math.abs(n(sales[k]) - pumpTotals[k]) > Math.max(5, pumpTotals[k] * 0.01)) && (
+          <Note tone="amber" title="Sales don't match the pump meters">
+            {["blendSales", "dieselSales", "ulpSales"].filter((k) => pumpTotals[k] != null && sales[k] !== "" && Math.abs(n(sales[k]) - pumpTotals[k]) > Math.max(5, pumpTotals[k] * 0.01))
+              .map((k) => `${k === "blendSales" ? "Blend" : k === "dieselSales" ? "Diesel" : "ULP"}: typed ${L(n(sales[k]))} vs ${L(pumpTotals[k])} on the meters`).join(" · ")}.
+            {" "}You can still submit — both figures are recorded, and the variance will show on the day-end.
+          </Note>
+        )}
         {litresEntered && salesValue > 0 && (
           <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}{hasULP && ulpPrice ? ` · ULP $${ulpPrice}` : ""}{hasULP && !ulpPrice ? " · ⚠ no ULP pump price set — ULP value not counted" : ""}</div>
         )}
@@ -589,6 +674,129 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 
         <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 14 }}>{busy ? "Sending…" : "Submit stock & sales"}</button>
       </form>
+    </Panel>
+  );
+}
+
+// Day-End — the BizTracker takeover. The whole daily close is ASSEMBLED from the
+// submissions the app already holds (opening = prior close, deliveries, sales,
+// closing dip, gain/loss, sales value) and cross-checked against the pump meters.
+// The manager reviews, explains any variance with a comment code, and closes.
+// Nothing here is re-keyed — it's a review-and-sign screen, not a data-entry one.
+function DayEndForm({ choice, site, date, isManager }) {
+  const [de, setDe] = useState(null);
+  const [codes, setCodes] = useState({ cash: [], tank: [] });
+  const [tankComment, setTankComment] = useState("");
+  const [cashComment, setCashComment] = useState("");
+  const [cashCount, setCashCount] = useState("");
+  const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([computeDayend(choice.fixed ? undefined : site, date), getDayendComments().catch(() => ({ cash: [], tank: [] }))])
+      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); })
+      .catch((e) => setMsg({ tone: "red", title: "Couldn't load the day-end", body: e.message }))
+      .finally(() => setLoading(false));
+  }, [site, date, choice.fixed]);
+  useEffect(() => { load(); }, [load]);
+
+  const dollars = (v) => "$" + Math.round(Number(v) || 0).toLocaleString();
+  const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const tankVar = de ? de.products.some((p) => Math.abs(p.gainLoss) > Math.max(20, p.salesQty * 0.01)) : false;
+  const diff = cashCount !== "" && de ? +(num(cashCount) - de.cash.expected).toFixed(2) : null;
+  const cashVar = diff != null && Math.abs(diff) > 5;
+
+  const close = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date,
+        tankComment: tankComment || null, cashComment: cashComment || null, cashCount: cashCount || null, deviceTime: new Date().toISOString() });
+      setDone({ title: `Day-end closed · ${r.ref}`, body: r.reconciled ? "Pump meters reconcile with declared sales ✓" : "Closed with a variance — see the flagged lines." });
+    } catch (err) { setMsg({ tone: "red", title: "Not closed", body: err.message }); }
+    finally { setBusy(false); }
+  };
+
+  if (loading) return <Panel><div style={{ color: "var(--steel)" }}>Assembling the day-end…</div></Panel>;
+  if (msg && !de) return <Note tone="red" title={msg.title}>{msg.body}</Note>;
+  if (done) return <SubmittedCard title={done.title} body={done.body} canEdit={false} onEdit={() => {}} />;
+  if (!de || !de.products.length) return <Note tone="amber" title="Nothing to close yet">No stock, sales or pump readings are in for {fmtD(date)} yet. The day-end assembles itself as the shift submissions land.</Note>;
+
+  const th = { fontSize: 10.5, color: "var(--steel)", fontWeight: 600, textAlign: "right", padding: "0 4px" };
+  const td = { fontSize: 12.5, textAlign: "right", padding: "5px 4px", fontVariantNumeric: "tabular-nums" };
+  return (
+    <Panel>
+      {de.closed && <Note tone="ok" title={`Already closed${de.closedAt ? ` · ${fmtD(date)}` : ""}`}>This day-end is closed. A re-close by a manager supersedes it (the latest close wins; both are kept).</Note>}
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+      <div style={{ fontSize: 11.5, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "7px 10px", marginBottom: 12 }}>
+        Assembled from this site&apos;s own submissions for <b>{fmtD(date)}</b> — opening is yesterday&apos;s close, then deliveries, sales and today&apos;s dip. Review, explain any variance, and close.
+      </div>
+
+      <span className="lbl">Fuel movement &amp; gain/loss (litres)</span>
+      <div style={{ overflowX: "auto", marginBottom: 4 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+          <thead><tr>
+            <th style={{ ...th, textAlign: "left" }}>PRODUCT</th><th style={th}>OPEN</th><th style={th}>DELIV</th><th style={th}>SALES</th><th style={th}>CLOSE</th><th style={th}>GAIN/LOSS</th>{de.hasPumps && <th style={th}>PUMP</th>}<th style={th}>VALUE</th>
+          </tr></thead>
+          <tbody>
+            {de.products.map((p, i) => {
+              const loss = Math.abs(p.gainLoss) > Math.max(20, p.salesQty * 0.01);
+              const pumpOff = p.pumpVsSales != null && Math.abs(p.pumpVsSales) > Math.max(20, p.salesQty * 0.01);
+              return (
+                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                  <td style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 4px" }}>{p.product}</td>
+                  <td style={td}>{L(p.startDip)}</td><td style={td}>{p.deliveries ? L(p.deliveries) : "—"}</td>
+                  <td style={td}>{L(p.salesQty)}</td><td style={td}>{L(p.endDip)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: loss ? "var(--red, #C0392B)" : p.gainLoss > 0 ? "#2E7D33" : "var(--navy)" }}>{p.gainLoss > 0 ? "▲" : p.gainLoss < 0 ? "▼" : ""}{L(Math.abs(p.gainLoss))}</td>
+                  {de.hasPumps && <td style={{ ...td, color: pumpOff ? "var(--amber)" : "var(--steel)" }}>{p.pumpLitres != null ? L(p.pumpLitres) : "—"}</td>}
+                  <td style={td}>{p.salesValue ? dollars(p.salesValue) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {de.hasPumps && <div style={{ fontSize: 11, color: de.reconciled ? "#2E7D33" : "var(--amber)", marginBottom: 8 }}>{de.reconciled ? "✓ Pump meters agree with declared sales." : "⚠ Pump meters differ from declared sales — the PUMP column shows what the meters moved."}</div>}
+      {!de.hasPumps && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 8 }}>No pump meters configured for this site — gain/loss is tank-based only.</div>}
+
+      <div style={{ borderTop: "1px solid var(--line)", marginTop: 10, paddingTop: 10 }}>
+        <span className="lbl">Cash &amp; tenders</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 12.5, marginBottom: 6 }}>
+          <div style={{ flex: "1 1 45%" }}>Total fuel sales <b>{dollars(de.cash.totalSales)}</b></div>
+          <div style={{ flex: "1 1 45%" }}>Expected cash <b>{dollars(de.cash.expected)}</b></div>
+          <div style={{ flex: "1 1 45%" }}>DA card <b>{dollars(de.tenders.daCard)}</b></div>
+          <div style={{ flex: "1 1 45%" }}>Petrotrade <b>{dollars(de.tenders.petrotrade)}</b></div>
+          <div style={{ flex: "1 1 45%" }}>Petty cash <b>{dollars(de.cash.pettyCash)}</b></div>
+          <div style={{ flex: "1 1 45%" }}>Non-fuel (lubes) <b>{dollars(de.cash.nonfuelCash)}</b></div>
+        </div>
+        <Field label="Counted cash (optional — leave blank if the cash office counts it)">
+          <Num value={cashCount} onChange={setCashCount} placeholder="$ physically counted" />
+        </Field>
+        {diff != null && <div style={{ fontSize: 12, marginBottom: 6, color: cashVar ? "var(--amber)" : "#2E7D33" }}>Difference vs expected: <b>{diff >= 0 ? "+" : ""}{dollars(diff)}</b>{cashVar ? " — needs a reason" : " ✓"}</div>}
+      </div>
+
+      {(tankVar || cashVar) && <Note tone="amber" title="Explain the variance">
+        {tankVar ? "There's a tank gain/loss to explain. " : ""}{cashVar ? "There's a cash difference to explain. " : ""}Pick the reason(s) below before closing.
+      </Note>}
+      {(tankVar || de.products.some((p) => p.gainLoss !== 0)) && (
+        <Field label="Tank gain/loss reason">
+          <select value={tankComment} onChange={(e) => setTankComment(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+            <option value="">— select a reason —</option>
+            {codes.tank.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+      )}
+      {(cashVar || de.cash.pettyCash > 0) && (
+        <Field label="Cash reason">
+          <select value={cashComment} onChange={(e) => setCashComment(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+            <option value="">— select a reason —</option>
+            {codes.cash.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+      )}
+
+      <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 12 }} onClick={close}>{busy ? "Closing…" : de.closed ? "Re-close day-end (correction)" : "Close day-end"}</button>
+      <button type="button" className="pill-ghost" style={{ width: "100%", marginTop: 8 }} onClick={load}>Refresh figures</button>
     </Panel>
   );
 }
@@ -5252,8 +5460,19 @@ export function DeliverySubmit({ me, initial, onLeave }) {
     if (prefilled || !initial || !initial.tripNo) return;
     const t = trips.find((x) => x.tripNo === initial.tripNo);
     if (!t) return;                       // wait until this driver's trips have loaded
-    pickTrip(initial.tripNo);
-    if (initial.site) pickDrop(initial.site);
+    // Set the trip AND the selected drop in ONE update — calling pickTrip() then pickDrop()
+    // read a STALE tripDrops in the same render, so qtyLoaded kept the FIRST drop's litres
+    // (e.g. Gletwyn 10,000) even though the chosen drop was Graniteside 8,000. Resolve the
+    // chosen drop straight off `t` and set its site + qty together.
+    const drops = Array.isArray(t.drops) ? t.drops : [];
+    const chosen = (initial.site && drops.find((x) => x.site === initial.site)) || drops[0] || null;
+    setF((s) => ({
+      ...s, tripNo: t.tripNo,
+      commodity: t.product || s.commodity,
+      truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer,
+      site: (chosen && chosen.site) || s.site,
+      qtyLoaded: String((chosen && chosen.qty) || s.qtyLoaded),
+    }));
     setPrefilled(true);
   }, [initial, trips, prefilled]);   // eslint-disable-line
   // Leaving the screen clears the deep-link so the trip lock doesn't stick to a stale
