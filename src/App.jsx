@@ -1569,13 +1569,13 @@ function FuelContextBanner({ ctx }) {
         <div style={{ marginBottom: 7, color: "var(--steel)" }}>The trip route hasn't changed since the last request.</div>
       )}
       <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>
-        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> (120%)</>}
+        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> ({ctx.capPct || 150}%)</>}
         {review
           ? (ctx.alreadyAllocatedBefore > 0 && <> · earlier fills {L(ctx.alreadyAllocatedBefore)} L · this request {ctx.thisRequest ? L(ctx.thisRequest.litres) : "—"} L</>)
           : (<> · already allocated {L(ctx.alreadyAllocated)} L · <b style={{ color: "var(--navy)" }}>{L(ctx.headroom)} L</b> headroom</>)}
       </div>
       {!review && ctx.headroom != null && ctx.headroom <= 0 && (
-        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the 120% cap — no more fuel can be added unless logistics grow the route.</div>
+        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the {ctx.capPct || 150}% cap — no more fuel can be added unless logistics grow the route.</div>
       )}
       {!review && seq > 1 && ctx.headroom > 0 && ctx.suggested != null && (
         <div style={{ marginTop: 6, fontWeight: 700, color: "#8A5A00" }}>Suggested top-up: {L(ctx.suggested)} L</div>
