@@ -7,7 +7,7 @@ import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice } from "./api";
-import { SiteSubmit, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
+import { SiteSubmit, SubmissionReview, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
@@ -431,6 +431,7 @@ const NAV_PATHS = {
   birdseye: <><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" /><rect x="12" y="7" width="3" height="10" /><rect x="17" y="9" width="3" height="8" /></>,
   hub: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
   submit: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+  review: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   retail: <><path d="M3 9l1.5-5h15L21 9" /><path d="M4 9h16v11H4z" /><path d="M9 20v-6h6v6" /></>,
   deliver: <><rect x="1" y="6" width="13" height="10" rx="1.4" /><path d="M14 9h4l3 3v4h-7z" /><circle cx="6.5" cy="18" r="1.6" /><circle cx="17.5" cy="18" r="1.6" /></>,
   dapprove: <><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></>,
@@ -571,7 +572,7 @@ const ROLE_TABS = {
   driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // filing delivery notes is the SITE's job — the driver approves; Recovery = did the site's tank come back
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
-  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
+  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
@@ -587,15 +588,15 @@ const ROLE_TABS = {
   // Executive: full access to everything EXCEPT raising fuel requests.
   // Executive: VIEW-ONLY — every dashboard/report, but no submitting, no approving,
   // and no master data (master data is the admin role's alone).
-  executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"], ["inflows", "Cash inflows"],
+  executive: [["hub", "Home"], ["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["fleetstatus", "Fleet status"], ["retail", "Retail"], ["review", "Submissions"], ["inflows", "Cash inflows"],
               ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
-  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
+  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
   retail_approver: [["hub", "Home"], ["approvals", "My approvals"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
@@ -604,11 +605,11 @@ const ROLE_TABS = {
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["review", "Submissions"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
   accounts_logistics: [["hub", "Home"], ["recon", "Warehouse"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["retail", "Retail"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
-  admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["retail", "Retail"], ["inflows", "Cash inflows"],
+  admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["review", "Submissions"], ["retail", "Retail"], ["inflows", "Cash inflows"],
           ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
           ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"]],
 };
@@ -635,6 +636,7 @@ const MODULE_META = {
   approvals: { label: "My approvals", group: "Fuel", desc: "History · search · export" },
   cardsys:   { label: "Fuel drawn", group: "Fuel", desc: "Drawn by driver · truck · site" },
   submit:    { label: "Site submit", group: "Retail sites", desc: "Stock · Price · Sales" },
+  review:    { label: "Submissions", group: "Retail sites", desc: "Review prior submissions · unlock" },
   incoming:  { label: "Deliveries", group: "Retail sites", desc: "Incoming to your site" },
   retail:    { label: "Retail board", group: "Retail sites", desc: "Live site status" },
   inflows:   { label: "Cash inflows", group: "Retail sites", desc: "Expected cash vs what sites submitted" },
@@ -1204,6 +1206,7 @@ function App() {
         {tab === "master" && !isMobileApp() && <MasterData drivers={drivers} horses={horses} onAddDriver={onAddDriver} gkey={gkey} setGkey={setGkey} />}
         {/* super-app modules */}
         {tab === "submit" && <SiteSubmit me={me} />}
+        {tab === "review" && <SubmissionReview me={me} />}
         {tab === "retail" && <RetailDashboard />}
         {tab === "inflows" && <CashInflows />}
         {tab === "deliver" && <DeliverySubmit me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}

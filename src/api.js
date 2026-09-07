@@ -389,6 +389,7 @@ export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/
 export const getCashCarried = () => call("/api/cash/carried");
 export const getCashUnaccounted = (days = 30, from = null, to = null) => call(`/api/cash/unaccounted?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const requestUnlock = (b) => call("/api/unlock/request", { method: "POST", body: b });
+export const getSubmissionReview = (site, date) => call(`/api/submissions/review?date=${encodeURIComponent(date)}${site ? `&site=${encodeURIComponent(site)}` : ""}`);
 export const getUnlockRequests = () => call("/api/unlock/requests");
 export const decideUnlock = (id, outcome, note) => call(`/api/unlock/${id}/decide`, { method: "POST", body: { outcome, note } });
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);

@@ -8,7 +8,7 @@ import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
-  requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest,
+  requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
@@ -359,6 +359,100 @@ const pickShift = (has, fallback) => {
   if (has(other)) return other;
   return fallback;
 };
+
+/* ============================================================
+ *  SUBMISSION REVIEW — audit view of a site's prior submissions
+ *  Choose a site (managers/execs) + a day → see every submission
+ *  with its figures, who filed it, when; request an unlock to correct.
+ * ============================================================ */
+export function SubmissionReview({ me }) {
+  const siteBound = !!(me && me.site) && ["site_manager", "retail_supervisor", "supervisor_cashier"].includes(me.kind);
+  const [sites, setSites] = useState([]);
+  useEffect(() => { if (!siteBound) getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, [siteBound]);
+  const [site, setSite] = useState(siteBound ? me.site : "");
+  const [date, setDate] = useState(todayISO());
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  const activeSite = siteBound ? me.site : site;
+  const load = useCallback(() => {
+    if (!activeSite) { setD(null); return; }
+    setBusy(true); setErr(null); setD(null); setMsg(null);
+    getSubmissionReview(siteBound ? undefined : activeSite, date).then(setD).catch((e) => setErr(e.message || "Couldn't load")).finally(() => setBusy(false));
+  }, [activeSite, date, siteBound]);
+  useEffect(() => { load(); }, [load]);
+
+  const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
+  const askUnlock = async (s) => {
+    const reason = window.prompt(`Request unlock — ${s.label} · ${fmtD(date)}\n\nWhy does this need changing? (a sentence — the manager approves off this)`);
+    if (reason == null) return;
+    if (reason.trim().length < 10) { setMsg({ tone: "amber", title: "Need a reason", body: "Explain why (at least a sentence)." }); return; }
+    try {
+      const r = await requestUnlock({ site: siteBound ? undefined : activeSite, kind: s.kind, tradingDate: date, shift: s.shift || null, reason: reason.trim() });
+      setMsg({ tone: "ok", title: `Unlock requested · ${r.ref}`, body: "A manager has been notified. Once approved, ONE correction can be submitted (it re-locks after)." });
+    } catch (e) { setMsg({ tone: "red", title: "Couldn't request unlock", body: e.message }); }
+  };
+
+  const kv = (obj) => Object.entries(obj).filter(([k, v]) => k !== "note" && v != null && typeof v !== "object").map(([k, v]) => (
+    <span key={k} style={{ display: "inline-block", marginRight: 16, fontSize: 12.5 }}>{k} <b style={{ color: "var(--navy)" }}>{typeof v === "number" ? num(v) : String(v)}</b></span>));
+  const miniTable = (arr, label) => {
+    const rows = (arr || []).filter(Boolean); if (!rows.length) return null;
+    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    return (<div key={label} style={{ marginTop: 6, overflowX: "auto" }}><div className="lbl" style={{ marginBottom: 3 }}>{label}</div>
+      <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+        <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>{cols.map((c) => <Th key={c}>{c}</Th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>{cols.map((c) => <Td key={c}>{typeof r[c] === "number" ? num(r[c]) : (r[c] == null ? "" : String(r[c]))}</Td>)}</tr>)}</tbody>
+      </table></div>);
+  };
+  const renderFigures = (f) => {
+    if (!f) return null;
+    const parts = [];
+    for (const [k, v] of Object.entries(f)) {
+      if (v == null) continue;
+      if (k === "note") { parts.push(<div key="note" style={{ fontSize: 12, color: "var(--steel)", marginTop: 4 }}>Note: {v}</div>); continue; }
+      if (Array.isArray(v)) { const t = miniTable(v, k); if (t) parts.push(t); continue; }
+      if (typeof v === "object") parts.push(<div key={k} style={{ marginTop: 4 }}><span className="lbl">{k}</span><div>{kv(v)}</div></div>);
+      else parts.push(<span key={k} style={{ display: "inline-block", marginRight: 16, fontSize: 12.5 }}>{k} <b style={{ color: "var(--navy)" }}>{typeof v === "number" ? num(v) : String(v)}</b></span>);
+    }
+    return <div style={{ marginTop: 6 }}>{parts}</div>;
+  };
+
+  const rows = d?.submissions || [];
+  return (
+    <Wrap>
+      <SectionHead title="Submission review" sub="Pick a site and day to see what was submitted — and request an unlock to correct." />
+      <Panel>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {siteBound ? <div style={{ flex: "1 1 180px" }}><Field label="Site"><input value={me.site || "—"} disabled /></Field></div>
+            : <div style={{ flex: "1 1 180px" }}><Field label="Site"><Picker value={site} onChange={setSite} placeholder="Select a site…" title="Site" options={sites.map((s) => s.name)} /></Field></div>}
+          <div style={{ flex: "1 1 150px" }}><Field label="Trading day"><input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} style={{ width: "100%" }} /></Field></div>
+          <button className="pill-ghost" style={{ height: 40 }} onClick={load}>Refresh</button>
+        </div>
+      </Panel>
+      {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+      {err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {busy && <Panel><div style={{ color: "var(--steel)" }}>Loading {activeSite || "…"}…</div></Panel>}
+      {!activeSite && !busy && <Note tone="amber" title="Pick a site">Choose a site above to review its submissions.</Note>}
+      {d && rows.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{d.site} · {fmtD(date)}</div>
+          {rows.map((s) => (
+            <Panel key={s.key} style={{ padding: "12px 14px", opacity: s.submitted ? 1 : 0.6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{s.label}</div>
+                {s.submitted
+                  ? <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, color: "#1f5133", background: "#E4F3E8" }}>{s.locked ? "🔒 submitted" : "unlocked"}</span>
+                  : <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, color: "var(--steel)", background: "var(--line)" }}>not submitted</span>}
+              </div>
+              {s.submitted && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 2 }}>{s.ref}{s.by ? ` · by ${s.by}` : ""}{s.at ? ` · ${s.at}` : ""}</div>}
+              {s.submitted && renderFigures(s.figures)}
+              {s.submitted && s.locked && s.canUnlock && s.kind && (
+                <button className="pill-ghost" style={{ marginTop: 10, fontSize: 12.5 }} onClick={() => askUnlock(s)}>Request unlock to correct</button>)}
+            </Panel>
+          ))}
+        </div>
+      )}
+    </Wrap>
+  );
+}
 
 export function SiteSubmit({ me }) {
   const choice = useSiteChoice(me);
