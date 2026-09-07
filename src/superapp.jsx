@@ -368,7 +368,10 @@ export function SiteSubmit({ me }) {
   const [cfgErr, setCfgErr] = useState(null);
   const [loading, setLoading] = useState(false);
   const activeSite = choice.fixed ? choice.fixedSite : site;
-  const shift = shiftNow(); const date = todayISO();
+  // Submit the shift that JUST ENDED, not the one currently running: mornings (06:00–~11:00) file
+  // the NIGHT that ended at 06:00; evenings (18:00–~22:00) file the DAY that ended at 18:00. Using
+  // shiftNow() here auto-picked the running shift (already-submitted → wrongly showed "already in").
+  const shift = naturalShift(); const date = todayISO();
   // managers (not tied to a site) can pick ANY site and edit a locked submission
   const isManager = !!me && ["manager", "operations_manager", "executive", "admin"].includes(me.kind);
 
