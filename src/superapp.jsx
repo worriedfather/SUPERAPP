@@ -705,13 +705,14 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
   const [tankComment, setTankComment] = useState("");
   const [cashComment, setCashComment] = useState("");
   const [cashCount, setCashCount] = useState("");
+  const [certified, setCertified] = useState(false);   // supervisor must certify before closing
   const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true); setDone(null); setMsg(null);
     Promise.all([computeDayend(choice.fixed ? undefined : site, date, deShift), getDayendComments().catch(() => ({ cash: [], tank: [] }))])
-      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); setCashCount(""); })
+      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); setCashCount(""); setCertified(false); })
       .catch((e) => setMsg({ tone: "red", title: "Couldn't load the day-end", body: e.message }))
       .finally(() => setLoading(false));
   }, [site, date, deShift, choice.fixed]);
@@ -731,7 +732,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
     setBusy(true); setMsg(null);
     try {
       const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date, shift: deShift,
-        tankComment: tankComment || null, cashComment: cashComment || null, cashCount: cashCount || null, deviceTime: new Date().toISOString() });
+        tankComment: tankComment || null, cashComment: cashComment || null, cashCount: cashCount || null, certified: true, deviceTime: new Date().toISOString() });
       setDone({ title: `${deShift === "day" ? "Day" : "Night"} shift-end closed · ${r.ref}`, body: r.reconciled ? "All products within wetstock tolerance ✓" : "Closed with a variance — flagged for review." });
     } catch (err) { setMsg({ tone: "red", title: "Not closed", body: err.message }); }
     finally { setBusy(false); }
@@ -842,7 +843,9 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
       {(tankVar || cashVar) && <Note tone="amber" title="Explain the variance">
         {tankVar ? "A wetstock variance is outside tolerance (>0.5%) and must be explained before closing. " : ""}{cashVar ? "There's a cash difference to explain. " : ""}Pick the reason(s) below.
       </Note>}
-      {(tankVar || de.products.some((p) => p.variance !== 0)) && (
+      {/* Only ask for a reason when a variance is actually OUT OF TOLERANCE — a tiny within-
+          tolerance drift (e.g. ±0.3%) needs no explanation, so the box is hidden then. */}
+      {tankVar && (
         <Field label="Tank variance reason (leak / theft / temperature / meter / calibration)">
           <select value={tankComment} onChange={(e) => setTankComment(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
             <option value="">— select a reason —</option>
@@ -859,7 +862,14 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
         </Field>
       )}
 
-      <button className="pill" disabled={busy || blocked} style={{ width: "100%", marginTop: 12, opacity: blocked ? 0.5 : 1 }} onClick={close}>{busy ? "Closing…" : blocked ? "Capture the missing dip to close" : de.closed ? `Re-close ${deShift === "day" ? "day" : "night"} shift-end (correction)` : `Close ${deShift === "day" ? "day" : "night"} shift-end`}</button>
+      {/* Supervisor certification — must be ticked before the day-end can be closed. */}
+      {!blocked && (
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, padding: "11px 12px", border: "1px solid var(--line)", borderRadius: 10, background: certified ? "#E4F3E8" : "#FBFBFD", fontSize: 12.5, cursor: "pointer" }}>
+          <input type="checkbox" checked={certified} onChange={(e) => setCertified(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }} />
+          <span>I certify that I have <b>reviewed the stock, sales, delivery and cash figures</b> above for this shift, and confirm they are <b>true, complete and accurate</b> to the best of my knowledge.</span>
+        </label>
+      )}
+      <button className="pill" disabled={busy || blocked || !certified} style={{ width: "100%", marginTop: 12, opacity: (blocked || !certified) ? 0.5 : 1 }} onClick={close}>{busy ? "Closing…" : blocked ? "Capture the missing dip to close" : !certified ? "Tick the certification to close" : de.closed ? `Re-close ${deShift === "day" ? "day" : "night"} shift-end (correction)` : `Close ${deShift === "day" ? "day" : "night"} shift-end`}</button>
       <button type="button" className="pill-ghost" style={{ width: "100%", marginTop: 8 }} onClick={load}>Refresh figures</button>
     </>
   );
