@@ -416,6 +416,25 @@ export function SubmissionReview({ me }) {
   };
 
   const rows = d?.submissions || [];
+  // Audit export — flatten each submission's figures into one readable "Details" cell.
+  const flat = (f) => {
+    if (!f) return "";
+    const parts = [];
+    for (const [k, v] of Object.entries(f)) {
+      if (v == null) continue;
+      if (Array.isArray(v)) parts.push(`${k}: ${v.map((r) => Object.entries(r).map(([a, b]) => `${a}=${b}`).join("/")).join(" | ")}`);
+      else if (typeof v === "object") parts.push(`${k}: ${Object.entries(v).filter(([, x]) => x != null).map(([a, b]) => `${a}=${b}`).join(" ")}`);
+      else parts.push(`${k}=${v}`);
+    }
+    return parts.join(" ; ");
+  };
+  const exportCsv = () => {
+    if (!d) return;
+    downloadCsv(`DA_submissions_${(d.site || "site").replace(/\s+/g, "_")}_${d.date}.csv`,
+      ["Date", "Site", "Submission", "Reference", "Submitted by", "Submitted at", "Status", "Details"],
+      rows.map((s) => [d.date, d.site, s.label, s.ref || "", s.by || "", s.at || "",
+        s.submitted ? (s.locked ? "submitted (locked)" : "submitted (unlocked)") : "not submitted", flat(s.figures)]));
+  };
   return (
     <Wrap>
       <SectionHead title="Submission review" sub="Pick a site and day to see what was submitted — and request an unlock to correct." />
@@ -433,7 +452,10 @@ export function SubmissionReview({ me }) {
       {!activeSite && !busy && <Note tone="amber" title="Pick a site">Choose a site above to review its submissions.</Note>}
       {d && rows.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{d.site} · {fmtD(date)}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <div className="mono" style={{ fontSize: 12, color: "var(--steel)" }}>{d.site} · {fmtD(date)}</div>
+            {rows.some((s) => s.submitted) && <button className="pill-ghost" style={{ fontSize: 12 }} onClick={exportCsv}>Export CSV</button>}
+          </div>
           {rows.map((s) => (
             <Panel key={s.key} style={{ padding: "12px 14px", opacity: s.submitted ? 1 : 0.6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
