@@ -1083,11 +1083,11 @@ function App() {
   // Only a laptop/desktop browser is blocked (no GPS/camera for the pump controls).
   const driverOnDesktop = me && me.kind === "driver" && !isNative()
     && !/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || "");
-  if (driverOnDesktop) return <DriverMobileOnlyGate onSignOut={() => { signOut(); setMe(null); }} />;
+  if (driverOnDesktop) return <DriverMobileOnlyGate onSignOut={() => { signOut(true); setMe(null); }} />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
 
-  const leave = () => { signOut(); setMe(null); setState(null); };
+  const leave = () => { signOut(true); setMe(null); setState(null); };   // manual sign-out clears offline credential too
 
   if (!state) {
     return (
@@ -1597,6 +1597,12 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [odo, setOdo] = useState("");
   const [photo, setPhoto] = useState(null);
   const [ocr, setOcr] = useState({ state: "idle" });
+  // Odometer correction: when the dash genuinely reads LOWER than the last recorded
+  // value (bad prior entry, cluster/odometer replaced), the driver can confirm a
+  // correction with a reason instead of being hard-blocked. It re-baselines and is
+  // flagged for the approver (who sees the old vs new reading + reason).
+  const [odoFix, setOdoFix] = useState(false);
+  const [odoFixReason, setOdoFixReason] = useState("");
   const [drops, setDrops] = useState(initFleet && Array.isArray(init.stops) ? init.stops.slice(1, -1) : []);
   const [end, setEnd] = useState(initFleet && Array.isArray(init.stops) && init.stops.length > 1 ? init.stops[init.stops.length - 1] : "");
   const [pick, setPick] = useState("");
@@ -1708,7 +1714,11 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
 
   const lastOdo = card ? cards[card]?.lastOdo : null;
   const odoNum = parseFloat(odo);
-  const odoBad = odo !== "" && (!isFinite(odoNum) || (lastOdo != null && odoNum <= lastOdo));
+  const odoInvalid = odo !== "" && !isFinite(odoNum);                                   // not a number → always blocked
+  const odoBackward = odo !== "" && isFinite(odoNum) && lastOdo != null && odoNum <= lastOdo;  // lower than last recorded
+  // Backward is allowed ONLY when the driver confirms it's a correction AND gives a reason.
+  const odoCorrected = odoBackward && odoFix && odoFixReason.trim().length > 2;
+  const odoBad = odoInvalid || (odoBackward && !odoCorrected);
   const ocrGap = ocr.state === "read" && isFinite(odoNum) ? Math.abs(ocr.value - odoNum) : null;
   const ocrMismatch = ocrGap != null && ocrGap > OCR_TOLERANCE;
 
@@ -1735,7 +1745,8 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   else if (geo.state === "off") missing.push("GPS switched on (phone settings)");
   else if (geo.state !== "onsite") missing.push("GPS confirmation that you are at " + fuelStn);
   if (!odo) missing.push("the odometer reading");
-  else if (odoBad) missing.push("an odometer reading higher than " + L(lastOdo) + " km");
+  else if (odoInvalid) missing.push("a valid odometer reading");
+  else if (odoBackward && !odoCorrected) missing.push("confirmation of the odometer correction (it reads lower than last recorded) with a reason");
   if (!photo) missing.push("a photograph of the odometer");
   if (driver && needTrip && !end) missing.push("the end point of the journey");
   if (driver && !needTrip && !(parseFloat(ask) > 0)) missing.push("the litres you are asking for");
@@ -1754,6 +1765,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         start: fuelStn, drops, end,
         odo: odoNum, photo, ocr: ocr.state === "read" ? ocr.value : null, ocrConf: ocr.state === "read" ? ocr.conf : null,
         ocrState: ocr.state, ocrGap, ocrMismatch,
+        odoCorrected, odoPrev: odoCorrected ? lastOdo : null, odoCorrectReason: odoCorrected ? odoFixReason.trim() : null,
         mode: needTrip ? "delivery" : "general", stops: needTrip ? full : [], km, kmpl,
         distanceSource: route ? route.source : null, legs: route ? route.legs : null,
         locKm: est ? Math.round(est.locKm) : 0, hwyKm: est ? Math.round(est.hwyKm) : 0,
@@ -1857,7 +1869,22 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
         <Field label={lastOdo != null ? `Reading on the dash — last recorded ${L(lastOdo)} km` : "Reading on the dash"}>
           <input inputMode="numeric" value={odo} onChange={(e) => setOdo(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 214530" style={{ borderColor: odoBad ? "var(--red)" : undefined }} />
         </Field>
-        {odoBad && <div style={{ color: "var(--red)", fontSize: 13, marginTop: -8, marginBottom: 10 }}>Must be higher than the last recorded reading of {L(lastOdo)} km.</div>}
+        {odoInvalid && <div style={{ color: "var(--red)", fontSize: 13, marginTop: -8, marginBottom: 10 }}>Enter a valid odometer reading.</div>}
+        {odoBackward && (
+          <div style={{ background: "#FEF7E6", border: "1px solid #E7C766", borderRadius: 12, padding: "10px 12px", marginTop: -4, marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#8A6D1E" }}>Lower than the last recorded reading ({L(lastOdo)} km)</div>
+            <div style={{ fontSize: 12.5, color: "#6b5a1e", marginTop: 3, lineHeight: 1.5 }}>If the dash genuinely reads this — a wrong previous entry, or the odometer/cluster was replaced — confirm the correction below. It goes to the approver with your reason, and future requests will measure from the corrected reading.</div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 8, fontSize: 13, color: "var(--ink)" }}>
+              <input type="checkbox" checked={odoFix} onChange={(e) => setOdoFix(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>I confirm the dash truly reads <b>{L(odoNum)} km</b> — correct the recorded reading.</span>
+            </label>
+            {odoFix && (
+              <input value={odoFixReason} onChange={(e) => setOdoFixReason(e.target.value)} placeholder="Reason (e.g. odometer replaced, previous entry was a typo)"
+                style={{ width: "100%", marginTop: 8, padding: "9px 10px", borderRadius: 8, border: `1px solid ${odoFixReason.trim().length > 2 ? "var(--line)" : "#E7C766"}`, fontSize: 13 }} />
+            )}
+            {odoCorrected && <div style={{ fontSize: 12, color: "#2E7D33", marginTop: 6, fontWeight: 600 }}>✓ Correction ready — the photo backs up the reading. You can continue.</div>}
+          </div>
+        )}
         <button onClick={capture} className="disp" style={{ width: "100%", padding: 14, fontSize: 14, fontWeight: 700, borderRadius: 100, marginBottom: 12, background: photo ? "#fff" : "var(--ink)", color: photo ? "var(--ink)" : "#fff", border: photo ? "1.5px solid var(--line)" : "none" }}>{photo ? "Retake photo" : "Photograph the odometer"}</button>
         {photo && <img src={photo} alt="Odometer" style={{ maxWidth: "100%", maxHeight: 170, borderRadius: 14, border: "1.5px solid var(--line)", marginBottom: 10, display: "block" }} />}
         {ocr.state === "reading" && <Flag tone="amber" title="Reading the photograph…">This takes a few seconds.</Flag>}

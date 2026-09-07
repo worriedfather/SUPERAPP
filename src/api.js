@@ -268,11 +268,16 @@ export async function signInGoogle(credential) {
   return me;
 }
 
-export function signOut() {
+export function signOut(full = false) {
   token = null;
   me = null;
   localStorage.removeItem("da_token");
   localStorage.removeItem("da_me");
+  // On a MANUAL sign-out, also drop the cached offline sign-in credential (which stores the JWT +
+  // PIN hash) so the long-lived token can't be recovered from the device afterwards (audit: client
+  // H2). A 401-triggered auto sign-out (full=false) keeps it, so offline re-entry still works after
+  // a transient token expiry.
+  if (full) { try { localStorage.removeItem(AUTH_CACHE); } catch { /* ignore */ } }
   // Tell the app to drop to the login screen (App listens for this). Fired both on
   // a manual sign-out and on an expired/invalid session (401).
   try { window.dispatchEvent(new CustomEvent("da-signout")); } catch { /* SSR */ }
@@ -290,6 +295,9 @@ export const getSiteConfig = (site, date, shift) => { const q = new URLSearchPar
 export const postSiteSubmit = (b) => call("/api/site-submit", { method: "POST", body: b });
 export const postSiteDip = (b) => call("/api/site-dip", { method: "POST", body: b });
 export const addSiteTank = (b) => call("/api/site-tank", { method: "POST", body: b });
+export const getDayendComments = () => call("/api/dayend/comments");
+export const computeDayend = (site, date, shift) => { const q = new URLSearchParams(); if (site) q.set("site", site); if (date) q.set("date", date); if (shift) q.set("shift", shift); return call(`/api/site-dayend/compute?${q.toString()}`); };
+export const closeDayend = (b) => call("/api/site-dayend/close", { method: "POST", body: b });
 export const addSiteCompetitor = (b) => call("/api/site-competitor", { method: "POST", body: b });
 export const postStock = (b) => call("/api/stock", { method: "POST", body: b });
 export const postPrice = (b) => call("/api/price", { method: "POST", body: b });

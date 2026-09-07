@@ -55,10 +55,10 @@ const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(3) : "—")
 // 00:00–02:00 submission on the previous day and collided with the locked prior
 // entry (audit #7/#14). en-CA gives YYYY-MM-DD.
 const todayISO = () => { try { return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Harare" }); } catch { return new Date().toISOString().slice(0, 10); } };
-// Sensible default shift, still user-overridable: evening/overnight → the "day"
-// trading shift (17:00 close), otherwise "night". The app removes the guessing
-// the bots had to do from message timestamps.
-const defaultShift = () => { const h = new Date().getHours(); return h >= 17 || h < 5 ? "day" : "night"; };
+// Sensible default shift, still user-overridable. DA shift clock: DAY = 06:00–18:00,
+// NIGHT = 18:00–06:00 (crosses midnight). A 06:00–17:59 submission is the day shift;
+// anything from 18:00 through 05:59 is the night shift.
+const defaultShift = () => { const h = new Date().getHours(); return h >= 6 && h < 18 ? "day" : "night"; };
 
 /* ---------- small shared UI (matches App.jsx classes) ---------- */
 const Panel = ({ children, style, onClick, id }) => (
@@ -343,8 +343,8 @@ export function ReminderBar({ me }) {
 /* ============================================================ *
  *  SITE MANAGER — submit hub (Stock / Price / Sales)
  * ============================================================ */
-const shiftNow = () => (new Date().getHours() >= 17 ? "day" : "night");
-const shiftLabel = (s) => (s === "day" ? "Day shift · 17:00–23:59" : "Night shift · 00:00–16:59");
+const shiftNow = () => { const h = new Date().getHours(); return h >= 6 && h < 18 ? "day" : "night"; };
+const shiftLabel = (s) => (s === "day" ? "Day shift · 06:00–18:00" : "Night shift · 18:00–06:00");
 // The freshest COMPLETE shift to review right now = the opposite of the one
 // currently being collected. Evening (day shift 17:00–23:59 collecting) → show
 // the night shift that just wrapped at ~17:00; morning/afternoon (night
@@ -403,7 +403,7 @@ export function SiteSubmit({ me }) {
             <div><span className="lbl" style={{ marginBottom: 1 }}>Shift (auto)</span><div className="disp" style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{shiftLabel(shift)}</div></div>
             <div style={{ textAlign: "right" }}><span className="lbl" style={{ marginBottom: 1 }}>Date</span><div className="mono" style={{ fontSize: 13 }}>{fmtD(date)}</div></div>
           </div>
-          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Day-End"]]} value={which} onChange={setWhich} />
+          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Shift-End"]]} value={which} onChange={setWhich} />
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
           {cfgErr && <Note tone="red" title="Couldn't load this site">{cfgErr} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={loadCfg}>Retry</button></Note>}
           {/* All four forms stay MOUNTED and are shown/hidden with CSS, so switching
@@ -428,7 +428,7 @@ export function SiteSubmit({ me }) {
                 : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>}
             </div>
             <div style={{ display: which === "dayend" ? "block" : "none" }}>
-              {which === "dayend" && <DayEndForm choice={choice} site={activeSite} date={date} isManager={isManager} />}
+              {which === "dayend" && <DayEndForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />}
             </div>
           </>}
         </>
@@ -505,8 +505,13 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   // types only the closing meter. Litres = closing − opening (shown live; the
   // server recomputes and never trusts the client's arithmetic).
   const lastPumpByLabel = Object.fromEntries((config.lastPumps || []).map((p) => [p.label, p]));
-  const [pumps, setPumps] = useState(sortTanks(config.pumps || []).map((p) => (
-    { label: p.label, product: p.product, tank: p.tank, opening: lastPumpByLabel[p.label]?.closing ?? "", closing: "" })));
+  // `seeded` = a prior reading exists → attendant enters only the closing meter (dip style).
+  // First-ever reading (no prior): the attendant enters BOTH opening and closing so litres
+  // sold computes on day one; every submission after this reverts to single-reading.
+  const [pumps, setPumps] = useState(sortTanks(config.pumps || []).map((p) => {
+    const prior = lastPumpByLabel[p.label]?.closing;
+    return { label: p.label, product: p.product, tank: p.tank, seeded: prior != null, opening: prior ?? "", closing: "" };
+  }));
   const hasPumps = pumps.length > 0;
   // seed sales from the last submission (like tanks seed from lastStock) so
   // REOPENING to fix one tank doesn't blank the sales/tenders and overwrite them
@@ -611,23 +616,30 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
         ))}
         {hasPumps && <>
           <div style={{ height: 8 }} />
-          <span className="lbl">Pump meters (litre counters)</span>
-          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8 }}>Opening carries over from the last submission — enter each pump&apos;s closing meter. Sales litres below fill in automatically.</div>
+          <span className="lbl">Pump readings (meter litres)</span>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8 }}>
+            {pumps.some((p) => !p.seeded)
+              ? "First submission for these pumps — enter each meter's opening AND closing reading so today's litres sold is captured. From tomorrow you'll only enter the closing (the opening carries over)."
+              : "Enter each pump's current meter reading — just like a tank dip. The previous reading is shown; litres sold is the difference, and fills the sales totals below automatically."}
+          </div>
           <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--steel)", padding: "0 2px 4px" }}>
-            <span style={{ flex: 1 }}>PUMP</span><span style={{ width: 108, textAlign: "center" }}>OPENING</span><span style={{ width: 108, textAlign: "center" }}>CLOSING</span><span style={{ width: 64, textAlign: "right" }}>SOLD</span>
+            <span style={{ flex: 1 }}>PUMP</span>{pumps.some((p) => !p.seeded) && <span style={{ width: 96, textAlign: "center" }}>OPENING</span>}<span style={{ width: 96, textAlign: "center" }}>{pumps.every((p) => p.seeded) ? "METER READING" : "CLOSING"}</span><span style={{ width: 58, textAlign: "right" }}>SOLD</span>
           </div>
           {pumps.map((p, i) => {
             const l = pumpLitres(p);
-            const bad = p.opening !== "" && p.closing !== "" && l == null;
+            const bad = p.opening !== "" && p.closing !== "" && l == null;   // closing below opening
+            const showOpen = pumps.some((q) => !q.seeded);                   // any first-reading pump → show opening column
             return (
               <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "6px 8px", borderRadius: 10, background: "#fff", border: `1px solid ${bad ? "var(--red, #C0392B)" : "var(--line)"}` }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 12.5 }}>{p.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.product}{p.tank ? ` · ${p.tank}` : ""}</div>
+                  <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.product}{p.tank ? ` · ${p.tank}` : ""}{!p.seeded ? " · first reading" : ` · was ${L(p.opening)}`}</div>
                 </div>
-                <Num style={{ width: 108, padding: "9px 7px" }} value={p.opening} onChange={(v) => setPump(i, "opening", v)} placeholder="opening" />
-                <Num style={{ width: 108, padding: "9px 7px" }} value={p.closing} onChange={(v) => setPump(i, "closing", v)} placeholder="closing" />
-                <div className="mono" style={{ width: 64, textAlign: "right", fontSize: 12.5, fontWeight: 700, color: bad ? "var(--red, #C0392B)" : l ? "var(--navy)" : "var(--steel)" }}>{bad ? "↓ open" : l != null ? L(l) : "—"}</div>
+                {showOpen && (p.seeded
+                  ? <div className="mono" style={{ width: 96, textAlign: "center", fontSize: 12, color: "var(--steel)" }}>{L(p.opening)}</div>
+                  : <Num style={{ width: 96, padding: "9px 7px" }} value={p.opening} onChange={(v) => setPump(i, "opening", v)} placeholder="opening" />)}
+                <Num style={{ width: 96, padding: "9px 7px" }} value={p.closing} onChange={(v) => setPump(i, "closing", v)} placeholder={p.seeded ? "reading" : "closing"} />
+                <div className="mono" style={{ width: 58, textAlign: "right", fontSize: 12.5, fontWeight: 700, color: bad ? "var(--red, #C0392B)" : l ? "var(--navy)" : "var(--steel)" }}>{bad ? "↓ below" : l != null ? L(l) : "—"}</div>
               </div>
             );
           })}
@@ -683,7 +695,8 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 // closing dip, gain/loss, sales value) and cross-checked against the pump meters.
 // The manager reviews, explains any variance with a comment code, and closes.
 // Nothing here is re-keyed — it's a review-and-sign screen, not a data-entry one.
-function DayEndForm({ choice, site, date, isManager }) {
+function DayEndForm({ choice, site, date, shift, isManager }) {
+  const [deShift, setDeShift] = useState(shift === "day" ? "day" : "night");   // two day-ends per day
   const [de, setDe] = useState(null);
   const [codes, setCodes] = useState({ cash: [], tank: [] });
   const [tankComment, setTankComment] = useState("");
@@ -693,71 +706,122 @@ function DayEndForm({ choice, site, date, isManager }) {
   const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
 
   const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([computeDayend(choice.fixed ? undefined : site, date), getDayendComments().catch(() => ({ cash: [], tank: [] }))])
-      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); })
+    setLoading(true); setDone(null); setMsg(null);
+    Promise.all([computeDayend(choice.fixed ? undefined : site, date, deShift), getDayendComments().catch(() => ({ cash: [], tank: [] }))])
+      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); setCashCount(""); })
       .catch((e) => setMsg({ tone: "red", title: "Couldn't load the day-end", body: e.message }))
       .finally(() => setLoading(false));
-  }, [site, date, choice.fixed]);
+  }, [site, date, deShift, choice.fixed]);
   useEffect(() => { load(); }, [load]);
 
   const dollars = (v) => "$" + Math.round(Number(v) || 0).toLocaleString();
   const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-  const tankVar = de ? de.products.some((p) => Math.abs(p.gainLoss) > Math.max(20, p.salesQty * 0.01)) : false;
+  const tankVar = de ? de.products.some((p) => p.band && p.band !== "ok") : false;   // outside tolerance
   const diff = cashCount !== "" && de ? +(num(cashCount) - de.cash.expected).toFixed(2) : null;
   const cashVar = diff != null && Math.abs(diff) > 5;
+  // A shift can't be reconciled without an end dip, or with no opening on record. These
+  // block the close (opening is auto-picked, never editable — the fix is to capture the
+  // missing dip, not to type a number).
+  const blocked = de ? (de.closingMissing || de.opening?.missing) : false;
 
   const close = async () => {
     setBusy(true); setMsg(null);
     try {
-      const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date,
+      const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date, shift: deShift,
         tankComment: tankComment || null, cashComment: cashComment || null, cashCount: cashCount || null, deviceTime: new Date().toISOString() });
-      setDone({ title: `Day-end closed · ${r.ref}`, body: r.reconciled ? "Pump meters reconcile with declared sales ✓" : "Closed with a variance — see the flagged lines." });
+      setDone({ title: `${deShift === "day" ? "Day" : "Night"} shift-end closed · ${r.ref}`, body: r.reconciled ? "All products within wetstock tolerance ✓" : "Closed with a variance — flagged for review." });
     } catch (err) { setMsg({ tone: "red", title: "Not closed", body: err.message }); }
     finally { setBusy(false); }
   };
-
-  if (loading) return <Panel><div style={{ color: "var(--steel)" }}>Assembling the day-end…</div></Panel>;
-  if (msg && !de) return <Note tone="red" title={msg.title}>{msg.body}</Note>;
-  if (done) return <SubmittedCard title={done.title} body={done.body} canEdit={false} onEdit={() => {}} />;
-  if (!de || !de.products.length) return <Note tone="amber" title="Nothing to close yet">No stock, sales or pump readings are in for {fmtD(date)} yet. The day-end assembles itself as the shift submissions land.</Note>;
+  const bandColor = (b) => (b === "investigate" ? "var(--red, #C0392B)" : b === "watch" ? "var(--amber)" : "var(--steel)");
 
   const th = { fontSize: 10.5, color: "var(--steel)", fontWeight: 600, textAlign: "right", padding: "0 4px" };
   const td = { fontSize: 12.5, textAlign: "right", padding: "5px 4px", fontVariantNumeric: "tabular-nums" };
-  return (
-    <Panel>
-      {de.closed && <Note tone="ok" title={`Already closed${de.closedAt ? ` · ${fmtD(date)}` : ""}`}>This day-end is closed. A re-close by a manager supersedes it (the latest close wins; both are kept).</Note>}
+  // Two day-ends per day — one per shift. The toggle stays visible in every state.
+  const shiftTog = (
+    <div style={{ marginBottom: 12 }}>
+      <Segmented options={[["day", "Day · 06:00–18:00"], ["night", "Night · 18:00–06:00"]]} value={deShift} onChange={setDeShift} />
+    </div>
+  );
+  let body;
+  if (loading) body = <div style={{ color: "var(--steel)" }}>Assembling the {deShift === "day" ? "day" : "night"}-shift day-end…</div>;
+  else if (msg && !de) body = <Note tone="red" title={msg.title}>{msg.body}</Note>;
+  else if (done) body = <SubmittedCard title={done.title} body={done.body} canEdit={false} onEdit={() => { load(); }} />;
+  else if (!de || !de.products.length) body = <Note tone="amber" title="Nothing to close for this shift yet">No {deShift === "day" ? "day" : "night"}-shift stock or pump readings are in for {fmtD(date)} yet. It assembles itself as the shift submissions land — or switch shifts above.</Note>;
+  else body = (
+    <>
+      {de.closed && <Note tone="ok" title={`Already closed · ${deShift === "day" ? "day" : "night"} shift`}>This shift&apos;s day-end is closed. A re-close by a manager supersedes it (the latest close wins; both are kept).</Note>}
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <div style={{ fontSize: 11.5, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "7px 10px", marginBottom: 12 }}>
-        Assembled from this site&apos;s own submissions for <b>{fmtD(date)}</b> — opening is yesterday&apos;s close, then deliveries, sales and today&apos;s dip. Review, explain any variance, and close.
+        Wetstock reconciliation — <b>{deShift === "day" ? "day" : "night"} shift, {fmtD(date)}</b>. Opening is the previous shift&apos;s close. Sales come from the <b>{de.salesBasis === "pump" ? "pump meters" : "declared figures"}</b>; the tank dips are the physical check. <b>Variance = sales − tank used</b> per product.
       </div>
+      {de.deliveries && de.deliveries.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8 }}>
+          Deliveries counted this shift: {de.deliveries.map((d) => `${d.count}× ${d.product} ${L(d.qty)} L`).join(" · ")}. <span style={{ color: "var(--amber)" }}>Check these belong to this shift — a back-dated re-push will distort the variance.</span>
+        </div>
+      )}
+      {/* Opening/closing provenance — the opening is ALWAYS the prior shift's carried close.
+          Surface any gap honestly rather than presenting a stale figure as clean. */}
+      {de.closingMissing && (
+        <Note tone="red" title="No closing dip for this shift yet">
+          No {deShift === "day" ? "day" : "night"}-shift closing tank dip has been captured for {fmtD(date)}. The opening carries from {de.opening?.from ? `${fmtD(de.opening.from.date)} ${de.opening.from.shift}` : "the prior close"}, but there's no end reading to reconcile against — capture the closing dip, then close. The figures below are incomplete.
+        </Note>
+      )}
+      {!de.closingMissing && de.opening?.missing && (
+        <Note tone="red" title="No opening dip on record">
+          There's no earlier tank dip to carry in as this shift's opening. Capture an opening dip before this shift-end can be reconciled.
+        </Note>
+      )}
+      {!de.closingMissing && de.opening?.stale && (
+        <Note tone="amber" title="Opening is from an earlier shift — dips are missing in between">
+          This shift&apos;s opening carries from <b>{fmtD(de.opening.from.date)} {de.opening.from.shift} shift</b>, but the immediately-preceding shift(s) since then were never dipped. The opening is correct as the last recorded close, but the variance spans that gap and can&apos;t be trusted. Capture the missing shift dips for accurate figures.
+        </Note>
+      )}
 
-      <span className="lbl">Fuel movement &amp; gain/loss (litres)</span>
+      <span className="lbl">Wetstock variance (litres)</span>
       <div style={{ overflowX: "auto", marginBottom: 4 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 460 }}>
           <thead><tr>
-            <th style={{ ...th, textAlign: "left" }}>PRODUCT</th><th style={th}>OPEN</th><th style={th}>DELIV</th><th style={th}>SALES</th><th style={th}>CLOSE</th><th style={th}>GAIN/LOSS</th>{de.hasPumps && <th style={th}>PUMP</th>}<th style={th}>VALUE</th>
+            <th style={{ ...th, textAlign: "left" }}>PRODUCT</th><th style={th}>OPEN</th><th style={th}>DELIV</th><th style={th}>CLOSE</th><th style={th}>TANK USED</th><th style={th}>SALES{de.salesBasis === "pump" ? " (PUMP)" : ""}</th><th style={th}>VARIANCE</th><th style={th}>VALUE</th>
           </tr></thead>
           <tbody>
-            {de.products.map((p, i) => {
-              const loss = Math.abs(p.gainLoss) > Math.max(20, p.salesQty * 0.01);
-              const pumpOff = p.pumpVsSales != null && Math.abs(p.pumpVsSales) > Math.max(20, p.salesQty * 0.01);
-              return (
-                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
-                  <td style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 4px" }}>{p.product}</td>
-                  <td style={td}>{L(p.startDip)}</td><td style={td}>{p.deliveries ? L(p.deliveries) : "—"}</td>
-                  <td style={td}>{L(p.salesQty)}</td><td style={td}>{L(p.endDip)}</td>
-                  <td style={{ ...td, fontWeight: 700, color: loss ? "var(--red, #C0392B)" : p.gainLoss > 0 ? "#2E7D33" : "var(--navy)" }}>{p.gainLoss > 0 ? "▲" : p.gainLoss < 0 ? "▼" : ""}{L(Math.abs(p.gainLoss))}</td>
-                  {de.hasPumps && <td style={{ ...td, color: pumpOff ? "var(--amber)" : "var(--steel)" }}>{p.pumpLitres != null ? L(p.pumpLitres) : "—"}</td>}
-                  <td style={td}>{p.salesValue ? dollars(p.salesValue) : "—"}</td>
-                </tr>
-              );
-            })}
+            {de.products.map((p, i) => (
+              <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                <td style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 4px" }}>{p.product}</td>
+                <td style={td}>{L(p.startDip)}</td><td style={td}>{p.deliveries ? L(p.deliveries) : "—"}</td>
+                <td style={td}>{L(p.endDip)}</td>
+                <td style={td}>{L(p.tankThroughput)}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{L(p.salesQty)}</td>
+                <td style={{ ...td, fontWeight: 700, color: bandColor(p.band) }}>
+                  {p.variance > 0 ? "▲" : p.variance < 0 ? "▼" : ""}{L(Math.abs(p.variance))}
+                  <span style={{ fontSize: 10, fontWeight: 600 }}> {p.variancePct}%</span>
+                </td>
+                <td style={td}>{p.salesValue ? dollars(p.salesValue) : "—"}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      {de.hasPumps && <div style={{ fontSize: 11, color: de.reconciled ? "#2E7D33" : "var(--amber)", marginBottom: 8 }}>{de.reconciled ? "✓ Pump meters agree with declared sales." : "⚠ Pump meters differ from declared sales — the PUMP column shows what the meters moved."}</div>}
-      {!de.hasPumps && <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 8 }}>No pump meters configured for this site — gain/loss is tank-based only.</div>}
+      {/* wetstock verdict + tolerance legend */}
+      <div style={{ fontSize: 11, color: de.reconciled ? "#2E7D33" : de.worstBand === "investigate" ? "var(--red, #C0392B)" : "var(--amber)", marginBottom: 4 }}>
+        {de.reconciled ? "✓ All products within tolerance (≤0.5% of throughput)."
+          : de.worstBand === "investigate" ? "⚠ Variance over 1% — investigate (possible leak, theft or meter drift)."
+          : "⚠ Variance 0.5–1% — watch; investigate if it persists."}
+      </div>
+      {/* cumulative trend — the real leak signal, noise-free over days */}
+      {de.products.some((p) => p.cumDays > 1) && (
+        <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 4 }}>
+          Cumulative variance (last ~30 closed days): {de.products.filter((p) => p.cumDays > 1).map((p) => `${p.product} ${p.cumVariance > 0 ? "+" : ""}${L(p.cumVariance)}`).join(" · ")} — a steady drift here is the real loss signal.
+        </div>
+      )}
+      {/* secondary check: pump meters vs cashier-declared litres */}
+      {de.hasPumps && de.products.some((p) => p.pumpVsDeclared != null && Math.abs(p.pumpVsDeclared) > Math.max(20, p.declaredSales * 0.02)) && (
+        <Note tone="amber" title="Pump meters differ from declared sales">
+          {de.products.filter((p) => p.pumpVsDeclared != null && Math.abs(p.pumpVsDeclared) > Math.max(20, p.declaredSales * 0.02))
+            .map((p) => `${p.product}: pumps ${L(p.pumpSales)} vs declared ${L(p.declaredSales)} (${p.pumpVsDeclared > 0 ? "+" : ""}${L(p.pumpVsDeclared)})`).join(" · ")}. The pump figure is used; the gap is a sales-recording check.
+        </Note>
+      )}
+      {!de.hasPumps && <div style={{ fontSize: 11, color: "var(--amber)", marginBottom: 8 }}>No pump meters configured — variance is measured against the cashier&apos;s declared sales (less reliable). Configure pumps for true wetstock control.</div>}
 
       <div style={{ borderTop: "1px solid var(--line)", marginTop: 10, paddingTop: 10 }}>
         <span className="lbl">Cash &amp; tenders</span>
@@ -769,17 +833,14 @@ function DayEndForm({ choice, site, date, isManager }) {
           <div style={{ flex: "1 1 45%" }}>Petty cash <b>{dollars(de.cash.pettyCash)}</b></div>
           <div style={{ flex: "1 1 45%" }}>Non-fuel (lubes) <b>{dollars(de.cash.nonfuelCash)}</b></div>
         </div>
-        <Field label="Counted cash (optional — leave blank if the cash office counts it)">
-          <Num value={cashCount} onChange={setCashCount} placeholder="$ physically counted" />
-        </Field>
-        {diff != null && <div style={{ fontSize: 12, marginBottom: 6, color: cashVar ? "var(--amber)" : "#2E7D33" }}>Difference vs expected: <b>{diff >= 0 ? "+" : ""}{dollars(diff)}</b>{cashVar ? " — needs a reason" : " ✓"}</div>}
+        <div style={{ fontSize: 11, color: "var(--steel)" }}>Cash counting and reconciliation is handled by the cash office — nothing to enter here.</div>
       </div>
 
       {(tankVar || cashVar) && <Note tone="amber" title="Explain the variance">
-        {tankVar ? "There's a tank gain/loss to explain. " : ""}{cashVar ? "There's a cash difference to explain. " : ""}Pick the reason(s) below before closing.
+        {tankVar ? "A wetstock variance is outside tolerance (>0.5%) and must be explained before closing. " : ""}{cashVar ? "There's a cash difference to explain. " : ""}Pick the reason(s) below.
       </Note>}
-      {(tankVar || de.products.some((p) => p.gainLoss !== 0)) && (
-        <Field label="Tank gain/loss reason">
+      {(tankVar || de.products.some((p) => p.variance !== 0)) && (
+        <Field label="Tank variance reason (leak / theft / temperature / meter / calibration)">
           <select value={tankComment} onChange={(e) => setTankComment(e.target.value)} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
             <option value="">— select a reason —</option>
             {codes.tank.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -795,10 +856,11 @@ function DayEndForm({ choice, site, date, isManager }) {
         </Field>
       )}
 
-      <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 12 }} onClick={close}>{busy ? "Closing…" : de.closed ? "Re-close day-end (correction)" : "Close day-end"}</button>
+      <button className="pill" disabled={busy || blocked} style={{ width: "100%", marginTop: 12, opacity: blocked ? 0.5 : 1 }} onClick={close}>{busy ? "Closing…" : blocked ? "Capture the missing dip to close" : de.closed ? `Re-close ${deShift === "day" ? "day" : "night"} shift-end (correction)` : `Close ${deShift === "day" ? "day" : "night"} shift-end`}</button>
       <button type="button" className="pill-ghost" style={{ width: "100%", marginTop: 8 }} onClick={load}>Refresh figures</button>
-    </Panel>
+    </>
   );
+  return <Panel>{shiftTog}{body}</Panel>;
 }
 
 // Midday dip — a stock-only snapshot (litres in tank) between the day and night
@@ -4996,6 +5058,21 @@ export function ReleaseNotesModal() {
     </div>, document.body);
 }
 
+// Reusable site quick-find for any table screen. Filters the caller's rows.
+function SiteSearch({ q, setQ, shown, total, placeholder = "Search sites…" }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+      <div style={{ position: "relative", flex: 1, maxWidth: 340 }}>
+        <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--steel)", fontSize: 13 }}>🔍</span>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder}
+          style={{ width: "100%", padding: "9px 30px 9px 30px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+        {q && <button type="button" onClick={() => setQ("")} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "var(--steel)", cursor: "pointer", fontSize: 16 }}>×</button>}
+      </div>
+      {q && <span style={{ fontSize: 12, color: "var(--steel)" }}>{shown} of {total}</span>}
+    </div>
+  );
+}
+
 // Submission-compliance scorecard — who reports stock/price/sales, worst first.
 function ComplianceBoard({ rows }) {
   const days = rows[0]?.days || 14;
@@ -5010,6 +5087,8 @@ function ComplianceBoard({ rows }) {
       ))}</span>
     : <span style={{ color: "var(--ok)" }}>✓</span>;
   const overdueCount = rows.filter((r) => r.outstanding && r.outstanding.length).length;
+  const [q, setQ] = useState("");
+  const shown = q.trim() ? rows.filter((r) => String(r.site || "").toLowerCase().includes(q.trim().toLowerCase())) : rows;
   return (
     <>
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
@@ -5018,11 +5097,12 @@ function ComplianceBoard({ rows }) {
         <CountPill n={rows.filter((r) => r.pct === 0).length} label="Never reported" tone={rows.some((r) => r.pct === 0) ? "red" : "ok"} />
         <CountPill n={rows.filter((r) => r.pct < 50).length} label="Under 50%" tone="amber" />
       </div>
+      <SiteSearch q={q} setQ={setQ} shown={shown.length} total={rows.length} />
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Overdue now</Th><Th right>Score</Th><Th right>Sales</Th><Th right>Stock</Th><Th right>Price</Th></tr></thead>
-            <tbody>{rows.map((r) => (
+            <tbody>{shown.map((r) => (
               <tr key={r.site} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (r.outstanding && r.outstanding.length) ? "#FDECEA" : r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
                 <Td>{(r.outstanding && r.outstanding.length) ? "⚠ " : ""}{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                 <Td right>{overdueChips(r)}</Td>

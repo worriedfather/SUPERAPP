@@ -19,7 +19,11 @@ BEGIN;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'da_app') THEN
-        CREATE ROLE da_app LOGIN PASSWORD 'Bp8RcWi4QhxKXRccajG8d992ZEFe';
+        -- Password intentionally NOT committed (audit: ledger #4 / infra #3). EDIT the literal below
+        -- to a strong secret before running this on a FRESH database, then keep it only in the app's
+        -- .env (DATABASE_URL). The live role already exists with its rotated password, so this branch
+        -- does not run in normal ops. NEVER commit a real credential here.
+        CREATE ROLE da_app LOGIN PASSWORD 'CHANGE_ME_SET_A_STRONG_PASSWORD_BEFORE_RUNNING';
     END IF;
 END $$;
 
