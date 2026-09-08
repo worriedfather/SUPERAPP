@@ -513,7 +513,10 @@ export function SiteSubmit({ me }) {
   // Submit the shift that JUST ENDED, not the one currently running: mornings (06:00–~11:00) file
   // the NIGHT that ended at 06:00; evenings (18:00–~22:00) file the DAY that ended at 18:00. Using
   // shiftNow() here auto-picked the running shift (already-submitted → wrongly showed "already in").
-  const shift = naturalShift(); const date = todayISO();
+  // Both default to the daily case but are editable so a site can go back and CORRECT an earlier
+  // day a manager has UNLOCKED (the lock/unlock still gates the actual resubmit — see assertUnlocked).
+  const [date, setDate] = useState(todayISO());
+  const [shift, setShift] = useState(naturalShift());
   // managers (not tied to a site) can pick ANY site and edit a locked submission
   const isManager = !!me && ["manager", "operations_manager", "executive", "admin"].includes(me.kind);
 
@@ -544,9 +547,20 @@ export function SiteSubmit({ me }) {
       {!choice.fixed && <SitePicker choice={choice} value={site} onChange={setSite} />}
       {activeSite && (
         <>
-          <div className="card" style={{ padding: "11px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div><span className="lbl" style={{ marginBottom: 1 }}>Shift (auto)</span><div className="disp" style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{shiftLabel(shift)}</div></div>
-            <div style={{ textAlign: "right" }}><span className="lbl" style={{ marginBottom: 1 }}>Date</span><div className="mono" style={{ fontSize: 13 }}>{fmtD(date)}</div></div>
+          <div className="card" style={{ padding: "11px 14px", marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 160px" }}>
+                <span className="lbl" style={{ marginBottom: 4, display: "block" }}>Shift</span>
+                <Segmented options={[["night", "Night"], ["day", "Day"]]} value={shift} onChange={setShift} />
+              </div>
+              <div style={{ flex: "0 1 160px" }}>
+                <span className="lbl" style={{ marginBottom: 4, display: "block" }}>Trading day</span>
+                <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value || todayISO())}
+                  style={{ width: "100%", padding: "9px 10px", border: "1px solid var(--line)", borderRadius: 10, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }} />
+              </div>
+            </div>
+            {which === "cash" && <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 8 }}>Cash is for the trading day that ended — this targets <b>{fmtD(cashDate)}</b>.</div>}
+            {date !== todayISO() && <div style={{ fontSize: 11.5, color: "#B8860B", marginTop: 6, lineHeight: 1.45 }}>Correcting an earlier day — a locked submission only reopens if a manager has approved an unlock for it.</div>}
           </div>
           <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Shift-End"]]} value={which} onChange={setWhich} />
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
