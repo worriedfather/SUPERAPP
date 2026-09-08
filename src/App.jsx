@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS,
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
-import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice } from "./api";
+import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice, requestPhotoUrl } from "./api";
 import { SiteSubmit, SubmissionReview, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
@@ -14,6 +14,22 @@ import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } f
 import { internalKm } from "./mileage.js";
 import { Picker } from "./Picker.jsx";
 
+// Odometer evidence in the approval card. Pending requests carry the photo inline (r.photo); for
+// historical (approved/redeemed) requests it's fetched on demand — /api/state no longer inlines it.
+function OdoEvidence({ r }) {
+  const [url, setUrl] = useState(r.photo || null);
+  const [tried, setTried] = useState(!!r.photo || !r.hasPhoto);
+  useEffect(() => {
+    if (r.photo) { setUrl(r.photo); setTried(true); return; }
+    if (!r.hasPhoto || !r.id) { setUrl(null); setTried(true); return; }
+    let live = true, made = null;
+    requestPhotoUrl(r.id).then((u) => { if (live) { made = u; setUrl(u); setTried(true); } }).catch(() => { if (live) setTried(true); });
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [r.id, r.photo, r.hasPhoto]);
+  if (url) return <img src={url} alt="Odometer" style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 14, border: "1px solid var(--line)", display: "block", margin: "0 auto 12px" }} />;
+  if (!tried) return <div className="card" style={{ padding: 16, color: "var(--steel)", fontSize: 13, marginBottom: 12 }}>Loading photo…</div>;
+  return <div className="card" style={{ padding: 16, color: "var(--steel)", fontSize: 13, marginBottom: 12 }}>No photo was attached to this request.</div>;
+}
 
 /* -------- consumption split between town work and open road -------- */
 const zoneOf = (n) => {
@@ -592,9 +608,9 @@ const ROLE_TABS = {
               ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
+  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["submit", "Site submit"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
   supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
@@ -2254,9 +2270,7 @@ function ApprovalCard({ r, onApprove, onDecline, gkey, onBack, readOnly = false 
     );
     if (k === "evidence") return (
       <>
-        {r.photo
-          ? <img src={r.photo} alt="Odometer" style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 14, border: "1px solid var(--line)", display: "block", margin: "0 auto 12px" }} />
-          : <div className="card" style={{ padding: 16, color: "var(--steel)", fontSize: 13, marginBottom: 12 }}>No photo was attached to this request.</div>}
+        <OdoEvidence r={r} />
         {r.ocrMismatch && <Flag tone="red" title="Doesn’t match the typed reading"><span className="mono">read {L(r.ocr)} · typed {L(r.odo)} · {L(r.ocrGap)} km apart</span></Flag>}
         {!r.ocrMismatch && r.ocrState === "read" && <Flag tone="ok" title="Photo matches the typed reading"><span className="mono">read {L(r.ocr)} · typed {L(r.odo)} km</span></Flag>}
         {r.ocrState === "nodigits" && <Flag tone="amber" title="Odometer couldn’t be read from the photo">Check the picture by eye.</Flag>}

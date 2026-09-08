@@ -390,6 +390,8 @@ export const getCashCarried = () => call("/api/cash/carried");
 export const getCashUnaccounted = (days = 30, from = null, to = null) => call(`/api/cash/unaccounted?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const requestUnlock = (b) => call("/api/unlock/request", { method: "POST", body: b });
 export const getSubmissionReview = (site, date) => call(`/api/submissions/review?date=${encodeURIComponent(date)}${site ? `&site=${encodeURIComponent(site)}` : ""}`);
+// Auditor range export — every submission from..to (one site, or all sites for managers/execs when site is blank).
+export const getSubmissionExport = (site, from, to) => call(`/api/submissions/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${site ? `&site=${encodeURIComponent(site)}` : ""}`);
 export const getUnlockRequests = () => call("/api/unlock/requests");
 export const decideUnlock = (id, outcome, note) => call(`/api/unlock/${id}/decide`, { method: "POST", body: { outcome, note } });
 export const getCashflow = (days = 30) => call(`/api/cashflow?days=${days}`);
@@ -403,6 +405,13 @@ export const closeDay = (b) => call("/api/cash/dayclose", { method: "POST", body
 // (revoke it when done). Returns null if the deposit has no slip.
 export const depositSlipUrl = async (seq) => {
   const res = await fetch(getServer() + `/api/cash/deposit/${seq}/photo`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+};
+// Odometer photo is no longer inlined in the bootstrap for non-pending requests — fetch it on
+// demand (auth header → blob → object URL). Returns null if there's no photo. Revoke when done.
+export const requestPhotoUrl = async (id) => {
+  const res = await fetch(getServer() + `/api/request/${encodeURIComponent(id)}/photo`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (!res.ok) return null;
   return URL.createObjectURL(await res.blob());
 };

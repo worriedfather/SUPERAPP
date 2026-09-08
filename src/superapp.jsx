@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
@@ -372,6 +372,9 @@ export function SubmissionReview({ me }) {
   const [site, setSite] = useState(siteBound ? me.site : "");
   const [date, setDate] = useState(todayISO());
   const [d, setD] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  const [rangeFrom, setRangeFrom] = useState(() => new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10));
+  const [rangeTo, setRangeTo] = useState(todayISO());
+  const [rbusy, setRbusy] = useState(false);
   const activeSite = siteBound ? me.site : site;
   const load = useCallback(() => {
     if (!activeSite) { setD(null); return; }
@@ -435,6 +438,20 @@ export function SubmissionReview({ me }) {
       rows.map((s) => [d.date, d.site, s.label, s.ref || "", s.by || "", s.at || "",
         s.submitted ? (s.locked ? "submitted (locked)" : "submitted (unlocked)") : "not submitted", flat(s.figures)]));
   };
+  // Auditor range export — from..to, one site or (managers, site blank) every site.
+  const exportRange = async () => {
+    setRbusy(true); setMsg(null);
+    try {
+      const r = await getSubmissionExport(siteBound ? undefined : (site || ""), rangeFrom, rangeTo);
+      const rr = r.rows || [];
+      if (!rr.length) { setMsg({ tone: "amber", title: "Nothing to export", body: "No submissions in that range for the selected scope." }); return; }
+      downloadCsv(`DA_submissions_${(siteBound ? me.site : (site || "all-sites")).replace(/\s+/g, "_")}_${rangeFrom}_to_${rangeTo}.csv`,
+        ["Date", "Site", "Submission", "Reference", "Submitted by", "Submitted at", "Details"],
+        rr.map((s) => [s.date, s.site, s.label, s.ref || "", s.by || "", s.at || "", flat(s.figures)]));
+      setMsg({ tone: "ok", title: `Exported ${rr.length} submissions`, body: `${rangeFrom} → ${rangeTo}${r.allSites ? " · all sites" : ""}.` });
+    } catch (e) { setMsg({ tone: "red", title: "Export failed", body: e.message }); }
+    finally { setRbusy(false); }
+  };
   return (
     <Wrap>
       <SectionHead title="Submission review" sub="Pick a site and day to see what was submitted — and request an unlock to correct." />
@@ -445,6 +462,15 @@ export function SubmissionReview({ me }) {
           <div style={{ flex: "1 1 150px" }}><Field label="Trading day"><input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} style={{ width: "100%" }} /></Field></div>
           <button className="pill-ghost" style={{ height: 40 }} onClick={load}>Refresh</button>
         </div>
+      </Panel>
+      <Panel>
+        <div className="lbl" style={{ marginBottom: 8 }}>Audit export · date range{!siteBound && !site ? " · all sites" : ""}</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 140px" }}><Field label="From"><input type="date" value={rangeFrom} max={rangeTo} onChange={(e) => setRangeFrom(e.target.value)} style={{ width: "100%" }} /></Field></div>
+          <div style={{ flex: "1 1 140px" }}><Field label="To"><input type="date" value={rangeTo} max={todayISO()} onChange={(e) => setRangeTo(e.target.value)} style={{ width: "100%" }} /></Field></div>
+          <button className="pill-ghost" style={{ height: 40 }} disabled={rbusy} onClick={exportRange}>{rbusy ? "Exporting…" : "Export CSV"}</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Up to 92 days.{!siteBound ? " Leave the site blank above to export every site." : ""}</div>
       </Panel>
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       {err && <Note tone="red" title="Couldn't load">{err}</Note>}
@@ -4968,9 +4994,24 @@ function ApprovalDetail({ r, dt }) {
       <Line k="Requested at" v={dt(r.at)} />
       {r.decidedAt && <Line k="Decided at" v={dt(r.decidedAt)} />}
       {r.takenLitres != null && <Line k="Redeemed" v={L(r.takenLitres) + " L" + (r.takenAt ? " · " + r.takenAt : "")} />}
-      {r.photo && <div style={{ marginTop: 12 }}><div className="lbl" style={{ marginBottom: 6 }}>Odometer photo</div><img src={r.photo} alt="odometer" style={{ width: "100%", borderRadius: 10, border: "1px solid var(--line)" }} /></div>}
+      <OdometerPhoto r={r} />
     </>
   );
+}
+
+// Odometer photo: pending requests carry it inline (r.photo); for everything else we lazy-load it
+// on demand from /api/request/:id/photo (it's no longer inlined in the bootstrap — see state.js).
+function OdometerPhoto({ r }) {
+  const [url, setUrl] = useState(r.photo || null);
+  useEffect(() => {
+    if (r.photo) { setUrl(r.photo); return; }
+    if (!r.hasPhoto || !r.id) { setUrl(null); return; }
+    let live = true, made = null;
+    requestPhotoUrl(r.id).then((u) => { if (live) { made = u; setUrl(u); } }).catch(() => {});
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [r.id, r.photo, r.hasPhoto]);
+  if (!url) return null;
+  return <div style={{ marginTop: 12 }}><div className="lbl" style={{ marginBottom: 6 }}>Odometer photo</div><img src={url} alt="odometer" style={{ width: "100%", borderRadius: 10, border: "1px solid var(--line)" }} /></div>;
 }
 
 /* ============================================================ *
@@ -5188,6 +5229,11 @@ export function ReleaseNotesModal() {
 }
 
 // Reusable site quick-find for any table screen. Filters the caller's rows.
+// shared site-name filter for the search boxes — case-insensitive substring, empty = all
+function siteMatch(name, q) {
+  const t = String(q || "").trim().toLowerCase();
+  return !t || String(name || "").toLowerCase().includes(t);
+}
 function SiteSearch({ q, setQ, shown, total, placeholder = "Search sites…" }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -5440,6 +5486,8 @@ function StockBoard({ d, onSite }) {
   const s = d.stock[shift]; const total = d.sites.length;
   const submitted = Object.keys(s).length;
   const t = d.stock.totals[shift];
+  const [q, setQ] = useState("");
+  const shownSites = d.sites.slice().sort((a, b) => a.name.localeCompare(b.name)).filter((x) => siteMatch(x.name, q));
   return (
     <>
       <Segmented options={[["day", "Day shift"], ["night", "Night shift"]]} value={shift} onChange={setShift} />
@@ -5448,11 +5496,12 @@ function StockBoard({ d, onSite }) {
       </div>
       {d.stock.lowStock?.length > 0 && <Note tone="red" title={`${d.stock.lowStock.length} low on stock (< 5,000 L)`}>{d.stock.lowStock.join(" · ")}</Note>}
       <MissingList names={d.stock.missing[shift]} />
+      <SiteSearch q={q} setQ={setQ} shown={shownSites.length} total={total} />
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
             <Th>Site</Th><Th right>Blend</Th><Th right>Diesel</Th></tr></thead>
-          <tbody>{d.sites.slice().sort((a, b) => a.name.localeCompare(b.name)).map((site) => { const v = s[site.id]; return (
+          <tbody>{shownSites.map((site) => { const v = s[site.id]; return (
             <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: v ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
               <Td>{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
               <Td right style={{ color: v && v.low ? "var(--red)" : undefined }}>{v ? L(v.blend) : "—"}</Td>
@@ -5486,6 +5535,13 @@ function SalesBoard({ d, onSite }) {
   const t = isTotal
     ? { blendSales: d.sales.totals.day.blendSales + d.sales.totals.night.blendSales, dieselSales: d.sales.totals.day.dieselSales + d.sales.totals.night.dieselSales }
     : d.sales.totals[shift];
+  const [q, setQ] = useState("");
+  const shownSites = d.sites.slice().sort((a, b) => {
+    const va = s[a.id], vb = s[b.id];
+    const ta = va ? (Number(va.blendSales) || 0) + (Number(va.dieselSales) || 0) : -1;
+    const tb = vb ? (Number(vb.blendSales) || 0) + (Number(vb.dieselSales) || 0) : -1;
+    return tb - ta;   // biggest sales volume first
+  }).filter((x) => siteMatch(x.name, q));
   return (
     <>
       <Segmented options={[["day", "Day"], ["night", "Night"], ["total", "Day + Night"]]} value={shift} onChange={setShift} />
@@ -5496,16 +5552,12 @@ function SalesBoard({ d, onSite }) {
       {d.hasDayEnd
         ? <Note tone="ok" title="Final — from the day-end report">The authoritative whole-day figure is the day-end report. The shift numbers here are the sites' indicative submissions; the variance below is each submission netted against the final.</Note>
         : <Note tone="blue" title="Indicative so far">These are the sites' shift submissions. The final, authoritative day total comes from the day-end report (usually in next morning).</Note>}
+      <SiteSearch q={q} setQ={setQ} shown={shownSites.length} total={total} />
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
             <Th>Site</Th><Th right>Blend sold</Th><Th right>Diesel sold</Th></tr></thead>
-          <tbody>{d.sites.slice().sort((a, b) => {
-            const va = s[a.id], vb = s[b.id];
-            const ta = va ? (Number(va.blendSales) || 0) + (Number(va.dieselSales) || 0) : -1;
-            const tb = vb ? (Number(vb.blendSales) || 0) + (Number(vb.dieselSales) || 0) : -1;
-            return tb - ta;   // biggest sales volume first
-          }).map((site) => { const v = s[site.id]; return (
+          <tbody>{shownSites.map((site) => { const v = s[site.id]; return (
             <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: v ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
               <Td>{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
               <Td right>{v ? L(v.blendSales) : "—"}</Td><Td right>{v ? L(v.dieselSales) : "—"}</Td></tr>
@@ -5522,18 +5574,22 @@ function SalesBoard({ d, onSite }) {
 }
 
 function PriceBoard({ d, onSite }) {
+  const [q, setQ] = useState("");
+  const nameOf = (id) => (d.sites.find((s) => String(s.id) === String(id)) || { name: id }).name;
   const entries = Object.entries(d.price.bySite);
+  const shownEntries = entries.filter(([id]) => siteMatch(nameOf(id), q));
   return (
     <>
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
         <CountPill n={entries.length} total={d.sites.length} label="Surveys in" tone={entries.length >= d.sites.length ? "ok" : "amber"} />
       </div>
       <MissingList names={d.price.missing} />
+      <SiteSearch q={q} setQ={setQ} shown={shownEntries.length} total={entries.length} />
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th>Fuel</Th><Th right>DA</Th><Th right>Mkt avg</Th><Th right>Δ vs mkt</Th><Th right>Comp</Th></tr></thead>
-            <tbody>{entries.map(([id, p]) => {
+            <tbody>{shownEntries.map(([id, p]) => {
               const site = d.sites.find((s) => String(s.id) === String(id)) || { id, name: id };
               const fuels = ["Blend", "Diesel"].filter((f) => p.analysis[f] && p.analysis[f].da != null);
               if (!fuels.length) return null;
