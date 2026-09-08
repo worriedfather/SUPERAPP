@@ -533,7 +533,12 @@ export function SiteSubmit({ me }) {
   // opens as its locked card (with the entry's reference number), not a fresh
   // form inviting a redo. An approved unlock lifts it for one resubmission.
   const [subStatus, setSubStatus] = useState(null);
-  const cashDate = (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })();
+  // Daily flow: cash handled TODAY is for the trading day that ended (yesterday). But when a site is
+  // CORRECTING an earlier day (date < today, via the picker), the picked day IS the cash trading day —
+  // don't shift it back another day, or the unlock (keyed to the cash day) won't match.
+  const cashDate = date === todayISO()
+    ? (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })()
+    : date;
   const refreshStatus = useCallback(() => {
     if (!activeSite) { setSubStatus(null); return; }
     getSubmissionStatus({ site: choice.fixed ? undefined : activeSite, date, shift, cashDate }).then(setSubStatus).catch(() => setSubStatus(null));
@@ -559,7 +564,7 @@ export function SiteSubmit({ me }) {
                   style={{ width: "100%", padding: "9px 10px", border: "1px solid var(--line)", borderRadius: 10, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }} />
               </div>
             </div>
-            {which === "cash" && <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 8 }}>Cash is for the trading day that ended — this targets <b>{fmtD(cashDate)}</b>.</div>}
+            {which === "cash" && date === todayISO() && <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 8 }}>Cash is for the trading day that ended — this targets <b>{fmtD(cashDate)}</b>.</div>}
             {date !== todayISO() && <div style={{ fontSize: 11.5, color: "#B8860B", marginTop: 6, lineHeight: 1.45 }}>Correcting an earlier day — a locked submission only reopens if a manager has approved an unlock for it.</div>}
           </div>
           <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Shift-End"]]} value={which} onChange={setWhich} />
@@ -1211,7 +1216,12 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   // over/split yesterday's takings (verified: submissions match the PREVIOUS day's
   // FileMaker expected to the dollar). Stamping "today" put every submission one day
   // late and broke the expected-vs-submitted join on the inflows/recon screens.
-  const cashDate = (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })();
+  // Daily flow: cash handled TODAY is for the trading day that ended (yesterday). But when a site is
+  // CORRECTING an earlier day (date < today, via the picker), the picked day IS the cash trading day —
+  // don't shift it back another day, or the unlock (keyed to the cash day) won't match.
+  const cashDate = date === todayISO()
+    ? (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })()
+    : date;
 
   // Pull the expected cash the moment the site / date / shift settles.
   useEffect(() => {
