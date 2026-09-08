@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { signIn, signInGoogle } from "./api";
 import { bioStatus, bioEnabled, bioUser, bioEnable, bioGet } from "./biometric";
 import { isNative } from "./device";
-import { APP_VERSION, GOOGLE_CLIENT_ID } from "./config";
+import { APP_VERSION, GOOGLE_CLIENT_ID, APK_URL } from "./config";
 
 /* PIN sign-in — branded to the DA fuel-card palette (navy + lime).
    Optional biometric (fingerprint/face) sign-in: after a PIN login the app offers
@@ -150,9 +150,24 @@ export default function Login({ onSignedIn }) {
             <input className="lgin" value={pin} onChange={(e) => setPin(e.target.value)} type="password" inputMode="numeric" autoComplete="current-password" placeholder="••••" style={input} />
           </label>
 
-          {err && (
+          {err && (/DA OPS app/i.test(String(err)) ? (
+            // Driver tried to sign in from the browser. Don't show a scary red error — explain what to
+            // do (open the app they almost certainly already have) with a one-tap install fallback.
+            <div style={{ background: "#F0F7EA", border: `1.5px solid ${C.lime}`, borderRadius: 12, padding: "14px 15px", marginBottom: 16 }}>
+              <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 15, fontWeight: 700, letterSpacing: ".03em", color: C.navy, marginBottom: 6 }}>Drivers: open the DA OPS app</div>
+              <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.55, marginBottom: 12 }}>
+                You’re on the website. Drivers can only sign in from the <b>DA OPS app</b> on their phone. Tap the green <b>DA OPS</b> icon on your home screen and sign in there — it’ll open straight away.
+              </div>
+              <a href={APK_URL} style={{ display: "block", textAlign: "center", padding: 13, fontSize: 14.5, fontWeight: 700, borderRadius: 11, background: C.blue, color: "#fff", textDecoration: "none", fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                Don’t have the app? Install it
+              </a>
+              <div style={{ fontSize: 11.5, color: C.steel, lineHeight: 1.5, marginTop: 9, textAlign: "center" }}>
+                New phone? After installing, sign in from the app and your manager approves the device.
+              </div>
+            </div>
+          ) : (
             <div style={{ background: "#FDECEA", border: `1px solid ${C.red}`, borderRadius: 11, padding: "10px 12px", marginBottom: 16, fontSize: 13, color: C.red }}>{err}</div>
-          )}
+          ))}
 
           {bio.native && !bioAvail && !bioEnabled() && bio.reason && (
             <div style={{ fontSize: 11.5, color: C.steel, marginBottom: 14, lineHeight: 1.5, textAlign: "center" }}>
