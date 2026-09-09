@@ -5218,15 +5218,11 @@ function FeedbackTriage() {
 }
 
 // What's-new modal — shown once after an app update (per build, via localStorage).
-const RELEASE_NOTES = {
-  116: [
-    "Deliveries: the supervisor confirms offload, then a 1-hour settling countdown runs before the dip.",
-    "Cash: the form shows the provisional figure vs the official target.",
-    "Cash office: confirm site deposits and close each day (banking reconciliation).",
-    "New insights: Cash bridge, a cash & fuel digest, and a Radar of tripwires.",
-    "Notifications: tapping one always lands on the right screen.",
-  ],
-};
+// Release-notes popup DISABLED. The only entry (build 116) kept re-showing to every user who hadn't
+// dismissed it, and on small screens the "Got it" button fell below the fold behind the update banner
+// → an undismissable "What's new" overlay that looked broken. Empty = the modal silently marks the
+// build seen and never appears. To re-enable for a future release, add a { <build>: ["…"] } entry.
+const RELEASE_NOTES = {};
 export function ReleaseNotesModal() {
   const [notes, setNotes] = useState(null);
   useEffect(() => {
@@ -5243,7 +5239,7 @@ export function ReleaseNotesModal() {
   if (!notes) return null;
   return createPortal(
     <div onClick={dismiss} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 500, display: "grid", placeItems: "center", padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} className="card" style={{ maxWidth: 420, width: "100%", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} className="card" style={{ maxWidth: 420, width: "100%", padding: 20, maxHeight: "85vh", overflowY: "auto" }}>
         <div className="disp" style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>What's new</div>
         <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 12 }}>DA OPS v{APP_VERSION}</div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.5 }}>{notes.map((n, i) => <li key={i} style={{ marginBottom: 6 }}>{n}</li>)}</ul>
