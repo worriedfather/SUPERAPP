@@ -1588,13 +1588,13 @@ function FuelContextBanner({ ctx }) {
         <div style={{ marginBottom: 7, color: "var(--steel)" }}>The trip route hasn't changed since the last request.</div>
       )}
       <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>
-        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> ({ctx.capPct || 150}%)</>}
+        {ctx.recommended != null && <>Route needs <b style={{ color: "var(--navy)" }}>{L(ctx.recommended)} L</b> · cap <b style={{ color: "var(--navy)" }}>{L(ctx.cap)} L</b> ({ctx.capPct || 200}%)</>}
         {review
           ? (ctx.alreadyAllocatedBefore > 0 && <> · earlier fills {L(ctx.alreadyAllocatedBefore)} L · this request {ctx.thisRequest ? L(ctx.thisRequest.litres) : "—"} L</>)
           : (<> · already allocated {L(ctx.alreadyAllocated)} L · <b style={{ color: "var(--navy)" }}>{L(ctx.headroom)} L</b> headroom</>)}
       </div>
       {!review && ctx.headroom != null && ctx.headroom <= 0 && (
-        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the {ctx.capPct || 150}% cap — no more fuel can be added unless logistics grow the route.</div>
+        <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the {ctx.capPct || 200}% cap — no more fuel can be added unless logistics grow the route.</div>
       )}
       {!review && seq > 1 && ctx.headroom > 0 && ctx.suggested != null && (
         <div style={{ marginTop: 6, fontWeight: 700, color: "#8A5A00" }}>Suggested top-up: {L(ctx.suggested)} L</div>
@@ -1628,9 +1628,9 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
   const [ask, setAsk] = useState(init.mode === "general" ? String(init.calcLitres || "") : "");
   const [reason, setReason] = useState(init.mode === "general" ? (init.reason || "") : "");
   // A FLEET driver can raise a GENERAL run (no scheduled trip — yard move / short errand),
-  // capped at 20 L. Off by default; a delivery is still trip-based.
+  // capped at 30 L. Off by default; a delivery is still trip-based.
   const [general, setGeneral] = useState(false);
-  const FLEET_GEN_CAP = 20;
+  const FLEET_GEN_CAP = 30;
   const [sent, setSent] = useState(null);
   const [sendErr, setSendErr] = useState(null);
   const [sending, setSending] = useState(false);
@@ -1838,7 +1838,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     );
     if (k === "vehicle") return isFleet ? (
       <>
-        {/* Delivery (trip-based) vs a General run (no trip, max 20 L — yard move / short errand) */}
+        {/* Delivery (trip-based) vs a General run (no trip, max 30 L — yard move / short errand) */}
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <button type="button" onClick={() => { setGeneral(false); }} className="disp" style={{ flex: 1, padding: "9px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: `1.5px solid ${!general ? "var(--blue)" : "var(--line)"}`, background: !general ? "#E7ECFF" : "#fff", color: !general ? "var(--blue)" : "var(--steel)" }}>Delivery trip</button>
           <button type="button" onClick={() => { setGeneral(true); setTripNo(""); setDrops([]); setEnd(""); }} className="disp" style={{ flex: 1, padding: "9px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: `1.5px solid ${general ? "var(--blue)" : "var(--line)"}`, background: general ? "#E7ECFF" : "#fff", color: general ? "var(--blue)" : "var(--steel)" }}>General run · max {FLEET_GEN_CAP} L</button>
@@ -1973,7 +1973,7 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     if (k === "usage") return (
       <>
         {general && <div style={{ marginBottom: 10, background: "#EEF2FF", border: "1px solid #C9D4F5", borderRadius: 10, padding: "9px 11px", fontSize: 12.5, color: "var(--navy)" }}>General fleet run — capped at <b>{FLEET_GEN_CAP} L</b>. For anything larger, use a scheduled delivery trip.</div>}
-        <Field label={general ? `Litres you are asking for (max ${FLEET_GEN_CAP})` : "Litres you are asking for"}><input inputMode="numeric" value={ask} onChange={(e) => setAsk(e.target.value.replace(/[^\d.]/g, ""))} placeholder={general ? `e.g. 20` : "e.g. 40"} style={{ borderColor: general && parseFloat(ask) > FLEET_GEN_CAP ? "var(--red)" : undefined }} /></Field>
+        <Field label={general ? `Litres you are asking for (max ${FLEET_GEN_CAP})` : "Litres you are asking for"}><input inputMode="numeric" value={ask} onChange={(e) => setAsk(e.target.value.replace(/[^\d.]/g, ""))} placeholder={general ? `e.g. 30` : "e.g. 40"} style={{ borderColor: general && parseFloat(ask) > FLEET_GEN_CAP ? "var(--red)" : undefined }} /></Field>
         {general && parseFloat(ask) > FLEET_GEN_CAP && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: -8, marginBottom: 10 }}>A general run is capped at {FLEET_GEN_CAP} L. Reduce it, or raise a delivery trip instead.</div>}
         <Field label="What it is for"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={general ? "e.g. yard shunting, move to workshop" : "e.g. generator, yard shunting"} style={{ fontFamily: "Barlow" }} /></Field>
         <div style={{ marginTop: 8 }}><PumpHead caption="Requested" litres={parseFloat(ask) || null} /></div>
