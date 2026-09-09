@@ -6811,7 +6811,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
   const startEdit = (t) => {
     setMsg(null); setEditing(t.tripNo); setTab("new");
     setF({ warehouse: t.warehouse, product: t.product, tripDate: t.date || todayISO(), driverCard: t.driverCard || "", truckName: t.truck || "", truckReg: t.truckReg || "", trailer: t.trailer || "", endPoint: t.endPoint || "" });
-    setDrops((t.drops && t.drops.length ? t.drops : [{ site: "", qty: "" }]).map((d) => ({ site: d.site, qty: String(d.qty) })));
+    setDrops((t.drops && t.drops.length ? t.drops : [{ site: "", qty: "" }]).map((d) => ({ site: d.site, qty: String(d.qty), collect: d.collect || undefined })));
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const doCancel = async (t) => {
@@ -6827,23 +6827,24 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const dropTotal = drops.reduce((a, d) => a + (Number(d.qty) || 0), 0);
+  const dropTotal = drops.filter((d) => !d.collect).reduce((a, d) => a + (Number(d.qty) || 0), 0);   // pickups don't count toward the load
   const whStock = bal?.warehouses.find((w) => w.name === f.warehouse)?.products?.[f.product] ?? null;
   const overStock = whStock != null && dropTotal > whStock;
   const setDrop = (i, k, v) => setDrops((ds) => ds.map((d, j) => (j === i ? { ...d, [k]: v } : d)));
-  const valid = f.driverCard && drops.some((d) => d.site && Number(d.qty) > 0) && !overStock && String(f.endPoint || "").trim() && dropTotal >= 5000 && dropTotal <= 50000;
+  const valid = f.driverCard && drops.some((d) => d.site && Number(d.qty) > 0 && !d.collect) && !overStock && String(f.endPoint || "").trim() && dropTotal >= 5000 && dropTotal <= 50000;
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
     if (!f.driverCard) return setMsg({ tone: "amber", title: "Almost there", body: "Pick the driver for this trip." });
-    if (!drops.some((d) => d.site && Number(d.qty) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Add at least one drop site with litres." });
+    if (!drops.some((d) => d.site && Number(d.qty) > 0 && !d.collect)) return setMsg({ tone: "amber", title: "Almost there", body: "Add at least one drop site with litres." });
     if (dropTotal < 5000) return setMsg({ tone: "amber", title: "Load too small", body: `The load is ${L(dropTotal)} L — a trip must carry at least 5,000 L.` });
     if (dropTotal > 50000) return setMsg({ tone: "amber", title: "Load too large", body: `The load is ${L(dropTotal)} L — a truck carries at most 50,000 L.` });
     if (!String(f.endPoint || "").trim()) return setMsg({ tone: "amber", title: "End point required", body: "Set where the truck returns to. Logistics maps the full trip so the driver only collects and delivers." });
     if (overStock) return setMsg({ tone: "amber", title: "Not enough stock", body: `The drops (${L(dropTotal)} L) exceed ${f.warehouse} ${f.product} available (${L(whStock)} L).` });
     setBusy(true);
     try {
-      const clean = drops.filter((d) => d.site && Number(d.qty) > 0).map((d) => ({ site: d.site, qty: Number(d.qty) }));
+      const clean = drops.filter((d) => d.site && (Number(d.qty) > 0 || d.collect))
+        .map((d) => d.collect ? { site: d.site, qty: Number(d.qty) || 0, collect: true } : { site: d.site, qty: Number(d.qty) });
       const payload = { ...f, qty: dropTotal, drops: clean, deviceTime: new Date().toISOString() };
       if (editing) {
         await editTrip(editing, payload);
@@ -6901,15 +6902,20 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
           {f.product === "Ethanol" && <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8, lineHeight: 1.45, background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>Ethanol is a blending feedstock — it's collected here and delivered to a <b>depot</b> (Msasa/Feruka) for blending, not to retail sites. Delivering fuel to sites? Schedule a <b>separate trip</b> from Msasa or Feruka with Blend/Diesel — the site picker appears there.</div>}
           {drops.map((d, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
-                options={f.product === "Ethanol"
-                  ? ["Msasa", "Feruka", "Chisumbanje"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
-                  : sites.map((s) => ({ value: s.name, label: s.pool ? `${s.name} · staging pool` : s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>
-              <input style={{ flex: 1 }} inputMode="decimal" placeholder="litres" value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
-              {drops.length > 1 && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
+              {d.collect
+                ? <div style={{ flex: 2, minWidth: 0 }}><div style={{ padding: "9px 11px", borderRadius: 10, background: "#EEF3FF", border: "1px solid #C7D2F0", fontSize: 13, fontWeight: 700, color: "var(--navy)" }}>🛢️ {d.site} · pickup</div></div>
+                : <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
+                  options={f.product === "Ethanol"
+                    ? ["Msasa", "Feruka", "Chisumbanje"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
+                    : sites.map((s) => ({ value: s.name, label: s.pool ? `${s.name} · staging pool` : s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>}
+              <input style={{ flex: 1 }} inputMode="decimal" placeholder={d.collect ? "ethanol L (opt)" : "litres"} value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
+              {(drops.length > 1 || d.collect) && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
             </div>
           ))}
-          <button type="button" className="pill-ghost" style={{ width: "100%", marginBottom: 12 }} onClick={() => setDrops((ds) => [...ds, { site: "", qty: "" }])}>+ Add drop</button>
+          <button type="button" className="pill-ghost" style={{ width: "100%", marginBottom: 6 }} onClick={() => setDrops((ds) => [...ds, { site: "", qty: "" }])}>+ Add drop</button>
+          {f.product !== "Ethanol" && !drops.some((d) => d.collect) && (
+            <button type="button" className="pill-ghost" style={{ width: "100%", marginBottom: 6 }} onClick={() => setDrops((ds) => [...ds, { site: "Chisumbanje", qty: "", collect: true }])}>+ Add collection stop — Chisumbanje (ethanol pickup)</button>)}
+          {drops.some((d) => d.collect) && <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 12, lineHeight: 1.45, background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>The pickup stop is added to the route so the trip's <b>fuel covers it</b>, but it needs <b>no delivery note</b> and doesn't count toward the delivered load.</div>}
           <div className="mono" style={{ fontSize: 13, textAlign: "right", marginBottom: 10, color: "var(--navy)" }}>Load total: <b>{L(dropTotal)} L</b></div>
           {/* full trip mapping: where the truck ends up (returns to park) */}
           <Field label="Ends at — where the truck returns to">
