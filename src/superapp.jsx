@@ -11,7 +11,7 @@ import {
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
-  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
+  getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getDayendComments, computeDayend, closeDayend,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
   getLubeProducts, postLubeSale, getLubeSales,
@@ -656,7 +656,9 @@ function LockedCard({ lock, what, isManager, onReopen, unlock }) {
 // internal aliases for Blend/ULP). Use sortTanks / byProduct wherever tanks or
 // products are rendered so nothing slips back to Diesel-first.
 const PROD_RANK = { Blend: 0, Petrol: 0, Diesel: 1, ULP: 2, Unleaded: 2 };
-const byProduct = (a, b) => ((PROD_RANK[a?.product] ?? 9) - (PROD_RANK[b?.product] ?? 9)) || String(a?.label || "").localeCompare(String(b?.label || ""));
+// label tiebreak uses NUMERIC collation so "Pump 7a" sorts before "Pump 10a"
+// (plain localeCompare puts 10 before 7) and "7a" before "7b".
+const byProduct = (a, b) => ((PROD_RANK[a?.product] ?? 9) - (PROD_RANK[b?.product] ?? 9)) || String(a?.label || "").localeCompare(String(b?.label || ""), undefined, { numeric: true });
 const sortTanks = (tanks) => [...(tanks || [])].sort(byProduct);
 
 // Stock (per tank) + sales in one submission. Tanks and the previous readings
@@ -5001,6 +5003,7 @@ function ApprovalDetail({ r, dt }) {
         <span style={{ fontWeight: 800, fontSize: 20, color: "var(--navy)" }}>{r.approvedLitres != null ? L(r.approvedLitres) : L(r.calcLitres)} L</span>
         <span style={{ alignSelf: "center", fontSize: 12, padding: "2px 9px", borderRadius: 100, background: r.status === "declined" ? "#FDECEA" : "#EBF6E7", color: r.status === "declined" ? "var(--red)" : "var(--ok)", fontWeight: 700, textTransform: "capitalize" }}>{r.status}</span>
       </div>
+      {r.tripNo ? <Line k="Trip" v={r.tripNo} /> : null}
       <Line k="Driver" v={r.driver} />
       <Line k="Truck / vehicle" v={truck} />
       {r.trailer ? <Line k="Trailer" v={r.trailer} /> : null}
@@ -5332,6 +5335,228 @@ function ComplianceBoard({ rows }) {
         </DetailSheet>
       )}
     </>
+  );
+}
+
+/* ============================================================ *
+ *  PUMP EDITOR — configure each site's pumps & nozzles (master data)
+ *  Admin / operations manager. Fixes the "app isn't showing all our
+ *  pumps" problem at source: set the real forecourt layout per site.
+ * ============================================================ */
+function pumpNo(label) { const m = String(label || "").match(/\d+/); return m ? +m[0] : 9999; }
+const PUMP_SORT = (a, b) => ((PROD_RANK[a.product] ?? 9) - (PROD_RANK[b.product] ?? 9)) || (pumpNo(a.label) - pumpNo(b.label)) || String(a.label).localeCompare(String(b.label), undefined, { numeric: true });
+
+export function PumpAdmin({ me }) {
+  const [sites, setSites] = useState([]);
+  const [site, setSite] = useState("");
+  const [q, setQ] = useState("");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => { getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, []);
+  const load = useCallback(() => {
+    if (!site) { setData(null); return; }
+    setLoading(true); setMsg(null);
+    getSitePumps(site).then((d) => setData({ ...d, pumps: (d.pumps || []).slice().sort(PUMP_SORT) }))
+      .catch((e) => setMsg({ tone: "red", title: "Couldn't load pumps", body: e.message })).finally(() => setLoading(false));
+  }, [site]);
+  useEffect(() => { load(); }, [load]);
+
+  // products this site actually stocks (from its tanks); fall back to the common two
+  const siteProducts = useMemo(() => {
+    const ps = [...new Set((data?.tanks || []).map((t) => t.product))].sort((a, b) => (PROD_RANK[a] ?? 9) - (PROD_RANK[b] ?? 9));
+    return ps.length ? ps : ["Blend", "Diesel"];
+  }, [data]);
+  const tanksFor = (product) => (data?.tanks || []).filter((t) => t.product === product);
+
+  const saveOne = async (body, okMsg) => {
+    setBusy(true); setMsg(null);
+    try { await saveSitePump({ site, ...body }); await load(); if (okMsg) setMsg({ tone: "ok", title: okMsg }); }
+    catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); }
+    finally { setBusy(false); }
+  };
+  const saveBulk = async (pumps, okMsg) => {
+    setBusy(true); setMsg(null);
+    try { const r = await saveSitePumpsBulk({ site, pumps }); await load(); setMsg({ tone: "ok", title: okMsg || `${r.saved} nozzles saved` }); }
+    catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  const active = (data?.pumps || []).filter((p) => p.status === "active");
+  const disabled = (data?.pumps || []).filter((p) => p.status !== "active");
+  const counts = siteProducts.map((pr) => [pr, active.filter((p) => p.product === pr).length]).filter(([, n]) => n > 0);
+  const shownSites = sites.filter((s) => siteMatch(s.name, q));
+
+  const sel = { padding: "7px 8px", borderRadius: 7, border: "1px solid var(--line)", fontSize: 12.5, background: "var(--card, #fff)" };
+
+  return (
+    <Wrap>
+      <div style={{ margin: "2px 2px 14px" }}>
+        <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Pumps &amp; nozzles</h2>
+        <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Set each site&apos;s real forecourt layout — this is what the shift-end &amp; pump readings use.</div>
+      </div>
+
+      <Panel>
+        <Field label="Site">
+          <SiteSearch q={q} setQ={setQ} shown={shownSites.length} total={sites.length} placeholder="Find a site…" />
+          <select value={site} onChange={(e) => setSite(e.target.value)} style={{ ...sel, width: "100%", padding: "10px" }}>
+            <option value="">— choose a site —</option>
+            {shownSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+
+        {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        {loading && <div style={{ color: "var(--steel)", padding: "8px 0" }}>Loading the layout…</div>}
+
+        {data && !loading && (
+          <>
+            {/* summary */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0 12px" }}>
+              {counts.length ? counts.map(([pr, n]) => <CountPill key={pr} n={n} label={`${pr} nozzles`} tone="ok" />)
+                : <CountPill n={0} label="No active pumps" tone="amber" />}
+              {disabled.length > 0 && <CountPill n={disabled.length} label="Disabled" tone="steel" />}
+            </div>
+
+            {/* tanks reference */}
+            {data.tanks?.length ? (
+              <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 12 }}>
+                Tanks at this site: {data.tanks.map((t) => `${t.label} (${t.product})`).join(" · ")}.
+              </div>
+            ) : (
+              <Note tone="amber" title="No tanks configured">Add the site&apos;s tanks first — a pump must draw from a tank. (Master data → tanks.)</Note>
+            )}
+
+            {/* quick add */}
+            {data.tanks?.length > 0 && <QuickAddNozzles products={siteProducts} tanksFor={tanksFor} onAdd={saveBulk} busy={busy} existing={data.pumps} />}
+
+            {/* current pumps, editable */}
+            {active.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <span className="lbl">Nozzles ({active.length})</span>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 420 }}>
+                    <thead><tr style={{ textAlign: "left", color: "var(--steel)", fontSize: 11 }}>
+                      <th style={{ padding: "4px 6px" }}>NOZZLE</th><th style={{ padding: "4px 6px" }}>PRODUCT</th><th style={{ padding: "4px 6px" }}>TANK</th><th></th></tr></thead>
+                    <tbody>
+                      {active.map((p) => (
+                        <tr key={p.label} style={{ borderTop: "1px solid var(--line)" }}>
+                          <td style={{ padding: "6px", fontWeight: 600, whiteSpace: "nowrap" }}>{p.label}</td>
+                          <td style={{ padding: "6px" }}>
+                            <select value={p.product} disabled={busy} style={sel} onChange={(e) => saveOne({ label: p.label, product: e.target.value, tank: tanksFor(e.target.value)[0]?.label || p.tank })}>
+                              {["Blend", "Diesel", "ULP", "Ethanol", "Petrol"].map((pr) => <option key={pr} value={pr}>{pr}</option>)}
+                            </select>
+                          </td>
+                          <td style={{ padding: "6px" }}>
+                            <select value={p.tank || ""} disabled={busy} style={sel} onChange={(e) => saveOne({ label: p.label, product: p.product, tank: e.target.value })}>
+                              <option value="">— no tank —</option>
+                              {tanksFor(p.product).map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
+                              {p.tank && !tanksFor(p.product).some((t) => t.label === p.tank) && <option value={p.tank}>{p.tank} (other)</option>}
+                            </select>
+                          </td>
+                          <td style={{ padding: "6px", textAlign: "right" }}>
+                            <button type="button" className="pill-ghost" disabled={busy} style={{ padding: "5px 10px", fontSize: 11.5 }}
+                              onClick={() => saveOne({ label: p.label, product: p.product, tank: p.tank, status: "disabled" }, `${p.label} disabled`)}>Disable</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* disabled — re-enable */}
+            {disabled.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <span className="lbl">Disabled ({disabled.length})</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {disabled.map((p) => (
+                    <button key={p.label} type="button" className="pill-ghost" disabled={busy} style={{ padding: "5px 10px", fontSize: 11.5 }}
+                      onClick={() => saveOne({ label: p.label, product: p.product, tank: p.tank, status: "active" }, `${p.label} re-enabled`)}>+ {p.label} ({p.product})</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* single add */}
+            {data.tanks?.length > 0 && <AddOneNozzle products={siteProducts} tanksFor={tanksFor} onAdd={saveOne} busy={busy} />}
+          </>
+        )}
+      </Panel>
+    </Wrap>
+  );
+}
+
+// Quick-add: generate a/b nozzle pairs across a pump-number range in one write.
+function QuickAddNozzles({ products, tanksFor, onAdd, busy, existing }) {
+  const [product, setProduct] = useState(products[0] || "Blend");
+  const [from, setFrom] = useState(1);
+  const [to, setTo] = useState(6);
+  const [pair, setPair] = useState(true);        // two nozzles (a+b) per pump
+  const [tank, setTank] = useState("");           // "" = auto-split across this product's tanks
+  useEffect(() => { setTank(""); }, [product]);
+  const tanks = tanksFor(product);
+  const sel = { padding: "7px 8px", borderRadius: 7, border: "1px solid var(--line)", fontSize: 12.5 };
+  const build = () => {
+    const f = Math.max(1, Math.min(999, Number(from) || 1)), t = Math.max(f, Math.min(999, Number(to) || f));
+    const out = [];
+    let idx = 0;
+    for (let n = f; n <= t; n++) {
+      const tk = tank || (tanks.length ? tanks[idx % tanks.length].label : "");
+      if (pair) { out.push({ label: `Pump ${n}a`, product, tank: tk, status: "active" }); out.push({ label: `Pump ${n}b`, product, tank: tk, status: "active" }); }
+      else out.push({ label: `Pump ${n}`, product, tank: tk, status: "active" });
+      idx++;
+    }
+    return out;
+  };
+  const preview = build();
+  const existingLabels = new Set((existing || []).map((p) => p.label));
+  const clashes = preview.filter((p) => existingLabels.has(p.label)).length;
+  return (
+    <div style={{ background: "var(--wash, #F4F6FA)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginTop: 6 }}>
+      <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 8 }}>Quick add nozzles</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Product<br /><select value={product} style={sel} onChange={(e) => setProduct(e.target.value)}>{products.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Pumps from<br /><input type="number" min="1" value={from} style={{ ...sel, width: 66 }} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>to<br /><input type="number" min="1" value={to} style={{ ...sel, width: 66 }} onChange={(e) => setTo(e.target.value)} /></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Nozzles<br />
+          <select value={pair ? "2" : "1"} style={sel} onChange={(e) => setPair(e.target.value === "2")}><option value="2">a + b (two)</option><option value="1">single</option></select></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Tank<br />
+          <select value={tank} style={sel} onChange={(e) => setTank(e.target.value)}>
+            <option value="">auto-split{tanks.length > 1 ? ` (${tanks.length} tanks)` : ""}</option>
+            {tanks.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
+          </select></label>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "9px 0 8px" }}>
+        Adds <b>{preview.length}</b> nozzle{preview.length !== 1 ? "s" : ""}: {preview.slice(0, 6).map((p) => p.label).join(", ")}{preview.length > 6 ? "…" : ""}
+        {clashes > 0 && <span style={{ color: "var(--amber)" }}> · {clashes} already exist and will be updated</span>}
+      </div>
+      <button type="button" className="pill" disabled={busy || !preview.length} style={{ padding: "8px 16px", fontSize: 13 }}
+        onClick={() => onAdd(build(), `${preview.length} ${product} nozzles saved`)}>{busy ? "Saving…" : `Add ${preview.length} nozzles`}</button>
+    </div>
+  );
+}
+
+// Single pump add — for odd forecourts that don't fit the a/b pattern.
+function AddOneNozzle({ products, tanksFor, onAdd, busy }) {
+  const [label, setLabel] = useState("");
+  const [product, setProduct] = useState(products[0] || "Blend");
+  const [tank, setTank] = useState("");
+  const tanks = tanksFor(product);
+  const sel = { padding: "8px", borderRadius: 7, border: "1px solid var(--line)", fontSize: 12.5 };
+  return (
+    <div style={{ marginTop: 16, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+      <span className="lbl">Add one nozzle</span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Label<br /><input value={label} placeholder="Pump 7a" style={{ ...sel, width: 110 }} onChange={(e) => setLabel(e.target.value)} /></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Product<br /><select value={product} style={sel} onChange={(e) => { setProduct(e.target.value); setTank(""); }}>{products.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Tank<br /><select value={tank} style={sel} onChange={(e) => setTank(e.target.value)}><option value="">— tank —</option>{tanks.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}</select></label>
+        <button type="button" className="pill" disabled={busy || !label.trim()} style={{ padding: "8px 14px", fontSize: 13 }}
+          onClick={() => onAdd({ label: label.trim(), product, tank: tank || tanks[0]?.label }, `${label.trim()} added`).then?.(() => setLabel(""))}>Add</button>
+      </div>
+    </div>
   );
 }
 
@@ -6806,6 +7031,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
   const [editing, setEditing] = useState(null);   // tripNo being edited, or null
   const [cancelling, setCancelling] = useState(null); // tripNo being cancelled
   const [tab, setTab] = useState(readOnly ? "review" : "new");   // "new" = schedule form · "review" = trip list
+  const [tripQ, setTripQ] = useState("");   // search the review list by trip #, site, driver or truck
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
   const resetForm = () => { setEditing(null); setF({ warehouse: "Msasa", product: "Diesel", tripDate: todayISO(), driverCard: "", truckName: "", truckReg: "", trailer: "", endPoint: "" }); setDrops([{ site: "", qty: "" }]); };
   const startEdit = (t) => {
@@ -6933,8 +7159,17 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div className="lbl" style={{ padding: "12px 14px 6px" }}>Scheduled &amp; in-progress trips</div>
-        {trips.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>No trips scheduled.{!readOnly && <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px", fontSize: 12 }} onClick={() => setTab("new")}>Schedule one</button>}</div> :
-          trips.map((t) => {
+        <div style={{ padding: "0 14px 10px", position: "relative" }}>
+          <input value={tripQ} onChange={(e) => setTripQ(e.target.value)} placeholder="Search trip #, site, driver or truck…"
+            style={{ width: "100%", padding: "9px 30px 9px 12px", borderRadius: 9, border: "1px solid var(--line)", fontSize: 13, boxSizing: "border-box" }} />
+          {tripQ && <button type="button" onClick={() => setTripQ("")} style={{ position: "absolute", right: 22, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "var(--steel)", cursor: "pointer", fontSize: 16 }}>×</button>}
+        </div>
+        {(() => {
+          const q = tripQ.trim().toLowerCase();
+          const shown = q ? trips.filter((t) => [t.tripNo, t.driver, t.truck, t.truckReg, t.trailer, t.warehouse, t.product, ...(Array.isArray(t.drops) ? t.drops.map((d) => d.site) : [])]
+            .filter(Boolean).some((v) => String(v).toLowerCase().includes(q))) : trips;
+          return shown.length === 0 ? <div style={{ padding: "0 14px 14px", color: "var(--steel)", fontSize: 13 }}>{trips.length === 0 ? <>No trips scheduled.{!readOnly && <button type="button" className="pill-ghost" style={{ marginLeft: 8, padding: "5px 12px", fontSize: 12 }} onClick={() => setTab("new")}>Schedule one</button>}</> : `No trips match "${tripQ}".`}</div> :
+          shown.map((t) => {
             const c = STAT[t.status] || STAT.scheduled;
             return (
               <div key={t.tripNo} style={{ padding: "11px 14px", borderTop: "1px solid var(--line)" }}>
@@ -6960,7 +7195,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
                 )}
               </div>
             );
-          })}
+          }); })()}
       </Panel>
       </>)}
     </Wrap>
