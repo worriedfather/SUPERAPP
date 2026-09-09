@@ -6902,6 +6902,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
           {f.trailer && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: -4, marginBottom: 10 }}>trailer {f.trailer}{f.truckName ? ` · horse ${f.truckName}` : ""} <span style={{ color: "#9AA6B8" }}>(from master data)</span></div>}
           {/* drops */}
           <div className="lbl" style={{ marginBottom: 6 }}>{f.product === "Ethanol" ? "Drops — destination depot & litres" : "Drops — site & litres"}</div>
+          {f.product === "Ethanol" && <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8, lineHeight: 1.45, background: "#F4F6FA", borderRadius: 8, padding: "8px 10px" }}>Ethanol is a blending feedstock — it's collected here and delivered to a <b>depot</b> (Msasa/Feruka) for blending, not to retail sites. Delivering fuel to sites? Schedule a <b>separate trip</b> from Msasa or Feruka with Blend/Diesel — the site picker appears there.</div>}
           {drops.map((d, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
               <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
