@@ -5373,13 +5373,13 @@ export function PumpAdmin({ me }) {
 
   const saveOne = async (body, okMsg) => {
     setBusy(true); setMsg(null);
-    try { await saveSitePump({ site, ...body }); await load(); if (okMsg) setMsg({ tone: "ok", title: okMsg }); }
+    try { await saveSitePump({ siteId: site, ...body }); await load(); if (okMsg) setMsg({ tone: "ok", title: okMsg }); }
     catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); }
     finally { setBusy(false); }
   };
   const saveBulk = async (pumps, okMsg) => {
     setBusy(true); setMsg(null);
-    try { const r = await saveSitePumpsBulk({ site, pumps }); await load(); setMsg({ tone: "ok", title: okMsg || `${r.saved} nozzles saved` }); }
+    try { const r = await saveSitePumpsBulk({ siteId: site, pumps }); await load(); setMsg({ tone: "ok", title: okMsg || `${r.saved} nozzles saved` }); }
     catch (e) { setMsg({ tone: "red", title: "Not saved", body: e.message }); }
     finally { setBusy(false); }
   };
@@ -7266,12 +7266,13 @@ function depotDetail(w, imports) {
 }
 
 export function WarehouseImports({ me }) {
-  const SUP = ["Opening balance", "Trafigura", "Kemexon", "Strauss", "Glencore", "Other"];
+  const SUP = ["Opening balance", "Trafigura", "Kemexon", "Strauss", "Glencore", "Green Fuel", "FECZ", "Other"];
   const [bal, setBal] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [drill, setDrill] = useState(null);
+  const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / order no
   const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", supplier: "Trafigura", importDate: todayISO(), quantity: "", priceExcl: "", duties: "", orderNo: "", petrolPrice: "", blendRatio: "0.2", ethanolPrice: "1.10" });
   const isBlend = f.product === "Blend";
   const blendPrice = (Number(f.petrolPrice) || 0) * (1 - (Number(f.blendRatio) || 0)) + (Number(f.ethanolPrice) || 0) * (Number(f.blendRatio) || 0);
@@ -7352,22 +7353,36 @@ export function WarehouseImports({ me }) {
         </form>
       </Panel>
       {/* recent imports */}
-      {bal && bal.recentImports.length > 0 && (
+      {bal && bal.recentImports.length > 0 && (() => {
+        const q = impQ.trim().toLowerCase();
+        const rows = q ? bal.recentImports.filter((r) => [r.supplier, r.warehouse, r.product, r.orderNo].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))) : bal.recentImports;
+        const totL = rows.reduce((a, r) => a + (Number(r.quantity) || 0), 0);
+        const totV = rows.reduce((a, r) => a + (Number(r.value) || 0), 0);
+        return (
         <Panel style={{ padding: 0, overflow: "hidden" }}>
-          <div className="lbl" style={{ padding: "12px 14px 6px" }}>Recent imports</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 14px 6px", gap: 8, flexWrap: "wrap" }}>
+            <div className="lbl">All fuel entries into warehouses</div>
+            <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{rows.length} {rows.length === 1 ? "entry" : "entries"} · {full(totL)} L{totV ? ` · $${compact(totV)}` : ""}</div>
+          </div>
+          <div style={{ padding: "0 14px 8px", position: "relative" }}>
+            <input value={impQ} onChange={(e) => setImpQ(e.target.value)} placeholder="Search supplier, depot, product or order no…"
+              style={{ width: "100%", padding: "8px 30px 8px 11px", borderRadius: 9, border: "1px solid var(--line)", fontSize: 13, boxSizing: "border-box" }} />
+            {impQ && <button type="button" onClick={() => setImpQ("")} style={{ position: "absolute", right: 22, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "var(--steel)", cursor: "pointer", fontSize: 16 }}>×</button>}
+          </div>
           <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th>Depot</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
-            <tbody>{bal.recentImports.map((r, i) => (
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th>Depot</Th><Th>Supplier</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
+            <tbody>{rows.length === 0 ? <tr><Td colSpan={6} style={{ color: "var(--steel)", padding: "12px 14px" }}>No entries match “{impQ}”.</Td></tr> : rows.map((r, i) => (
               <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r) })}
                 style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
-                <Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
+                <Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.supplier || "—"}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>
             ))}</tbody>
           </table>
           </div>
         </Panel>
-      )}
+        );
+      })()}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
   );
