@@ -295,6 +295,9 @@ export const getSiteConfig = (site, date, shift) => { const q = new URLSearchPar
 export const postSiteSubmit = (b) => call("/api/site-submit", { method: "POST", body: b });
 export const postSiteDip = (b) => call("/api/site-dip", { method: "POST", body: b });
 export const addSiteTank = (b) => call("/api/site-tank", { method: "POST", body: b });
+export const getSitePumps = (siteId) => call(`/api/site-pumps${siteId ? `?siteId=${encodeURIComponent(siteId)}` : ""}`);
+export const saveSitePump = (b) => call("/api/site-pump", { method: "POST", body: b });
+export const saveSitePumpsBulk = (b) => call("/api/site-pumps/bulk", { method: "POST", body: b });
 export const getDayendComments = () => call("/api/dayend/comments");
 export const computeDayend = (site, date, shift) => { const q = new URLSearchParams(); if (site) q.set("site", site); if (date) q.set("date", date); if (shift) q.set("shift", shift); return call(`/api/site-dayend/compute?${q.toString()}`); };
 export const closeDayend = (b) => call("/api/site-dayend/close", { method: "POST", body: b });

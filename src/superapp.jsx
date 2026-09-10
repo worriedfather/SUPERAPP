@@ -867,6 +867,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
   const [codes, setCodes] = useState({ cash: [], tank: [] });
   const [tankComment, setTankComment] = useState("");
   const [cashComment, setCashComment] = useState("");
+  const [note, setNote] = useState("");                // optional free-text detail alongside the reason code
   const [cashCount, setCashCount] = useState("");
   const [certified, setCertified] = useState(false);   // supervisor must certify before closing
   const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true);
@@ -875,7 +876,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
   const load = useCallback(() => {
     setLoading(true); setDone(null); setMsg(null);
     Promise.all([computeDayend(choice.fixed ? undefined : site, date, deShift), getDayendComments().catch(() => ({ cash: [], tank: [] }))])
-      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); setCashCount(""); setCertified(false); })
+      .then(([d, c]) => { setDe(d); setCodes(c); setTankComment(d?.tankComment || ""); setCashComment(d?.cashComment || ""); setNote(""); setCashCount(""); setCertified(false); })
       .catch((e) => setMsg({ tone: "red", title: "Couldn't load the day-end", body: e.message }))
       .finally(() => setLoading(false));
   }, [site, date, deShift, choice.fixed]);
@@ -895,7 +896,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
     setBusy(true); setMsg(null);
     try {
       const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date, shift: deShift,
-        tankComment: tankComment || null, cashComment: cashComment || null, cashCount: cashCount || null, certified: true, deviceTime: new Date().toISOString() });
+        tankComment: tankComment || null, cashComment: cashComment || null, note: note.trim() || null, cashCount: cashCount || null, certified: true, deviceTime: new Date().toISOString() });
       setDone({ title: `${deShift === "day" ? "Day" : "Night"} shift-end closed · ${r.ref}`, body: r.reconciled ? "All products within wetstock tolerance ✓" : "Closed with a variance — flagged for review." });
     } catch (err) { setMsg({ tone: "red", title: "Not closed", body: err.message }); }
     finally { setBusy(false); }
@@ -1022,6 +1023,14 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
             <option value="">— select a reason —</option>
             {codes.cash.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Field>
+      )}
+      {/* Optional detail in the manager's own words — the dropdown gives the reportable
+          category, this captures the specifics (e.g. "Tank 2 sender faulty, engineer booked"). */}
+      {(tankVar || cashVar || de.cash.pettyCash > 0) && (
+        <Field label="Add detail (optional)">
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Anything worth noting for whoever reviews this…"
+            style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, resize: "vertical", fontFamily: "inherit" }} />
         </Field>
       )}
 
