@@ -5879,7 +5879,7 @@ const vcf = (tempC, commodity) => {
 };
 
 export function DeliverySubmit({ me, initial, onLeave }) {
-  const emptyTank = { tank: "", product: "", openMm: "", openL: "", closeMm: "", closeL: "", temp: "" };
+  const emptyTank = { tank: "", product: "", openMm: "", openL: "", closeMm: "", closeL: "", temp: "", settleL: "" };   // settleL = litres SOLD from this tank while the fuel settled (pump totalizer)
   const [f, setF] = useState({ dnDate: todayISO(), tripNo: "", site: "", commodity: "Diesel", density: "", qtyLoaded: "", truckReg: "", truckName: "", trailer: "", note: "" });
   const [sites, setSites] = useState([]);
   const [trips, setTrips] = useState([]);
@@ -5929,7 +5929,12 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   const num = (x) => Number(x) || 0;
   const setTank = (i, k, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
   const setComp = (i, k, v) => setComps((cs) => cs.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
-  const deliveredOf = (t) => Math.max(0, num(t.closeL) - num(t.openL));
+  // Delivered into a tank = the dip RISE plus what the forecourt SOLD from it during the
+  // settling hour. The station keeps trading while the fuel settles, so the closing dip is
+  // net of those sales — leave them out and every delivery reads short.
+  const dipRiseOf = (t) => Math.max(0, num(t.closeL) - num(t.openL));
+  const deliveredOf = (t) => dipRiseOf(t) + num(t.settleL);
+  const settleTotal = tanks.reduce((a, t) => a + num(t.settleL), 0);
   const siteDip = bulkSite ? num(bulkQty) : tanks.reduce((a, t) => a + deliveredOf(t), 0);
   const truckDip = comps.reduce((a, c) => a + num(c.litres), 0);
   const qtyLoaded = num(f.qtyLoaded) || truckDip;
@@ -6131,7 +6136,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
               <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                   <span style={{ fontWeight: 700, fontSize: 13, color: "var(--navy)" }}>{t.tank}</span>
-                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)" }}>+{L(deliveredOf(t))} L</span>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)" }}>+{L(deliveredOf(t))} L{num(t.settleL) > 0 ? <span style={{ color: "var(--steel)", fontWeight: 400 }}> ({L(dipRiseOf(t))} dip + {L(num(t.settleL))} sold)</span> : ""}</span>
                 </div>
                 <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                   <input style={{ flex: 1 }} inputMode="decimal" value={t.openMm} onChange={(e) => setTank(i, "openMm", e.target.value.replace(/[^\d.]/g, ""))} placeholder="open mm" />
@@ -6142,8 +6147,14 @@ export function DeliverySubmit({ me, initial, onLeave }) {
                   <input style={{ flex: 1 }} inputMode="decimal" value={t.closeL} onChange={(e) => setTank(i, "closeL", e.target.value.replace(/[^\d.]/g, ""))} placeholder="close L" />
                   <input style={{ flex: "0 0 56px" }} inputMode="decimal" value={t.temp} onChange={(e) => setTank(i, "temp", e.target.value.replace(/[^\d.]/g, ""))} placeholder="°C" />
                 </div>
+                {/* the forecourt keeps selling while the fuel settles — those litres left the
+                    tank BEFORE the closing dip, so they're part of what was delivered */}
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                  <input style={{ flex: 1 }} inputMode="decimal" value={t.settleL} onChange={(e) => setTank(i, "settleL", e.target.value.replace(/[^\d.]/g, ""))} placeholder="sold during settling (L)" />
+                  <span style={{ fontSize: 11, color: "var(--steel)", flex: "0 0 auto" }}>pump totalizer, offload → dip</span>
+                </div>
               </div>))}
-          <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--navy)", margin: "2px 0 10px" }}>Delivered (site dip): <b>{L(siteDip)} L</b></div>
+          <div className="mono" style={{ fontSize: 12, textAlign: "right", color: "var(--navy)", margin: "2px 0 10px" }}>Delivered: <b>{L(siteDip)} L</b>{settleTotal > 0 ? <span style={{ color: "var(--steel)" }}> = {L(siteDip - settleTotal)} dip rise + {L(settleTotal)} sold while settling</span> : <span style={{ color: "var(--steel)" }}> (site dip)</span>}</div>
           {preview && (
             <Note tone={preview.totalPct > 0.3 ? "red" : "ok"} title={`Loss ${L(preview.total)} L · ${preview.totalPct}% (at 20 °C)`}>
               <div className="mono" style={{ fontSize: 12.5, lineHeight: 1.8 }}>
@@ -6225,12 +6236,13 @@ export function DeliveryApprovals({ me, initial, onLeave }) {
                   <div className="lbl" style={{ marginBottom: 4 }}>Tank dips</div>
                   <div style={{ overflowX: "auto" }}>
                     <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Tank</Th><Th right>Open</Th><Th right>Close</Th><Th right>Delivered</Th><Th right>°C</Th></tr></thead>
+                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Tank</Th><Th right>Open</Th><Th right>Close</Th><Th right>Sold settling</Th><Th right>Delivered</Th><Th right>°C</Th></tr></thead>
                       <tbody>{(d.siteTanks || []).map((t, i) => (
                         <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
                           <Td style={{ fontWeight: 600 }}>{t.tank}</Td>
                           <Td right style={{ color: "var(--steel)" }}>{t.openMm}mm / {L(t.openL)}L</Td>
                           <Td right style={{ color: "var(--steel)" }}>{t.closeMm}mm / {L(t.closeL)}L</Td>
+                          <Td right style={{ color: "var(--steel)" }}>{Number(t.settleL) > 0 ? L(t.settleL) + "L" : "—"}</Td>
                           <Td right style={{ fontWeight: 700, color: "var(--ok)" }}>{L(t.deliveredL)}L</Td>
                           <Td right style={{ color: "var(--steel)" }}>{t.temp || "—"}</Td>
                         </tr>
