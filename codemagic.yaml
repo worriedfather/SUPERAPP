@@ -18,6 +18,19 @@ workflows:
     name: DA OPS iOS – TestFlight
     instance_type: mac_mini_m2
     max_build_duration: 60
+    # AUTO-BUILD ON PUSH (2026-09-11). A codemagic.yaml workflow only builds on a git
+    # event if it declares one here — without this block every build had to be started
+    # by hand in the Codemagic UI, which is why "push → new TestFlight build" silently
+    # never happened. Now every push to main builds, uploads to TestFlight and (via
+    # beta_groups below) lands with the external testers automatically.
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+      cancel_previous_builds: true
     integrations:
       app_store_connect: DA_OPS_ASC
     environment:
