@@ -1117,7 +1117,7 @@ function App() {
     );
   }
 
-  const { drivers, horses, requests, cards } = state;
+  const { drivers, horses, requests, cards, horseOdo } = state;
 
   // Every mutation calls the API, then reloads the projection from the log.
   // a fuel request that names a scheduled trip STARTS the journey → GPS on now,
@@ -1199,7 +1199,7 @@ function App() {
         <NoticeBanner onOpen={(n) => { if (n?.data?.tab) setTab(n.data.tab); }} />
         {tab === "dhome" && <><DeliveriesDue onGo={goDeliver} /><DriverHome me={me} cards={cards} requests={requests} onRequest={() => { setPrefill(null); setTab("drequest"); }} onEdit={(req) => { setPrefill(req); setTab("drequest"); }} onDelivery={() => goDeliver("deliver", null)} onApprove={() => setTab("dapprove")} onTrip={(t) => { setPrefill({ id: t.tripNo, tripNo: t.tripNo, mode: "delivery" }); setTab("drequest"); }} /></>}
         {tab === "dcard" && <DriverCard me={me} cards={cards} requests={requests} />}
-        {(tab === "driver" || tab === "drequest") && <DriverMode key={prefill ? prefill.id : "new"} initial={prefill} me={me} drivers={drivers} horses={horses} onSubmit={submit} cards={cards} requests={requests} gkey={gkey} onSent={() => { setPrefill(null); if (me.kind === "driver") setTab("dhome"); }} />}
+        {(tab === "driver" || tab === "drequest") && <DriverMode key={prefill ? prefill.id : "new"} initial={prefill} me={me} drivers={drivers} horses={horses} onSubmit={submit} cards={cards} horseOdo={horseOdo} requests={requests} gkey={gkey} onSent={() => { setPrefill(null); if (me.kind === "driver") setTab("dhome"); }} />}
         {tab === "approver" && <ApproverMode drivers={drivers} requests={requests} cards={cards} onApprove={approve} onDecline={decline} gkey={gkey} focusRef={focus && focus.tab === "approver" ? focus.ref : null} onFocused={() => setFocus(null)} />}
         {tab === "cardsys" && <CardSystem requests={requests} />}
         {tab === "fleet" && <FleetEfficiency horses={horses} />}
@@ -1605,7 +1605,7 @@ function FuelContextBanner({ ctx }) {
   );
 }
 
-function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSent, initial }) {
+function DriverMode({ me, drivers, horses, onSubmit, cards, horseOdo, requests, gkey, onSent, initial }) {
   const locked = me && me.kind === "driver" ? me.card : null; // a driver is bound to their own card
   const init = initial || {};
   const initFleet = init.mode === "delivery";
@@ -1733,7 +1733,10 @@ function DriverMode({ me, drivers, horses, onSubmit, cards, requests, gkey, onSe
     }
   };
 
-  const lastOdo = card ? cards[card]?.lastOdo : null;
+  // Odometer baseline follows the TRUCK, not the driver's card (owner 2026-09-11): a fleet driver
+  // measures against the truck he's actually on — so switching trucks doesn't read "backward," and a
+  // truck with no history starts clean. Retail/general runs (no horse) keep the per-card baseline.
+  const lastOdo = horse ? ((horseOdo && horseOdo[horse] != null) ? horseOdo[horse] : null) : (card ? cards[card]?.lastOdo : null);
   const odoNum = parseFloat(odo);
   const odoInvalid = odo !== "" && !isFinite(odoNum);                                   // not a number → always blocked
   const odoBackward = odo !== "" && isFinite(odoNum) && lastOdo != null && odoNum <= lastOdo;  // lower than last recorded
