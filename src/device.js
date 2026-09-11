@@ -1,11 +1,23 @@
 import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { IOS_TESTFLIGHT_URL, PLAY_MARKET_URL } from "./config.js";
 
 export const isNative = () => Capacitor.isNativePlatform();
-// iOS updates come ONLY through TestFlight / the App Store — Apple forbids in-app
-// store links — so the force-update gate is Android-only. iOS relies on TestFlight.
 export const isIOS = () => { try { return Capacitor.getPlatform() === "ios"; } catch { return false; } };
+
+/* Send the user to UPDATE through the store the app came from — TestFlight on iPhone,
+   Google Play on Android — never the browser / APK (the app is on both stores now).
+   A custom scheme (itms-beta:// / market://) is handed to the OS by the WebView, which
+   opens the store APP on our listing while our WebView stays put; an https link would
+   navigate the app itself away (Android) or fail to hand off (iOS universal links don't
+   fire from inside an app). Web builds just reload to pick up the new bundle. */
+export const openStoreForUpdate = () => {
+  try {
+    if (!isNative()) { window.location.reload(); return; }
+    window.location.href = isIOS() ? IOS_TESTFLIGHT_URL : PLAY_MARKET_URL;
+  } catch { /* ignore */ }
+};
 
 // True in any packaged MOBILE app — the Capacitor build (Android) OR the iOS
 // WebView shell (which tags its user-agent "DAOPSMobile" and sets window

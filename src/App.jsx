@@ -10,7 +10,8 @@ import { currentUser, signedIn, signOut, getState, postRequest, postDecision, ad
 import { SiteSubmit, SubmissionReview, PumpAdmin, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
-import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, APK_URL, IOS_URL } from "./config.js";
+import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, PLAY_MARKET_URL, IOS_TESTFLIGHT_URL, IOS_TESTFLIGHT_JOIN } from "./config.js";
+import { openStoreForUpdate } from "./device.js";
 import { internalKm } from "./mileage.js";
 import { Picker } from "./Picker.jsx";
 
@@ -784,13 +785,13 @@ const BellButton = ({ count, onClick }) => (
    card) so it feels like part of the app; the only way forward is to update. */
 function UpdateGate() {
   const C = { navy: "#14213D", ink: "#1B2A4A", blue: "#2B3990", lime: "#6BC048", steel: "#5B6B84" };
-  // iOS can't install an APK — send iPhone users to the always-current web app.
+  // Updates go THROUGH THE STORES now: iPhone → TestFlight, Android → Google Play.
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  const link = isIOS ? IOS_URL : APK_URL;
-  const cta = isIOS ? "Open the latest version" : "Download update";
+  const link = isIOS ? IOS_TESTFLIGHT_URL : PLAY_MARKET_URL;
+  const cta = isIOS ? "Update in TestFlight" : "Update on Google Play";
   const help = isIOS
-    ? "Open DA OPS on the web to keep going. Tap Share → Add to Home Screen for the full-screen app."
-    : "Tap below to download it, then open the file to install.";
+    ? "Tap below to open TestFlight and install the latest build."
+    : "Tap below to open Google Play and install the latest version.";
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(165deg,#1F2E52 0%,#0F1A31 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       padding: "calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom))", fontFamily: "'Barlow',system-ui,sans-serif", color: "#EAF0FA" }}>
@@ -813,20 +814,17 @@ function UpdateGate() {
           </div>
           <button type="button"
             onClick={() => {
-              // Android: navigate the MAIN WebView to the APK — it's served as an
-              // attachment, so the native DownloadListener (MainActivity) hands it to
-              // Android's DownloadManager and the user installs from the notification.
-              // A WebView can't download via a plain <a>/new tab, which is why the old
-              // button did nothing. iOS/web: just open the link.
-              if (isIOS) window.open(link, "_blank", "noreferrer");
-              else window.location.href = link;
+              // A custom scheme (market:// / itms-beta://) is handed to the OS by the
+              // WebView, which opens the store APP on our listing — the WebView itself
+              // stays put. (An https link would navigate the app away instead.)
+              try { window.location.href = link; } catch { /* ignore */ }
             }}
             style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, border: "none", cursor: "pointer",
               fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em",
               background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>
             {cta}
           </button>
-          <div style={{ fontSize: 11, color: C.steel, marginTop: 12 }}>Not downloading? Open <b>fuel.dasuperapp.com/download/latest.apk</b> in Chrome.</div>
+          <div style={{ fontSize: 11, color: C.steel, marginTop: 12 }}>{isIOS ? <>Nothing opened? Install TestFlight, then open <b>{IOS_TESTFLIGHT_JOIN.replace("https://", "")}</b>.</> : <>Nothing opened? Search <b>DA OPS</b> on Google Play.</>}</div>
         </div>
         <div style={{ fontSize: 11, color: "#5E6F94", marginTop: 20 }}>This device: DA OPS v{APP_VERSION} (build {APP_BUILD})</div>
       </div>
@@ -1173,7 +1171,7 @@ function App() {
           background: "#22345C", color: "#fff", borderRadius: 12, padding: "10px 12px", boxShadow: "0 8px 30px rgba(0,0,0,.35)", display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 17, lineHeight: 1 }}>🔄</span>
           <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>A new version is available.</span>
-          <button onClick={() => { try { if (isNative()) window.location.href = APK_URL; else window.location.reload(); } catch { /* ignore */ } }}
+          <button onClick={openStoreForUpdate}
             style={{ border: "none", background: "#6BC048", color: "#08260F", fontWeight: 800, borderRadius: 8, padding: "7px 13px", fontSize: 13, cursor: "pointer" }}>
             {isNative() ? "Update" : "Refresh"}
           </button>
@@ -3001,9 +2999,9 @@ function DriverMobileOnlyGate({ onSignOut }) {
           <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
             Driver features — fuel requests, collection, the geo-lock and trip GPS — only work on the DA OPS phone app. Sign in on your Android phone to continue.
           </div>
-          <a href={APK_URL} style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, cursor: "pointer",
+          <a href={PLAY_URL} target="_blank" rel="noreferrer" style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, cursor: "pointer",
             fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em", textDecoration: "none",
-            background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>Download the Android app</a>
+            background: C.blue, color: "#fff", boxShadow: "0 10px 22px rgba(43,57,144,.30)" }}>Get DA OPS on Google Play</a>
           <button type="button" onClick={onSignOut} style={{ marginTop: 12, width: "100%", padding: 12, fontSize: 13, fontWeight: 700, borderRadius: 12, border: "1px solid #D5DCEA", background: "#fff", color: C.steel, cursor: "pointer" }}>Sign out</button>
         </div>
       </div>
