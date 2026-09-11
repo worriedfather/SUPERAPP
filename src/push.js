@@ -12,6 +12,7 @@
    deep-links to the relevant screen. */
 import { isNative } from "./device.js";
 import { registerPush } from "./api.js";
+import { Capacitor } from "@capacitor/core";
 
 let started = false;
 
@@ -33,7 +34,10 @@ export async function initPush(onOpenTab) {
     if (perm.receive === "prompt" || perm.receive === "prompt-with-rationale") perm = await PN.requestPermissions();
     if (perm.receive !== "granted") return;
 
-    PN.addListener("registration", (t) => { if (t?.value) registerPush(t.value, "android").catch(() => {}); });
+    // Register under the REAL platform ("ios" / "android") — was hardcoded "android", which
+    // mislabelled every iPhone token. (iOS still needs Firebase Messaging + APNs before FCM
+    // can deliver to it — see the ios-expo-app notes.)
+    PN.addListener("registration", (t) => { if (t?.value) registerPush(t.value, Capacitor.getPlatform()).catch(() => {}); });
     PN.addListener("registrationError", () => { /* Firebase not configured yet — silent */ });
     PN.addListener("pushNotificationActionPerformed", (a) => {
       const data = a?.notification?.data || {};
