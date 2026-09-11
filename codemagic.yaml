@@ -102,9 +102,20 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
-        # "DA Team" is an INTERNAL TestFlight group — internal groups receive each
-        # processed build AUTOMATICALLY, and Apple rejects an explicit assignment
-        # ("Cannot add internal group to a build"). So we do NOT list beta_groups:
-        # submit_to_testflight alone puts the build on TestFlight and internal testers
-        # get it. (If you later want EXTERNAL testers, make an external group in App
-        # Store Connect and add it here — that triggers a one-time Beta App Review.)
+        # DA's real testers live in an EXTERNAL TestFlight group (13 testers). External
+        # groups do NOT auto-distribute — each build must be ASSIGNED to the group — which
+        # is why iOS kept freezing on an old build (every new build sat at "Ready to Submit"
+        # until someone added it by hand). Listing the group here makes Codemagic assign
+        # every build automatically. No more manual "Add build to test".
+        #
+        # ⚠ PREREQUISITE (one-time): the name below must match an EXTERNAL group EXACTLY and
+        # be UNIQUE. App Store Connect currently also has an INTERNAL group named "DA Team";
+        # if both share a name Codemagic can grab the internal one and Apple errors
+        # ("Cannot add internal group to a build"). So rename the EXTERNAL group to
+        # "DA Testers" first: App Store Connect → TestFlight → (external) DA Team →
+        # the ••• / Settings → rename to "DA Testers". THEN run the workflow.
+        #
+        # First upload of a new version STRING triggers one Beta App Review; later builds
+        # (same "1.0", new build number) reach the group automatically.
+        beta_groups:
+          - "DA Testers"
