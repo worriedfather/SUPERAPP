@@ -335,6 +335,7 @@ export const getMyTrips = () => call("/api/trips/mine");
 // All-trips register (every status, calendar window) + reopen a closed trip
 export const getTripsRegister = (from, to) => call(`/api/trips/register${from && to ? `?from=${from}&to=${to}` : ""}`);
 export const reopenTrip = (tripNo, reason) => call(`/api/trip/${encodeURIComponent(tripNo)}/reopen`, { method: "POST", body: { reason } });
+export const getMapsConfig = () => call("/api/maps/config");   // tile providers in the order to try (server demotes failing ones)
 export const grantDropException = (tripNo, site, reason) => call(`/api/trip/${encodeURIComponent(tripNo)}/drop-exception`, { method: "POST", body: { site, reason } });
 export const getDeliveriesInProgress = () => call("/api/deliveries/in-progress");
 export const getDeviceRequests = () => call("/api/device-requests");

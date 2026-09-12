@@ -182,6 +182,8 @@ async function roadDistance(names, key) {
   const pts = names.map((n) => findStation(n)).filter(Boolean);
   if (pts.length < 2) return null;
   const [g, o] = await Promise.all([googleDist(pts), osmDist(pts)]);
+  // beacon a provider that gave nothing — the server alerts admins when many users see it
+  try { if (!g) window.dispatchEvent(new CustomEvent("da-client-error", { detail: "route:google" })); if (!o) window.dispatchEvent(new CustomEvent("da-client-error", { detail: "route:osrm" })); } catch { /* ignore */ }
   const iv = internalKm(names);
   // The internal lookup gives a single round-trip TOTAL. Spread it across the resolved
   // per-leg geodesic proportions so estimate() gets one leg per hop (names.length-1) and can

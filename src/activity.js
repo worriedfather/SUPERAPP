@@ -23,6 +23,17 @@ async function flush() {
 }
 const push = (event) => { buf.push({ event, screen, at: new Date().toISOString() }); if (buf.length >= 40) flush(); };
 
+// Report a client-side failure the server cannot see for itself (a tile provider blocked
+// for this user's network, a route provider down). detail: "tiles:carto" / "route:google".
+// Any module can raise it without importing this one:
+//   window.dispatchEvent(new CustomEvent("da-client-error", { detail: "tiles:carto" }))
+export function reportError(detail) {
+  if (!started || !detail) return;
+  buf.push({ event: "error", screen, detail: String(detail).slice(0, 300), at: new Date().toISOString() });
+  flush();
+}
+const onClientError = (e) => reportError(e && e.detail);
+
 // Call on every tab change. Ignored until startActivity() has run.
 export function trackScreen(tab) {
   if (!started || !tab || tab === screen) return;
@@ -44,11 +55,11 @@ export function startActivity(initialTab) {
     if (visible()) { newSession(); push("open"); }
     else { push("close"); flush(); }
   };
-  try { document.addEventListener("visibilitychange", onVis); window.addEventListener("pagehide", flush); } catch { /* non-browser */ }
+  try { document.addEventListener("visibilitychange", onVis); window.addEventListener("pagehide", flush); window.addEventListener("da-client-error", onClientError); } catch { /* non-browser */ }
   return () => {
     started = false;
     clearInterval(hb); clearInterval(tick);
-    try { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", flush); } catch { /* ignore */ }
+    try { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", flush); window.removeEventListener("da-client-error", onClientError); } catch { /* ignore */ }
     push("close"); flush();
   };
 }

@@ -9,7 +9,7 @@ import {
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
-  getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException,
+  getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
@@ -6956,7 +6956,32 @@ export function TripMap({ points, poly, height = 240 }) {
     let map;
     try {
       map = Leaflet.map(mapRef.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
-      Leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
+      // TILES — never OpenStreetMap's own servers: their usage policy forbids distributed
+      // apps and they BLOCK offenders (a wall of 403 "Access blocked" tiles, 2026-09-12).
+      // CARTO Voyager (OSM data, CARTO-hosted) is the primary; on repeated tile errors the
+      // layer swaps itself to the next provider, so a blocked/dead provider degrades to
+      // another map instead of no map.
+      const TILE_PROVIDERS = {
+        carto: { url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+          opts: { subdomains: "abcd", maxZoom: 19, attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors &copy; <a href=\"https://carto.com/attributions\">CARTO</a>" } },
+        esri: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+          opts: { maxZoom: 18, attribution: "Tiles &copy; Esri" } },
+      };
+      // order comes from the server (/api/maps/config), which demotes a provider once enough
+      // users have reported it failing; default order until that has loaded
+      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["carto", "esri"]).filter((id) => TILE_PROVIDERS[id]);
+      let tileIdx = 0, tileErrs = 0;
+      const addTiles = () => {
+        const id = order[tileIdx], p = TILE_PROVIDERS[id];
+        const layer = Leaflet.tileLayer(p.url, p.opts).addTo(map);
+        layer.on("tileerror", () => {
+          if (++tileErrs < 4) return;
+          tileErrs = 0;
+          try { window.dispatchEvent(new CustomEvent("da-client-error", { detail: `tiles:${id}` })); } catch { /* ignore */ }   // beacon → server alerts + demotes
+          if (tileIdx < order.length - 1) { tileIdx++; map.removeLayer(layer); addTiles(); }
+        });
+      };
+      addTiles();
       const line = poly ? decodePolyline(poly) : pts.map((p) => [p.lat, p.lon]);
       const pl = Leaflet.polyline(line, { color: "#2B3990", weight: 5, opacity: 0.85 }).addTo(map);
       pts.forEach((p, i) => {
@@ -8641,6 +8666,11 @@ export function JourneyTracking() {
     </Wrap>
   );
 }
+
+// Tile-provider order for the route maps — fetched once per app load; the server demotes a
+// provider after enough users report it failing (see the error beacons in activity.js).
+let mapsTileOrder = null;
+try { getMapsConfig().then((c) => { mapsTileOrder = c && Array.isArray(c.tiles) ? c.tiles : null; }).catch(() => {}); } catch { /* offline / not signed in yet */ }
 
 // ---- USER ACTIVITY (owner, 2026-09-12): which screen, how many logins, how much time per day ----
 // Logins come from sign-ins (a sign-in lasts 30 days, so they under-count use); time in
