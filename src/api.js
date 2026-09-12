@@ -465,7 +465,7 @@ export const downloadApprovalsCsv = async (f) => {
   if (!res.ok) throw new Error("export failed");
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
-  a.href = url; a.download = `approvals-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = url; a.download = `approvals-${new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Harare" })}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 };

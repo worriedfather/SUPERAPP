@@ -55,6 +55,10 @@ const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(3) : "—")
 // 00:00–02:00 submission on the previous day and collided with the locked prior
 // entry (audit #7/#14). en-CA gives YYYY-MM-DD.
 const todayISO = () => { try { return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Harare" }); } catch { return new Date().toISOString().slice(0, 10); } };
+// Date arithmetic on a YYYY-MM-DD WITHOUT timezone drift: treat it as a UTC-midnight
+// Date, shift in UTC, format in UTC. NEVER build a local-midnight Date and call
+// toISOString() on it — in Harare (UTC+2) that lands on the previous day.
+const addDaysISO = (ymd, n) => { const d = new Date(ymd + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 // Sensible default shift, still user-overridable. DA shift clock: DAY = 06:00–18:00,
 // NIGHT = 18:00–06:00 (crosses midnight). A 06:00–17:59 submission is the day shift;
 // anything from 18:00 through 05:59 is the night shift.
@@ -372,7 +376,7 @@ export function SubmissionReview({ me }) {
   const [site, setSite] = useState(siteBound ? me.site : "");
   const [date, setDate] = useState(todayISO());
   const [d, setD] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
-  const [rangeFrom, setRangeFrom] = useState(() => new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10));
+  const [rangeFrom, setRangeFrom] = useState(() => todayISO().slice(0, 8) + "01");   // calendar month to date, not a rolling 30 days
   const [rangeTo, setRangeTo] = useState(todayISO());
   const [rbusy, setRbusy] = useState(false);
   const activeSite = siteBound ? me.site : site;
@@ -537,7 +541,7 @@ export function SiteSubmit({ me }) {
   // CORRECTING an earlier day (date < today, via the picker), the picked day IS the cash trading day —
   // don't shift it back another day, or the unlock (keyed to the cash day) won't match.
   const cashDate = date === todayISO()
-    ? (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })()
+    ? addDaysISO(date, -1)
     : date;
   const refreshStatus = useCallback(() => {
     if (!activeSite) { setSubStatus(null); return; }
@@ -676,7 +680,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   // sold computes on day one; every submission after this reverts to single-reading.
   const [pumps, setPumps] = useState(sortTanks(config.pumps || []).map((p) => {
     const prior = lastPumpByLabel[p.label]?.closing;
-    return { label: p.label, product: p.product, tank: p.tank, seeded: prior != null, opening: prior ?? "", closing: "" };
+    return { label: p.label, product: p.product, tank: p.tank, seeded: prior != null, opening: prior ?? "", closing: "", test: "" };
   }));
   const hasPumps = pumps.length > 0;
   // seed sales from the last submission (like tanks seed from lastStock) so
@@ -696,11 +700,16 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
   const setS = (k, v) => { setSalesTouched((t) => ({ ...t, [k]: true })); setSales((s) => ({ ...s, [k]: v })); };
 
-  // per-pump litres + per-product totals from the meters
-  const pumpLitres = (p) => {
+  // per-pump litres + per-product totals from the meters.
+  // moved = how far the meter advanced; test = PUMP-TEST litres (drawn through the meter for a
+  // calibration test and RETURNED to the tank — it moves the meter but is not a sale);
+  // sold = moved − test. Sales totals and the sales value use SOLD, never the raw meter delta.
+  const pumpMoved = (p) => {
     const o = Number(p.opening), c = Number(p.closing);
     return p.opening !== "" && p.closing !== "" && Number.isFinite(o) && Number.isFinite(c) && c >= o ? +(c - o).toFixed(2) : null;
   };
+  const pumpTest = (p) => { const t = Number(p.test); return p.test !== "" && Number.isFinite(t) && t >= 0 ? t : 0; };
+  const pumpLitres = (p) => { const m = pumpMoved(p); if (m == null) return null; const s = +(m - pumpTest(p)).toFixed(2); return s < 0 ? null : s; };
   const pumpTotals = pumps.reduce((acc, p) => {
     const l = pumpLitres(p);
     if (l == null) return acc;
@@ -713,8 +722,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
     // enter once, flow through: completed meters fill the product's sales field
     // live — unless the user already typed that field by hand
     const totals = next.reduce((acc, p) => {
-      const o = Number(p.opening), c = Number(p.closing);
-      const l = p.opening !== "" && p.closing !== "" && Number.isFinite(o) && Number.isFinite(c) && c >= o ? c - o : null;
+      const l = pumpLitres(p);   // SOLD litres — net of any pump-test litres
       if (l == null) return acc;
       const key = p.product === "Diesel" ? "dieselSales" : (p.product === "ULP" || p.product === "Unleaded") ? "ulpSales" : "blendSales";
       acc[key] = +((acc[key] || 0) + l).toFixed(2);
@@ -748,7 +756,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
       const r = await postSiteSubmit({
         site: choice.fixed ? undefined : site, tradingDate: date, shift,
         tanks: tanks.map((t) => ({ label: t.label, product: t.product, litres: t.litres })),
-        pumps: pumps.map((p) => ({ label: p.label, product: p.product, opening: p.opening, closing: p.closing })),
+        pumps: pumps.map((p) => ({ label: p.label, product: p.product, opening: p.opening, closing: p.closing, test: p.test })),
         blendSales: sales.blendSales, dieselSales: sales.dieselSales, ulpSales: sales.ulpSales || null,
         cashSales: sales.cashSales || null, petroSales: sales.petroSales || null, daCardSales: sales.daCardSales || null,
         deviceTime: new Date().toISOString(),
@@ -786,14 +794,16 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
           <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 8 }}>
             {pumps.some((p) => !p.seeded)
               ? "First submission for these pumps — enter each meter's opening AND closing reading so today's litres sold is captured. From tomorrow you'll only enter the closing (the opening carries over)."
-              : "Enter each pump's current meter reading — just like a tank dip. The previous reading is shown; litres sold is the difference, and fills the sales totals below automatically."}
+              : "Enter each pump's current meter reading — just like a tank dip. The previous reading is shown; litres sold is the difference, and fills the sales totals below automatically. If a pump was tested, put the test litres in TEST — they moved the meter but went back into the tank, so they're taken off what was sold."}
           </div>
           <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--steel)", padding: "0 2px 4px" }}>
-            <span style={{ flex: 1 }}>PUMP</span>{pumps.some((p) => !p.seeded) && <span style={{ width: 96, textAlign: "center" }}>OPENING</span>}<span style={{ width: 96, textAlign: "center" }}>{pumps.every((p) => p.seeded) ? "METER READING" : "CLOSING"}</span><span style={{ width: 58, textAlign: "right" }}>SOLD</span>
+            <span style={{ flex: 1 }}>PUMP</span>{pumps.some((p) => !p.seeded) && <span style={{ width: 96, textAlign: "center" }}>OPENING</span>}<span style={{ width: 96, textAlign: "center" }}>{pumps.every((p) => p.seeded) ? "METER READING" : "CLOSING"}</span><span style={{ width: 64, textAlign: "center" }}>TEST</span><span style={{ width: 58, textAlign: "right" }}>SOLD</span>
           </div>
           {pumps.map((p, i) => {
-            const l = pumpLitres(p);
-            const bad = p.opening !== "" && p.closing !== "" && l == null;   // closing below opening
+            const moved = pumpMoved(p), l = pumpLitres(p);
+            const below = p.opening !== "" && p.closing !== "" && moved == null;   // closing below opening
+            const overTest = moved != null && pumpTest(p) > moved;                // test litres exceed what the meter moved
+            const bad = below || overTest;
             const showOpen = pumps.some((q) => !q.seeded);                   // any first-reading pump → show opening column
             return (
               <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "6px 8px", borderRadius: 10, background: "#fff", border: `1px solid ${bad ? "var(--red, #C0392B)" : "var(--line)"}` }}>
@@ -805,7 +815,8 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
                   ? <div className="mono" style={{ width: 96, textAlign: "center", fontSize: 12, color: "var(--steel)" }}>{L(p.opening)}</div>
                   : <Num style={{ width: 96, padding: "9px 7px" }} value={p.opening} onChange={(v) => setPump(i, "opening", v)} placeholder="opening" />)}
                 <Num style={{ width: 96, padding: "9px 7px" }} value={p.closing} onChange={(v) => setPump(i, "closing", v)} placeholder={p.seeded ? "reading" : "closing"} />
-                <div className="mono" style={{ width: 58, textAlign: "right", fontSize: 12.5, fontWeight: 700, color: bad ? "var(--red, #C0392B)" : l ? "var(--navy)" : "var(--steel)" }}>{bad ? "↓ below" : l != null ? L(l) : "—"}</div>
+                <Num style={{ width: 64, padding: "9px 6px" }} value={p.test} onChange={(v) => setPump(i, "test", v)} placeholder="test" />
+                <div className="mono" style={{ width: 58, textAlign: "right", fontSize: 12.5, fontWeight: 700, color: bad ? "var(--red, #C0392B)" : l ? "var(--navy)" : "var(--steel)" }}>{below ? "↓ below" : overTest ? "test >" : l != null ? L(l) : "—"}</div>
               </div>
             );
           })}
@@ -988,6 +999,12 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
           {de.products.filter((p) => p.pumpVsDeclared != null && Math.abs(p.pumpVsDeclared) > Math.max(20, p.declaredSales * 0.02))
             .map((p) => `${p.product}: pumps ${L(p.pumpSales)} vs declared ${L(p.declaredSales)} (${p.pumpVsDeclared > 0 ? "+" : ""}${L(p.pumpVsDeclared)})`).join(" · ")}. The pump figure is used; the gap is a sales-recording check.
         </Note>
+      )}
+      {/* pump-test litres moved the meter but went back into the tank — excluded from sales AND variance; shown so the manager can see what was taken off */}
+      {de.hasPumps && de.pumpTests > 0 && (
+        <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 6 }}>
+          Pump tests excluded: {de.products.filter((p) => p.pumpTests > 0).map((p) => `${p.product} ${L(p.pumpTests)} L`).join(" · ")} — meter litres drawn for testing and returned to the tank; not counted as sales.
+        </div>
       )}
       {!de.hasPumps && <div style={{ fontSize: 11, color: "var(--amber)", marginBottom: 8 }}>No pump meters configured — variance is measured against the cashier&apos;s declared sales (less reliable). Configure pumps for true wetstock control.</div>}
 
@@ -1231,7 +1248,7 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   // CORRECTING an earlier day (date < today, via the picker), the picked day IS the cash trading day —
   // don't shift it back another day, or the unlock (keyed to the cash day) won't match.
   const cashDate = date === todayISO()
-    ? (() => { const t = new Date(date + "T12:00:00"); t.setDate(t.getDate() - 1); return t.toISOString().slice(0, 10); })()
+    ? addDaysISO(date, -1)
     : date;
 
   // Pull the expected cash the moment the site / date / shift settles.
@@ -2193,17 +2210,28 @@ function stockoutSiteDrill(s) {
    period+range; haulage/wet-stock take a day-count; day-boards take an "as of"
    date. One selector, one meaning everywhere. */
 export function periodWindow(period, range) {
+  // ALL calendar maths in Africa/Harare, and every window is a CALENDAR window: "month" =
+  // the 1st → yesterday, "lastmonth" = the full previous month, "year" = Jan 1 → yesterday.
+  // Anchor on Harare's date string, then do pure date arithmetic in UTC space (a Harare
+  // YYYY-MM-DD treated as a UTC-midnight Date) so formatting can never shift a day. The
+  // old code formatted LOCAL-midnight Dates with toISOString() — CAT is UTC+2, so local
+  // midnight is 22:00 the day BEFORE in UTC: "this month" began on 31 Aug, yesterday fell
+  // off every window (11 Sep missing on the 12th) and "Today" showed yesterday's date.
   const iso = (d) => d.toISOString().slice(0, 10);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());   // date-only, no partial-day drift
-  const yd = new Date(today); yd.setDate(yd.getDate() - 1);
-  const todayISO = iso(today), ydISO = iso(yd);
-  const daysBetween = (a, b) => Math.round((a - b) / 86400000) + 1;           // inclusive
-  if (period === "today") return { period, days: 1, date: todayISO, retailDate: todayISO, from: todayISO, to: todayISO, label: `Today · ${fmtD(todayISO)}` };
-  if (period === "month") { const first = new Date(now.getFullYear(), now.getMonth(), 1); const days = daysBetween(today, first); return { period, days, date: ydISO, retailDate: ydISO, from: iso(first), to: ydISO, label: `This month · ${days} day${days === 1 ? "" : "s"}` }; }
-  if (period === "lastmonth") { const first = new Date(now.getFullYear(), now.getMonth() - 1, 1); const last = new Date(now.getFullYear(), now.getMonth(), 0); const days = daysBetween(last, first); const name = first.toLocaleString(undefined, { month: "long", year: "numeric" }); return { period, days, date: iso(last), retailDate: iso(last), from: iso(first), to: iso(last), label: `${name} · full month (${days} days)` }; }
-  if (period === "year") { const first = new Date(now.getFullYear(), 0, 1); const days = daysBetween(today, first); return { period, days, date: ydISO, retailDate: ydISO, from: iso(first), to: ydISO, label: `Year to date · ${days} days` }; }
-  if (period === "range") { const days = Math.max(1, daysBetween(new Date(range.to), new Date(range.from))); return { period, days, date: range.to, retailDate: range.to, from: range.from, to: range.to, label: `${fmtD(range.from)} → ${fmtD(range.to)} · ${days} days` }; }
+  const utc = (ymd) => new Date(ymd + "T00:00:00Z");
+  const today = utc(todayISO());                                        // Harare's today
+  const yd = new Date(today); yd.setUTCDate(yd.getUTCDate() - 1);
+  const tISO = iso(today), ydISO = iso(yd);
+  const Y = today.getUTCFullYear(), M = today.getUTCMonth();
+  const daysBetween = (a, b) => Math.round((a - b) / 86400000) + 1;   // inclusive
+  // month/year run to YESTERDAY (reporting lands a day late) — except on the 1st, when
+  // yesterday belongs to the previous period, so the window is just today.
+  const toDate = (first) => (yd < first ? today : yd);
+  if (period === "today") return { period, days: 1, date: tISO, retailDate: tISO, from: tISO, to: tISO, label: `Today · ${fmtD(tISO)}` };
+  if (period === "month") { const first = new Date(Date.UTC(Y, M, 1)); const end = toDate(first); const days = daysBetween(end, first); return { period, days, date: iso(end), retailDate: iso(end), from: iso(first), to: iso(end), label: `This month · ${fmtD(iso(first))} → ${fmtD(iso(end))} · ${days} day${days === 1 ? "" : "s"}` }; }
+  if (period === "lastmonth") { const first = new Date(Date.UTC(Y, M - 1, 1)); const last = new Date(Date.UTC(Y, M, 0)); const days = daysBetween(last, first); const name = first.toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }); return { period, days, date: iso(last), retailDate: iso(last), from: iso(first), to: iso(last), label: `${name} · full month (${days} days)` }; }
+  if (period === "year") { const first = new Date(Date.UTC(Y, 0, 1)); const end = toDate(first); const days = daysBetween(end, first); return { period, days, date: iso(end), retailDate: iso(end), from: iso(first), to: iso(end), label: `Year to date · ${fmtD(iso(first))} → ${fmtD(iso(end))} · ${days} days` }; }
+  if (period === "range") { const days = Math.max(1, daysBetween(utc(range.to), utc(range.from))); return { period, days, date: range.to, retailDate: range.to, from: range.from, to: range.to, label: `${fmtD(range.from)} → ${fmtD(range.to)} · ${days} days` }; }
   return { period: "yesterday", days: 1, date: ydISO, retailDate: ydISO, from: ydISO, to: ydISO, label: `Yesterday · ${fmtD(ydISO)}` };   // default (reporting runs a day late)
 }
 const cockpitWindow = periodWindow;   // back-compat alias
@@ -2226,7 +2254,8 @@ export function PeriodBar({ period, range, onPeriod, onRange, showLabel = true }
     </div>
   );
 }
-const defaultRange = () => { const t = new Date(); t.setDate(t.getDate() - 1); const f = new Date(t); f.setDate(f.getDate() - 6); return { from: f.toISOString().slice(0, 10), to: t.toISOString().slice(0, 10) }; };
+// A custom Range starts life as the current calendar month (Harare) — never a rolling week.
+const defaultRange = () => { const w = periodWindow("month"); return { from: w.from, to: w.to }; };
 
 /* ============================================================ *
  *  COCKPIT — role home. One "what needs attention today" action
@@ -2454,7 +2483,7 @@ function CashBridgePanel({ cb, scopeLabel, pLabel }) {
 
 export function ExecutiveDashboard({ me } = {}) {
   const [period, setPeriod] = useState("today");   // Overview defaults to Today (latest complete data day)
-  const [range, setRange] = useState(() => { const t = new Date(); t.setDate(t.getDate() - 1); const f = new Date(t); f.setDate(f.getDate() - 6); return { from: f.toISOString().slice(0, 10), to: t.toISOString().slice(0, 10) }; });
+  const [range, setRange] = useState(defaultRange);
   const [scope, setScope] = useState({ type: "global", value: "", label: "" });   // global | site | region
   const [scopeOpts, setScopeOpts] = useState(null);   // persists across reloads so the picker never vanishes
   // Per-role section trims. Reporting accountants get the finance/ops feeds but not the
@@ -3565,7 +3594,7 @@ export function AllocationReport() {
 export function MiddayDipView({ from = null, to = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
   const [gd, setGd] = useState(null);
-  useEffect(() => { const t = to || todayISO(); const f = from || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10); getSiteAnalytics("midday", f, t).then(setD).catch((e) => setErr(e.message)); }, [from, to]);
+  useEffect(() => { const t = to || todayISO(); const f = from || todayISO().slice(0, 8) + "01"; /* calendar month to date (Harare) */ getSiteAnalytics("midday", f, t).then(setD).catch((e) => setErr(e.message)); }, [from, to]);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>;
   if (!Array.isArray(d.sites) || !d.sites.length) return <Note tone="amber" title="No midday dip yet">No site has submitted a midday tank dip for this window.</Note>;

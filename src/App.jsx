@@ -2657,7 +2657,7 @@ function FleetEfficiency({ horses }) {
     setMode(mNew);
     if (mNew === "year") setVal(String(now.getFullYear()));
     else if (mNew === "month") setVal(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
-    else if (mNew === "day") setVal(now.toISOString().slice(0, 10));
+    else if (mNew === "day") setVal(now.toLocaleDateString("en-CA", { timeZone: "Africa/Harare" }));   // Harare's date, not UTC's (a day behind at UTC+2)
     else setVal("");
   };
 
