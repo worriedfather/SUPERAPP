@@ -2639,26 +2639,39 @@ export function ExecutiveDashboard({ me } = {}) {
               <Panel style={{ marginBottom: 14 }}>
                 {d.cash && d.cash.expected != null && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 10 }}>
-                    <KpiCard label="Expected cash" value={"$" + abbr(d.cash.expected)} sub="should be collected" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.expected)} onClick={() => goTo("collections")} />
-                    <KpiCard label="Accounted for" value={"$" + abbr(d.cash.accounted)} sub="banked · sent to HQ · POS" tone="good" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.accounted)} onClick={() => goTo("collections")} />
-                    <KpiCard label="Unaccounted for" value={"$" + abbr(d.cash.unaccounted)} sub="expected − accounted" tone={d.cash.unaccounted > 0 ? "bad" : "good"} cmp={kpiCmp(d.cash.cmp && d.cash.cmp.unaccounted)} onClick={() => goTo("collections")} />
+                    <KpiCard label="Expected cash" value={"$" + abbr(d.cash.expected)} sub="should be collected" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.expected)}
+                      onClick={() => setDrill({ title: "Expected cash — by site", sub: `$${full(d.cash.expected)} · should be collected · ${(d.cash.sites || []).length} sites`,
+                        render: breakdownDrill(d.cash.sites || [], ["Site", "site"], [["Days", "days", (v) => v], ["Expected", "expected", (v) => "$" + full(v)], ["Accounted", "submitted", (v) => "$" + full(v)], ["Unaccounted", "unaccounted", (v) => "$" + full(v)]], "expected") })} />
+                    <KpiCard label="Accounted for" value={"$" + abbr(d.cash.accounted)} sub="banked · sent to HQ · POS" tone="good" cmp={kpiCmp(d.cash.cmp && d.cash.cmp.accounted)}
+                      onClick={() => setDrill({ title: "Accounted for — by site and channel", sub: `$${full(d.cash.accounted)} · where each site's cash went`,
+                        render: breakdownDrill(d.cash.sites || [], ["Site", "site"], [["Sent to HQ", "hq", (v) => "$" + full(v)], ["Banked", "banked", (v) => "$" + full(v)], ["POS", "swipe", (v) => "$" + full(v)], ["Mobile", "mobile", (v) => "$" + full(v)], ["Petty", "petty", (v) => "$" + full(v)], ["On hand", "onHand", (v) => "$" + full(v)], ["Total", "submitted", (v) => "$" + full(v)]], "submitted") })} />
+                    <KpiCard label="Unaccounted for" value={"$" + abbr(d.cash.unaccounted)} sub="expected − accounted" tone={d.cash.unaccounted > 0 ? "bad" : "good"} cmp={kpiCmp(d.cash.cmp && d.cash.cmp.unaccounted)}
+                      onClick={() => setDrill({ title: "Unaccounted for — which sites", sub: `$${full(d.cash.unaccounted)} · expected minus accounted, only the sites with a gap`,
+                        render: breakdownDrill(d.cash.sites || [], ["Site", "site"], [["Expected", "expected", (v) => "$" + full(v)], ["Accounted", "submitted", (v) => "$" + full(v)], ["Unaccounted", "unaccounted", (v) => "$" + full(v)]], "unaccounted", { filter: (s) => s.unaccounted > 0, empty: "Every site has accounted for its cash in this window." }) })} />
                   </div>
                 )}
                 {d.cash && (d.cash.onHandAtSites != null || d.cash.heldAtHq != null) && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 10 }}>
-                    <KpiCard label="Cash held at sites" value={d.cash.onHandAtSites != null ? "$" + abbr(d.cash.onHandAtSites) : "—"} sub="not yet sent to HQ" tone={d.cash.onHandAtSites > 0 ? "bad" : undefined} onClick={() => goTo("collections")} />
+                    <KpiCard label="Cash held at sites" value={d.cash.onHandAtSites != null ? "$" + abbr(d.cash.onHandAtSites) : "—"} sub="not yet sent to HQ" tone={d.cash.onHandAtSites > 0 ? "bad" : undefined}
+                      onClick={() => setDrill({ title: "Cash held at sites — who is holding it", sub: `$${full(d.cash.onHandAtSites || 0)} declared still on hand, not yet sent to HQ`,
+                        render: breakdownDrill(d.cash.sites || [], ["Site", "site"], [["Declared held", "carriedDeclared", (v) => "$" + full(v)], ["Counted on hand", "carried", (v) => "$" + full(v)], ["Variance", "carriedVariance", (v) => "$" + full(v)]], "carriedDeclared", { filter: (s) => s.carriedDeclared > 0 || s.carried > 0, empty: "No site is holding cash right now." }) })} />
                     <KpiCard label="Cash held at HQ" value={d.cash.heldAtHq != null ? "$" + abbr(d.cash.heldAtHq) : "—"}
                       sub={d.cash.heldAtHqMove != null ? `${d.cash.heldAtHqMove >= 0 ? "▲" : "▼"} $${abbr(Math.abs(d.cash.heldAtHqMove))} on ${d.cash.heldAtHqDate ? fmtD(d.cash.heldAtHqDate) : "the day"}` : (d.cash.heldAtHqDate ? `cash office · ${fmtD(d.cash.heldAtHqDate)}` : "cash-office closing balance")}
                       subColor={d.cash.heldAtHqMove != null ? (d.cash.heldAtHqMove >= 0 ? "var(--ok)" : "var(--red)") : undefined}
-                      onClick={() => goTo("outflows")} />
+                      onClick={() => setDrill({ title: "Cash held at HQ — day by day", sub: `$${full(d.cash.heldAtHq || 0)} closing balance · cash-office whiteslips, last ${(d.cash.hqDays || []).length} days`,
+                        render: breakdownDrill(d.cash.hqDays || [], ["Day", (r) => fmtD(r.date)], [["Opening", "opening", (v) => v == null ? "—" : "$" + full(v)], ["Closing", "closing", (v) => "$" + full(v)], ["Move", "move", (v) => v == null ? "—" : (v >= 0 ? "+$" : "−$") + full(Math.abs(v))]], null, { sumCols: false, empty: "No cash-office balances recorded yet." }) })} />
                     <KpiCard label="Total cash held" value={d.cash.totalHeld != null ? "$" + abbr(d.cash.totalHeld) : "—"} sub="sites + HQ" tone={d.cash.totalHeld > 0 ? "bad" : undefined} />
                   </div>
                 )}
                 {d.outflows && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 10, marginBottom: 12 }}>
-                    <KpiCard label="Cash paid out" value={"$" + abbr(d.outflows.total)} sub={`${d.outflows.count} payment${d.outflows.count === 1 ? "" : "s"}`} cmp={kpiCmp(d.outflows.totalCmp)} onClick={() => goTo("outflows")} />
+                    <KpiCard label="Cash paid out" value={"$" + abbr(d.outflows.total)} sub={`${d.outflows.count} payment${d.outflows.count === 1 ? "" : "s"}`} cmp={kpiCmp(d.outflows.totalCmp)}
+                      onClick={() => setDrill({ title: "Cash paid out — every payment", sub: `$${full(d.outflows.total)} · ${d.outflows.count} payment${d.outflows.count === 1 ? "" : "s"} in this window`,
+                        render: breakdownDrill(d.outflows.payments || [], ["Date · payee", (r) => `${fmtD(r.date)} · ${r.payee || "—"}`], [["Category", "category", (v) => v || "—"], ["Amount", "amount", (v) => "$" + full(v)]], null, { empty: "No payments in this window." }) })} />
                     {(d.outflows.byCategory || []).slice(0, 2).map((c) => (
-                      <KpiCard key={c.category} label={c.category} value={"$" + abbr(c.total)} sub={`${c.n} payment${c.n === 1 ? "" : "s"} · paid out`} cmp={kpiCmp(c.cmp)} onClick={() => goTo("outflows")} />
+                      <KpiCard key={c.category} label={c.category} value={"$" + abbr(c.total)} sub={`${c.n} payment${c.n === 1 ? "" : "s"} · paid out`} cmp={kpiCmp(c.cmp)}
+                        onClick={() => setDrill({ title: `${c.category} — the payments`, sub: `$${full(c.total)} · ${c.n} payment${c.n === 1 ? "" : "s"}`,
+                          render: breakdownDrill(d.outflows.payments || [], ["Date · payee", (r) => `${fmtD(r.date)} · ${r.payee || "—"}`], [["Amount", "amount", (v) => "$" + full(v)]], null, { filter: (r) => r.category === c.category, empty: "No payments in this category for the window." }) })} />
                     ))}
                   </div>
                 )}
