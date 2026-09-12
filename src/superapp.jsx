@@ -4236,9 +4236,10 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
     const m = new Map();
     for (const r of (d && onlyOpen ? d.openItems : [])) {
       let g = m.get(r.siteId);
-      if (!g) { g = { siteId: r.siteId, site: r.site, days: [], openDays: 0, expected: 0, received: 0, banked: 0, unbanked: 0, oldest: r.date, recvNull: false }; m.set(r.siteId, g); }
+      if (!g) { g = { siteId: r.siteId, site: r.site, days: [], openDays: 0, provisional: 0, expected: 0, received: 0, banked: 0, unbanked: 0, oldest: r.date, recvNull: false }; m.set(r.siteId, g); }
       g.days.push(r);
       g.openDays++;
+      if (r.provisional) g.provisional++;   // expected is the site's declaration — official day-end not in yet
       g.expected += r.expected || 0;
       g.banked += r.depConfirmed || 0;
       if (r.received == null) g.recvNull = true; else g.received += r.received;
@@ -4269,6 +4270,11 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
             <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"}
               onClick={() => setGd({ title: "Open days — by site", sub: `${d.summary.openDays} day-close${d.summary.openDays === 1 ? "" : "s"} still open`, render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Oldest", "oldest", (v) => fmtD(v)]], "openDays", { sumCols: false, totalLabel: `${d.summary.openDays} open` }) })} />
           </div>
+          {d.summary.provisionalDays > 0 && (
+            <Note tone="amber" title={`${d.summary.provisionalDays} site-day${d.summary.provisionalDays === 1 ? "" : "s"} provisional`}>
+              The official day-end figures reach {d.asOf ? fmtD(d.asOf) : "—"}. For days after that, expected cash is the site&apos;s own declaration until the official figure lands — you can confirm receipts and close those days now; the figure updates itself when the report arrives.
+            </Note>
+          )}
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
           </div>
@@ -4282,7 +4288,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
                       <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Open days</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Still short</Th></tr></thead>
                       <tbody>{bySite.map((g) => (
                         <tr key={g.siteId} onClick={() => g.days.length === 1 ? setDrill(g.days[0]) : setSiteDrill(g)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
-                          <Td>{g.site}<span style={{ color: "var(--steel)" }}> ›</span><div style={{ fontSize: 10, color: "var(--steel)" }}>oldest {fmtD(g.oldest)}</div></Td>
+                          <Td>{g.site}<span style={{ color: "var(--steel)" }}> ›</span><div style={{ fontSize: 10, color: "var(--steel)" }}>oldest {fmtD(g.oldest)}{g.provisional > 0 && <span style={{ color: "#B26A00" }}> · {g.provisional} provisional</span>}</div></Td>
                           <Td right>{g.openDays}</Td>
                           <Td right style={{ fontWeight: 700 }}>{$(g.expected)}</Td>
                           <Td right>{$(g.received)}{g.recvNull ? "+" : ""}</Td>
@@ -4304,7 +4310,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
                       <tbody>{rows.map((r) => (
                         <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: r.status === "open" ? "#FFF7E6" : "#fff" }}>
                           <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                          <Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}</Td>
+                          <Td style={{ color: "var(--steel)" }}>{fmtD(r.date)}{r.provisional && <div style={{ fontSize: 10, color: "#B26A00" }}>site-declared · official pending</div>}</Td>
                           <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
                           <Td right>{r.received == null ? "—" : $(r.received)}</Td>
                           <Td right style={{ color: r.unbanked > 0 ? "var(--red)" : "var(--steel)" }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
