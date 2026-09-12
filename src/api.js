@@ -332,6 +332,10 @@ export const cancelTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripN
 export const closeTrip = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/close`, { method: "POST" });
 export const getTrips = () => call("/api/trips");
 export const getMyTrips = () => call("/api/trips/mine");
+// All-trips register (every status, calendar window) + reopen a closed trip
+export const getTripsRegister = (from, to) => call(`/api/trips/register${from && to ? `?from=${from}&to=${to}` : ""}`);
+export const reopenTrip = (tripNo, reason) => call(`/api/trip/${encodeURIComponent(tripNo)}/reopen`, { method: "POST", body: { reason } });
+export const grantDropException = (tripNo, site, reason) => call(`/api/trip/${encodeURIComponent(tripNo)}/drop-exception`, { method: "POST", body: { site, reason } });
 export const getDeliveriesInProgress = () => call("/api/deliveries/in-progress");
 export const getDeviceRequests = () => call("/api/device-requests");
 export const decideDeviceRequest = (seq, approve) => call(`/api/device-request/${encodeURIComponent(seq)}/decision`, { method: "POST", body: { approve } });

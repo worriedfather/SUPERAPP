@@ -9,7 +9,7 @@ import {
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
-  getActivitySummary, getUserActivity,
+  getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
@@ -8708,6 +8708,110 @@ export function ActivityView() {
               <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 6 }}>{ud.note}</div>
             </>
           )}
+        </DetailSheet>
+      )}
+    </Wrap>
+  );
+}
+
+// ---- ALL TRIPS REGISTER (owner, 2026-09-12): the state of every trip, completed ones included ----
+// Every trip in the calendar window (active, completed and cancelled) with each drop's
+// delivery-note state (posted / pending / rejected / none), posted coverage, and the trip's
+// version history (who set each status, when). Reopen / close here; grant a note exception
+// for a drop that legitimately repeats a site; editing drops stays in Schedule.
+export function TripsRegister({ me }) {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [q, setQ] = useState("");
+  const [st, setSt] = useState("all");
+  const [open, setOpen] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const w = periodWindow(period, range);
+  useEffect(() => { setD(null); setErr(null); getTripsRegister(w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, reloadKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const canAct = ["admin", "logistics_manager", "logistics_lead", "operations_manager", "depot", "logistics"].includes(me && me.kind);
+  const norm = (s) => String(s || "").toLowerCase();
+  const rows = d ? d.trips.filter((t) => (st === "all" || t.status === st) && (!q.trim() || [t.tripNo, t.driver, t.truck, t.product, t.warehouse, ...t.drops.map((x) => x.site)].some((v) => norm(v).includes(norm(q))))) : [];
+  const TONE = { active: "var(--amber)", completed: "var(--ok)", cancelled: "var(--steel)" };
+  const NOTE = { posted: ["✓", "var(--ok)"], pending: ["◐", "var(--amber)"], rejected: ["✕", "var(--red)"], none: ["○", "var(--steel)"], pickup: ["↑", "var(--steel)"] };
+  const act = async (fn, label, keepOpen) => {
+    setBusy(true); setMsg(null);
+    try { await fn(); setMsg({ tone: "ok", text: `${label} done.` }); if (!keepOpen) setOpen(null); setReloadKey((k) => k + 1); }
+    catch (e) { setMsg({ tone: "red", text: e.message }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Wrap>
+      <SectionHead title="All trips" sub="Every trip in the window — active, completed and cancelled — with each drop's delivery-note state and who changed the trip, when" />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search trip, site, driver, truck" style={{ flex: 1, minWidth: 200 }} />
+        {["all", "active", "completed", "cancelled"].map((k) => (
+          <button key={k} className="disp" onClick={() => setSt(k)} style={{ border: "1px solid var(--line)", background: st === k ? "var(--navy)" : "#fff", color: st === k ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            {k === "all" ? "All" : k[0].toUpperCase() + k.slice(1)}{d && d.counts && k !== "all" && d.counts[k] ? ` · ${d.counts[k]}` : ""}
+          </button>
+        ))}
+      </div>
+      {msg && <Note tone={msg.tone} title={msg.tone === "ok" ? "Done" : "Couldn't do that"}>{msg.text}</Note>}
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && rows.length === 0 && <Note tone="ok" title="No trips">Nothing matches in {fmtD(d.from)} → {fmtD(d.to)}.</Note>}
+      {d && rows.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trip</Th><Th>Date</Th><Th>Driver · truck</Th><Th right>Load</Th><Th>Drops · notes</Th><Th>Status</Th></tr></thead>
+              <tbody>{rows.map((t) => (
+                <tr key={t.tripNo} onClick={() => setOpen(t)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                  <Td style={{ fontWeight: 700 }}>{t.tripNo}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+                  <Td style={{ color: "var(--steel)", whiteSpace: "nowrap" }}>{fmtD(t.date)}</Td>
+                  <Td>{t.driver || "—"}<div style={{ fontSize: 10, color: "var(--steel)" }}>{t.truck || "—"} · {t.warehouse}</div></Td>
+                  <Td right>{L(t.qty)} L<div style={{ fontSize: 10, color: "var(--steel)" }}>{t.product}</div></Td>
+                  <Td>{t.drops.map((x, i) => <span key={i} title={`${x.site}: ${x.note.state}`} style={{ color: NOTE[x.note.state][1], marginRight: 8, whiteSpace: "nowrap" }}>{NOTE[x.note.state][0]} {x.site}</span>)}</Td>
+                  <Td><span style={{ color: TONE[t.status] || "var(--navy)", fontWeight: 700, textTransform: "uppercase", fontSize: 11 }}>{t.status}</span>{t.lastChange && <div style={{ fontSize: 10, color: "var(--steel)", whiteSpace: "nowrap" }}>{t.lastChange.by || "—"} · {t.lastChange.at}</div>}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {open && (
+        <DetailSheet title={open.tripNo} sub={`${open.driver || "—"} · ${open.truck || "—"} · ${L(open.qty)} L ${open.product} from ${open.warehouse} · ${fmtD(open.date)}`} onClose={() => setOpen(null)}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <CountPill n={String(open.status).toUpperCase()} label="Status" tone={open.status === "completed" ? "ok" : "amber"} />
+            <CountPill n={open.coveragePct == null ? "—" : open.coveragePct + "%"} label="Delivered (posted notes)" tone={open.coveragePct >= 98 ? "ok" : "amber"} />
+            <CountPill n={open.openDrops} label="Drops without a posted note" tone={open.openDrops ? "red" : "ok"} />
+          </div>
+          <div className="lbl">Drops</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Planned</Th><Th>Note</Th><Th right>Delivered</Th><Th>Signed</Th>{canAct && <Th></Th>}</tr></thead>
+              <tbody>{open.drops.map((x, i) => (
+                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td>{x.site}{x.collect ? <span style={{ color: "var(--steel)" }}> (pickup)</span> : ""}</Td>
+                  <Td right>{L(x.qty)}</Td>
+                  <Td style={{ color: NOTE[x.note.state][1], fontWeight: 700 }}>{NOTE[x.note.state][0]} {x.note.state}{x.note.dnNo ? <span style={{ color: "var(--steel)", fontWeight: 400 }}> · {x.note.dnNo}</span> : ""}</Td>
+                  <Td right>{x.note.delivered != null ? L(x.note.delivered) : "—"}</Td>
+                  <Td style={{ color: "var(--steel)" }}>{x.note.dnNo ? `${x.note.siteSigned ? "site ✓" : "site ◦"} · ${x.note.driverSigned ? "driver ✓" : "driver ◦"}` : "—"}</Td>
+                  {canAct && <Td>{!x.collect && open.status === "active" && <button className="disp" disabled={busy} title="Allow one more delivery note for this site on this trip — for a trip that really drops here twice" onClick={() => act(() => grantDropException(open.tripNo, x.site, "granted from the All trips register"), `Note exception for ${x.site}`, true)} style={{ border: "1px solid var(--line)", background: "#fff", color: "var(--navy)", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>+ note exception</button>}</Td>}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div className="lbl" style={{ marginTop: 12 }}>History</div>
+          <div className="mono" style={{ fontSize: 12, lineHeight: 1.8 }}>{open.history.map((h, i) => <div key={i}><b style={{ textTransform: "uppercase" }}>{h.status}</b> · {h.by || "—"} · {h.at}</div>)}</div>
+          {open.collectedAt && <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: 4 }}>Collected {open.collectedAt}</div>}
+          {open.note && <div style={{ fontSize: 12, color: "var(--steel)", marginTop: 6 }}>{open.note}</div>}
+          {canAct && (
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              {open.status === "completed" && <button className="pill" disabled={busy} onClick={() => act(() => reopenTrip(open.tripNo, "reopened from the All trips register"), "Reopen")}>Reopen trip</button>}
+              {open.status === "active" && <button className="pill" disabled={busy} onClick={() => { if (open.openDrops && !window.confirm(`${open.openDrops} drop(s) have no posted note — close anyway?`)) return; act(() => closeTrip(open.tripNo), "Close"); }}>Close trip</button>}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>To change drops or quantities, open the trip in Schedule — editing is only possible while the trip is active.</div>
         </DetailSheet>
       )}
     </Wrap>
