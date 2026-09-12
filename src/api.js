@@ -288,6 +288,10 @@ export const getState = () => call("/api/state");
 export const postRequest = (r) => call("/api/requests", { method: "POST", body: r });
 export const getAlerts = () => call("/api/alerts");
 export const registerPush = (token, platform) => call("/api/push/register", { method: "POST", body: { token, platform } });
+// app-activity telemetry (see activity.js) + the admin "User activity" reads
+export const postActivity = (body) => call("/api/activity", { method: "POST", body });
+export const getActivitySummary = (from, to) => call(`/api/activity/summary${from && to ? `?from=${from}&to=${to}` : ""}`);
+export const getUserActivity = (actorId, from, to) => call(`/api/activity/user/${encodeURIComponent(actorId)}${from && to ? `?from=${from}&to=${to}` : ""}`);
 
 // ---- super-app modules (stock / price / sales / deliveries / recon) ----
 export const getSites = () => call("/api/sites");

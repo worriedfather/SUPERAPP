@@ -12,6 +12,7 @@ import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNo
 import { initPush } from "./push.js";
 import { GOOGLE_MAPS_KEY, APP_BUILD, APP_VERSION, PLAY_URL, PLAY_MARKET_URL, IOS_TESTFLIGHT_URL, IOS_TESTFLIGHT_JOIN } from "./config.js";
 import { openStoreForUpdate } from "./device.js";
+import { startActivity, trackScreen } from "./activity.js";
 import { internalKm } from "./mileage.js";
 import { Picker } from "./Picker.jsx";
 
@@ -941,6 +942,12 @@ function App() {
     document.addEventListener("visibilitychange", onVis);
     return () => { live = false; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
   }, [me]);
+
+  // APP ACTIVITY TELEMETRY (owner, 2026-09-12): which screen, how long, how often.
+  // Starts once per sign-in (stops on sign-out); every tab change is a 'screen' event.
+  // See activity.js — buffered, batched, silent on failure.
+  useEffect(() => { if (!me) return; return startActivity(tab); }, [me]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (me) trackScreen(tab); }, [me, tab]);
 
   // Force-update gate: ask the server for the minimum build it accepts. If this
   // app is older, block with an "update required" screen. Skipped silently when
