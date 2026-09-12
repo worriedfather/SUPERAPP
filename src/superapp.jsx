@@ -9,6 +9,7 @@ import {
   getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
+  getActivitySummary, getUserActivity,
   postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
@@ -8636,6 +8637,78 @@ export function JourneyTracking() {
             );
           })()}
         </>
+      )}
+    </Wrap>
+  );
+}
+
+// ---- USER ACTIVITY (owner, 2026-09-12): which screen, how many logins, how much time per day ----
+// Logins come from sign-ins (a sign-in lasts 30 days, so they under-count use); time in
+// app comes from a once-a-minute heartbeat while the app is open, carrying the current
+// screen. Calendar window (Harare). Tap a user for the day-by-day detail.
+export function ActivityView() {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [user, setUser] = useState(null);
+  const [ud, setUd] = useState(null);
+  const w = periodWindow(period, range);
+  useEffect(() => { setD(null); setErr(null); getActivitySummary(w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!user) { setUd(null); return; } setUd(null); getUserActivity(user.actorId, w.from, w.to).then(setUd).catch((e) => setErr(e.message)); }, [user, period, range.from, range.to]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const mins = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m || 0}m`);
+  const users = d ? d.users.filter((u) => u.activeMin > 0 || u.logins > 0) : [];
+  return (
+    <Wrap>
+      <SectionHead title="User activity" sub="Who is using the app, how much, and on which screens — logins from sign-ins, time from a heartbeat while the app is open" />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && users.length === 0 && <Note tone="ok" title="No activity in this window">No logins or app use recorded for {fmtD(d.from)} → {fmtD(d.to)}.</Note>}
+      {d && users.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>User</Th><Th right>Time in app</Th><Th right>Active days</Th><Th right>Logins</Th><Th>Top screen</Th><Th>Last seen</Th></tr></thead>
+              <tbody>{users.map((u) => (
+                <tr key={u.actorId} onClick={() => setUser(u)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+                  <Td>{u.name || u.login}<span style={{ color: "var(--steel)" }}> ›</span><div style={{ fontSize: 10, color: "var(--steel)" }}>{u.login} · {u.kind}</div></Td>
+                  <Td right style={{ fontWeight: 700 }}>{u.activeMin ? mins(u.activeMin) : "—"}</Td>
+                  <Td right>{u.activeDays || "—"}</Td>
+                  <Td right>{u.logins || "—"}</Td>
+                  <Td>{u.topScreen || "—"}</Td>
+                  <Td style={{ color: "var(--steel)", whiteSpace: "nowrap" }}>{u.lastSeen || "—"}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {user && (
+        <DetailSheet title={user.name || user.login} sub={`${user.login} · ${user.kind}`} onClose={() => setUser(null)}>
+          {!ud ? <div style={{ color: "var(--steel)" }}>Loading…</div> : (
+            <>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <CountPill n={mins(ud.totals.activeMin)} label="Time in app" tone="ok" />
+                <CountPill n={ud.totals.activeDays} label="Active days" tone="ok" />
+                <CountPill n={ud.totals.logins} label="Logins" tone="ok" />
+                <CountPill n={ud.totals.sessions} label="Times opened" tone="ok" />
+              </div>
+              {ud.days.length === 0 && <Note tone="ok" title="Nothing in this window">No logins or app use recorded.</Note>}
+              {ud.days.slice().reverse().map((day) => (
+                <Panel key={day.date} style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontWeight: 700 }}>
+                    <span>{fmtD(day.date)}</span>
+                    <span className="mono">{day.activeMin ? mins(day.activeMin) : "—"}{day.firstSeen ? <span style={{ color: "var(--steel)", fontWeight: 400 }}> · {day.firstSeen}–{day.lastSeen}</span> : ""}</span>
+                  </div>
+                  {day.logins.length > 0 && <div className="mono" style={{ fontSize: 12, marginTop: 4 }}>Logins: {day.logins.map((l) => `${l.time} ${l.device}`).join(" · ")}</div>}
+                  {day.screens.length > 0 && <div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--steel)" }}>Screens: {day.screens.map((s) => `${s.screen} ${s.minutes}m`).join(" · ")}</div>}
+                </Panel>
+              ))}
+              <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 6 }}>{ud.note}</div>
+            </>
+          )}
+        </DetailSheet>
       )}
     </Wrap>
   );
