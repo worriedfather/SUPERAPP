@@ -4262,7 +4262,19 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   const openItems = q ? (q.openItems || []) : [];
   const openDays = openItems.length;
   const openShort = openItems.reduce((a, r) => a + (r.unbanked == null ? Math.max(0, (r.expected || 0) - (r.depConfirmed || 0)) : r.unbanked), 0);
-  const provisionalDays = openItems.filter((r) => r.provisional).length;
+  const provisionalOpen = openItems.filter((r) => r.provisional);
+  const provisionalDays = provisionalOpen.length;
+  // BY DAY. The cash office works one TRADING DAY at a time across all sites, in the
+  // order the receipts were written — on 13 Sep 2026 they closed all of the 12th and never
+  // saw that the 11th (55 site-days) was still open. Day chips put every open day in front
+  // of them, newest first, with a count; tap one → that day's sites, tap a site → close it.
+  const [dayPick, setDayPick] = useState(null);
+  const byDay = (() => {
+    const m = new Map();
+    for (const r of openItems) { const g = m.get(r.date) || { date: r.date, n: 0, expected: 0 }; g.n++; g.expected += r.expected || 0; m.set(r.date, g); }
+    return [...m.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  })();
+  const dayRows = dayPick ? openItems.filter((r) => r.date === dayPick).sort((a, b) => String(a.site || "").localeCompare(String(b.site || ""))) : [];
   // Tap a line in the "Sent to HQ" banner → land straight on that site-day's close.
   const pickPending = (o) => {
     const hit = openItems.find((r) => String(r.date) === String(o.tradingDate) && String(r.site || "").toLowerCase() === String(o.site || "").toLowerCase());
@@ -4310,8 +4322,8 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
               onClick={() => setGd({ title: "Open days — by site", sub: `${openDays} day-close${openDays === 1 ? "" : "s"} still open · all outstanding days`, render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Oldest", "oldest", (v) => fmtD(v)]], "openDays", { sumCols: false, totalLabel: `${openDays} open` }) })} />
           </div>
           {provisionalDays > 0 && (
-            <Note tone="amber" title={`${provisionalDays} site-day${provisionalDays === 1 ? "" : "s"} provisional`}>
-              The official day-end figures reach {(q && q.asOf) ? fmtD(q.asOf) : d.asOf ? fmtD(d.asOf) : "—"}. For days after that, expected cash is the site&apos;s own declaration until the official figure lands — you can confirm receipts and close those days now; the figure updates itself when the report arrives.
+            <Note tone="amber" title={`${provisionalDays} open site-day${provisionalDays === 1 ? "" : "s"} still on the site's own figure`}>
+              Official day-end figures are in up to <b>{(q && q.asOf) ? fmtD(q.asOf) : d.asOf ? fmtD(d.asOf) : "—"}</b>. These open days have no official line for that site yet, so expected cash is what the site declared: {provisionalOpen.slice(0, 6).map((r) => `${r.site} · ${fmtD(r.date)}`).join(", ")}{provisionalOpen.length > 6 ? ` +${provisionalOpen.length - 6} more` : ""}. You can confirm and close them now; the figure corrects itself if an official line arrives.
             </Note>
           )}
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -4323,7 +4335,35 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
               ? <Panel><div style={{ color: "var(--steel)" }}>Loading open days…</div></Panel>
               : bySite.length === 0
               ? <Note tone="ok" title="Nothing open">Every site-day the sites have declared is confirmed and closed.</Note>
-              : (
+              : (<>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+                  <span className="lbl" style={{ marginRight: 4 }}>Open by day</span>
+                  <button type="button" className="disp" onClick={() => setDayPick(null)} style={{ border: "1px solid var(--line)", background: dayPick == null ? "var(--navy)" : "#fff", color: dayPick == null ? "#fff" : "var(--navy)", borderRadius: 20, padding: "4px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>By site</button>
+                  {byDay.slice(0, 10).map((g) => (
+                    <button key={g.date} type="button" className="disp" onClick={() => setDayPick(g.date)} style={{ border: "1px solid #F3D48A", background: dayPick === g.date ? "#B23B3B" : "#FFF7E6", color: dayPick === g.date ? "#fff" : "var(--navy)", borderRadius: 20, padding: "4px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {fmtD(g.date)} · {g.n}
+                    </button>
+                  ))}
+                  {byDay.length > 10 && <span style={{ fontSize: 11, color: "var(--steel)" }}>+{byDay.length - 10} older days (in By site)</span>}
+                </div>
+                {dayPick ? (
+                <Panel style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--steel)", borderBottom: "1px solid var(--line)" }}><b style={{ color: "var(--navy)" }}>{fmtD(dayPick)}</b> · {dayRows.length} site{dayRows.length === 1 ? "" : "s"} still open · {$(dayRows.reduce((a, r) => a + (r.expected || 0), 0))} expected — tap a site to record the cash received and close it</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Expected cash</Th><Th right>Received</Th><Th right>Still short</Th></tr></thead>
+                      <tbody>{dayRows.map((r) => (
+                        <tr key={r.siteId + r.date} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: "#FFF7E6" }}>
+                          <Td>{r.site}<span style={{ color: "var(--steel)" }}> ›</span>{r.provisional && <div style={{ fontSize: 10, color: "#B26A00" }}>site-declared · official pending</div>}</Td>
+                          <Td right style={{ fontWeight: 700 }}>{$(r.expected)}</Td>
+                          <Td right>{r.received == null ? "—" : $(r.received)}</Td>
+                          <Td right style={{ color: r.unbanked > 0 ? "var(--red)" : "var(--steel)", fontWeight: 700 }}>{r.unbanked == null ? "—" : $(r.unbanked)}</Td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </Panel>
+                ) : (
                 <Panel style={{ padding: 0, overflow: "hidden" }}>
                   <div style={{ overflowX: "auto" }}>
                     <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -4340,7 +4380,8 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
                     </table>
                   </div>
                 </Panel>
-              )
+                )}
+              </>)
           ) : (
             rows.length === 0
               ? <Note tone="ok" title="No days in window">No cash days found for this window.</Note>
