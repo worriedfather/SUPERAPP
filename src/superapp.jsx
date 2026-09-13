@@ -5929,7 +5929,11 @@ const vcf = (tempC, commodity) => {
 
 export function DeliverySubmit({ me, initial, onLeave }) {
   const emptyTank = { tank: "", product: "", openMm: "", openL: "", closeMm: "", closeL: "", temp: "", settleL: "" };   // settleL = litres SOLD from this tank while the fuel settled (pump totalizer)
-  const [f, setF] = useState({ dnDate: todayISO(), tripNo: "", site: "", commodity: "Diesel", density: "", qtyLoaded: "", truckReg: "", truckName: "", trailer: "", note: "" });
+  // dropIndex = which OCCURRENCE of the trip's drops this note is for (0-based index into
+  // trip.drops). A trip can drop at the SAME site twice with different litres (TR-00181:
+  // Chivhu Northwood 15,000 then 7,000) — resolving the drop by site name always picked the
+  // first one, so the second was unreachable. The index travels with the note to the server.
+  const [f, setF] = useState({ dnDate: todayISO(), tripNo: "", site: "", dropIndex: null, commodity: "Diesel", density: "", qtyLoaded: "", truckReg: "", truckName: "", trailer: "", note: "" });
   const [sites, setSites] = useState([]);
   const [trips, setTrips] = useState([]);
   const [tanks, setTanks] = useState([]);            // per site-tank dips
@@ -5993,7 +5997,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
     // THIS site, not the whole truck. Auto-select the first drop and set the quantity to
     // that drop's litres (never t.qty, the full load). pickDrop keeps them in step after.
     const d0 = t && Array.isArray(t.drops) && t.drops[0];
-    setF((s) => ({ ...s, tripNo: tn, ...(t ? { commodity: t.product, truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer, qtyLoaded: String((d0 && d0.qty) || s.qtyLoaded), site: (d0 && d0.site) || s.site } : {}) }));
+    setF((s) => ({ ...s, tripNo: tn, ...(t ? { commodity: t.product, truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer, qtyLoaded: String((d0 && d0.qty) || s.qtyLoaded), site: (d0 && d0.site) || s.site, dropIndex: d0 ? 0 : null } : {}) }));
   };
   // temperature-corrected loss preview
   const preview = useMemo(() => {
@@ -6022,9 +6026,19 @@ export function DeliverySubmit({ me, initial, onLeave }) {
   // picker / "no scheduled trips" message instead of a dead 🔒 with no trip and a disabled
   // drop — which left supervisors unable to pick a site or load tanks.
   const locked = !!(initial && initial.tripNo) && !freed && trips.some((t) => t.tripNo === initial.tripNo);
-  const pickDrop = (siteName) => {
-    const d = tripDrops.find((x) => x.site === siteName);
-    setF((s) => ({ ...s, site: siteName, ...(d && d.qty ? { qtyLoaded: String(d.qty) } : {}) }));
+  // The picker's value is the drop INDEX (as a string), never the site name — two drops at
+  // the same site must stay two distinct choices with their own litres.
+  const pickDrop = (idx) => {
+    const i = Number(idx);
+    const d = Number.isInteger(i) ? tripDrops[i] : null;
+    if (!d) return;
+    setF((s) => ({ ...s, site: d.site, dropIndex: i, ...(d.qty ? { qtyLoaded: String(d.qty) } : {}) }));
+  };
+  // "Chivhu Northwood · 7,000L (2nd drop here)" when the site repeats in the trip.
+  const dropLabel = (d, i) => {
+    const nth = tripDrops.slice(0, i + 1).filter((x) => x.site === d.site).length;
+    const dup = tripDrops.filter((x) => x.site === d.site).length > 1;
+    return `${d.site} · ${L(d.qty)}L${dup ? ` (${nth === 1 ? "1st" : nth === 2 ? "2nd" : nth === 3 ? "3rd" : nth + "th"} drop here)` : ""}`;
   };
   // Deep-link from "Deliveries due": pre-select the trip + drop so the driver lands
   // straight on the note for the trip they tapped — no re-selecting.
@@ -6038,12 +6052,18 @@ export function DeliverySubmit({ me, initial, onLeave }) {
     // (e.g. Gletwyn 10,000) even though the chosen drop was Graniteside 8,000. Resolve the
     // chosen drop straight off `t` and set its site + qty together.
     const drops = Array.isArray(t.drops) ? t.drops : [];
-    const chosen = (initial.site && drops.find((x) => x.site === initial.site)) || drops[0] || null;
+    // Prefer the exact drop occurrence the row pointed at (dropIndex from Deliveries due);
+    // fall back to the first drop with that site name, then the first drop.
+    const byIdx = Number.isInteger(initial.dropIndex) && drops[initial.dropIndex] && (!initial.site || drops[initial.dropIndex].site === initial.site) ? initial.dropIndex : -1;
+    const chosenIdx = byIdx >= 0 ? byIdx : (initial.site ? drops.findIndex((x) => x.site === initial.site) : -1);
+    const idx = chosenIdx >= 0 ? chosenIdx : (drops.length ? 0 : -1);
+    const chosen = idx >= 0 ? drops[idx] : null;
     setF((s) => ({
       ...s, tripNo: t.tripNo,
       commodity: t.product || s.commodity,
       truckName: t.truck || s.truckName, truckReg: t.truckReg || s.truckReg, trailer: t.trailer || s.trailer,
       site: (chosen && chosen.site) || s.site,
+      dropIndex: chosen ? idx : s.dropIndex,
       qtyLoaded: String((chosen && chosen.qty) || s.qtyLoaded),
     }));
     setPrefilled(true);
@@ -6066,6 +6086,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
     try {
       const r = await postAppDelivery({
         dnDate: f.dnDate, tripNo: f.tripNo || null, site: f.site, commodity: f.commodity,
+        dropIndex: Number.isInteger(f.dropIndex) ? f.dropIndex : undefined,   // which occurrence of the site in this trip
         density: f.density, qtyLoaded, truckReg: f.truckReg, truckName: f.truckName, trailer: f.trailer, note: f.note,
         siteTanks: bulkSite ? [] : tanks.filter((t) => t.closeL !== "" || t.openL !== ""),
         siteDip: bulkSite ? Number(bulkQty) : undefined,
@@ -6141,8 +6162,8 @@ export function DeliverySubmit({ me, initial, onLeave }) {
           {(!trip || trip.collected) && (<>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 170px" }}><Field label="Drop site">
-              <Picker value={f.site} onChange={pickDrop} disabled={!f.tripNo} placeholder={f.tripNo ? "Select drop…" : "Pick a trip first"} title="Drop site"
-                options={tripDrops.map((d) => ({ value: d.site, label: `${d.site} · ${L(d.qty)}L` }))} /></Field></div>
+              <Picker value={Number.isInteger(f.dropIndex) ? String(f.dropIndex) : ""} onChange={pickDrop} disabled={!f.tripNo} placeholder={f.tripNo ? "Select drop…" : "Pick a trip first"} title="Drop site"
+                options={tripDrops.map((d, i) => ({ value: String(i), label: dropLabel(d, i) }))} /></Field></div>
             <div style={{ flex: "1 1 100px" }}><Field label="Date"><input type="date" value={f.dnDate} onChange={(e) => set("dnDate")(e.target.value)} /></Field></div>
           </div>
           {/* quantity loaded — at the top */}
@@ -6621,7 +6642,7 @@ export function DeliveriesDue({ onGo }) {
       finally { setBusy(null); }
       return;
     }
-    if (onGo && s.tab) onGo(s.tab, { tripNo: p.tripNo, site: p.site });
+    if (onGo && s.tab) onGo(s.tab, { tripNo: p.tripNo, site: p.site, dropIndex: Number.isInteger(p.dropIndex) ? p.dropIndex : null });
   };
   if (!d || !d.count) return null;   // nothing due → show nothing
   return (
@@ -7619,7 +7640,7 @@ export function ApprovedDeliveries({ onCapture } = {}) {
                   {x.noSiteCapture && <div style={{ fontSize: 10.5, color: "#B23B3B", marginTop: 2 }}>No site here to capture — re-allocate this drop (edit the trip) before it can be noted.</div>}
                 </div>
                 {!x.noSiteCapture && onCapture && (
-                  <button type="button" className="pill" style={{ padding: "7px 13px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => onCapture(x.tripNo, x.site)}>Capture note</button>
+                  <button type="button" className="pill" style={{ padding: "7px 13px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => onCapture(x.tripNo, x.site, Number.isInteger(x.dropIndex) ? x.dropIndex : null)}>Capture note</button>
                 )}
               </div>
             ))}

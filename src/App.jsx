@@ -921,7 +921,7 @@ function App() {
     const have = (k) => tabs.some(([x]) => x === k);
     const target = have(t) ? t : ((TAB_HOMES[t] || []).find(have) || "inbox");
     setTab(target); setFocus(d || null);
-    if (d && (d.trip || d.dn || d.site)) setDeliverPrefill({ tripNo: d.trip || null, site: d.site || null, dn: d.dn || null });
+    if (d && (d.trip || d.dn || d.site)) setDeliverPrefill({ tripNo: d.trip || null, site: d.site || null, dn: d.dn || null, dropIndex: Number.isInteger(Number(d.dropIndex)) && d.dropIndex !== "" && d.dropIndex != null ? Number(d.dropIndex) : null });
   };
   const [rail, setRail] = useState(() => { try { return localStorage.getItem("da_rail") === "1"; } catch { return false; } });
   const [showAbout, setShowAbout] = useState(false);
@@ -1242,7 +1242,7 @@ function App() {
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "recovery" && <DriverRecovery />}
         {tab === "incoming" && <DeliveriesInProgress />}
-        {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site) => { setDeliverPrefill({ tripNo, site }); setTab("deliver"); }} />}
+        {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site, dropIndex) => { setDeliverPrefill({ tripNo, site, dropIndex: Number.isInteger(dropIndex) ? dropIndex : null }); setTab("deliver"); }} />}
         {tab === "flow" && <DeliveryFlow />}
         {tab === "logistics" && <LogisticsDashboard />}
         {tab === "league" && <DriverLeague />}
