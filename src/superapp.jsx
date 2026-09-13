@@ -2525,7 +2525,7 @@ export function ExecutiveDashboard({ me } = {}) {
   // ribbon does not drive them, so we hide it there rather than show a control that
   // does nothing (audit: misleading ribbon).
   const SELF_PERIOD = [];   // every section follows the ONE standard ribbon at the top
-  const pw = periodWindow(period, range);
+  const pwCal = periodWindow(period, range);
   // Drill-down that lands on the EXACT section: switch tab, then scroll that
   // section (by id) into view once it renders. Use goTo(tab, sectionId).
   const [focusSec, setFocusSec] = useState(null);
@@ -2552,6 +2552,15 @@ export function ExecutiveDashboard({ me } = {}) {
     return () => clearTimeout(timer);
   }, [tab, focusSec, d]);
   const k = d?.kpis;
+  // The embedded sections (Losses, Cash, Inflows, …) must look at the SAME day the header
+  // names. For Today/Yesterday the header shows the server's asOf — the latest trading day
+  // that has day-end data (on 13 Sep 2026 at 19:00 that is the 12th) — but the sections were
+  // handed the CALENDAR day (the 13th), which has no day-end yet, so Losses read "No day-end
+  // data yet" under a header saying "Showing today · 12 September". Follow asOf.
+  const asOfDay = (period === "today" || period === "yesterday") && d?.asOf?.date ? String(d.asOf.date) : null;
+  const pw = asOfDay && asOfDay !== pwCal.to
+    ? { ...pwCal, days: 1, date: asOfDay, retailDate: asOfDay, from: asOfDay, to: asOfDay, label: `${period === "today" ? "Today" : "Yesterday"} · ${fmtD(asOfDay)}` }
+    : pwCal;
   const pLabel = { yesterday: "Yesterday", today: "Today", month: "This month", lastmonth: "Last month", year: "This year", range: "Range" }[period] || "This period";
   // noun used in comparative labels ("vs the same MONTH last year", "vs the previous MONTH")
   const cmpWord = { yesterday: "day", today: "day", month: "month", lastmonth: "month", year: "period", range: "range" }[period] || "period";
