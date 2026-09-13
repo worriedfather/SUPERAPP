@@ -1197,12 +1197,14 @@ const CASH_LEGS = [
 // Persistent "sent to HQ — awaiting confirmation" notice. Derived (no manual dismiss):
 // it lists what a site declared sent to head office that the cash office hasn't yet
 // confirmed, and clears itself the moment they confirm/close the day.
-function HqPendingBanner({ site, forCashOffice = false }) {
+function HqPendingBanner({ site, forCashOffice = false, onPick = null }) {
   const [d, setD] = useState(null);
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => { let live = true; getHqPending(site).then((r) => { if (live) setD(r); }).catch(() => {}); return () => { live = false; }; }, [site]);
   if (!d || !d.pending || !d.pending.length) return null;
   const $ = (v) => "$" + full(v);
   const overdue = d.pending.filter((o) => o.overdue).length;
+  const lines = showAll ? d.pending : d.pending.slice(0, 8);
   return (
     <div style={{ background: "#FFF7E6", border: "1px solid #F3D48A", borderLeft: `4px solid ${overdue ? "#B23B3B" : "#C79A2E"}`, borderRadius: 12, padding: "11px 14px", marginBottom: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
@@ -1216,13 +1218,18 @@ function HqPendingBanner({ site, forCashOffice = false }) {
           : "You've reported this cash sent to head office; the cash office hasn't confirmed it yet. It clears on its own once they confirm — nothing to do unless it's overdue."}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
-        {d.pending.slice(0, 8).map((o, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
-            <span style={{ color: "var(--ink)" }}>{forCashOffice ? `${o.site} · ` : ""}{fmtD(o.tradingDate)}{o.overdue ? <b style={{ color: "#B23B3B" }}> · overdue</b> : ""}</span>
+        {lines.map((o, i) => (
+          <div key={i} onClick={onPick ? () => onPick(o) : undefined} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, cursor: onPick ? "pointer" : "default" }}>
+            <span style={{ color: "var(--ink)" }}>{forCashOffice ? `${o.site} · ` : ""}{fmtD(o.tradingDate)}{o.overdue ? <b style={{ color: "#B23B3B" }}> · overdue</b> : ""}{onPick ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</span>
             <span className="mono" style={{ color: "var(--navy)", fontWeight: 700 }}>{$(o.pending)}</span>
           </div>
         ))}
-        {d.pending.length > 8 && <span style={{ fontSize: 11, color: "var(--steel)" }}>+{d.pending.length - 8} more</span>}
+        {d.pending.length > 8 && (
+          <button type="button" onClick={() => setShowAll((v) => !v)} className="disp" style={{ alignSelf: "flex-start", border: "none", background: "transparent", padding: 0, fontSize: 11, color: "var(--blue)", cursor: "pointer", fontWeight: 700 }}>
+            {showAll ? "show fewer" : `+${d.pending.length - 8} more — show all`}
+          </button>
+        )}
+        {onPick && <span style={{ fontSize: 10.5, color: "var(--steel)" }}>Tap a line to open that day&apos;s close.</span>}
       </div>
     </div>
   );
@@ -4241,14 +4248,32 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   const [gd, setGd] = useState(null);   // general pill drill
   const [onlyOpen, setOnlyOpen] = useState(true);
   useEffect(() => { setD(null); setErr(null); const w = extWindow || periodWindow(period, range); getCashRecon(w.days, w.from, w.to).then(setD).catch((e) => setErr(e.message)); }, [period, range.from, range.to, extWindow && extWindow.from, extWindow && extWindow.to, reloadKey]);
+  // THE WORK QUEUE IS NOT A REPORT. Open site-days are fetched for the whole outstanding
+  // backlog (last 90 days, no upper bound, so today's provisional days are in) and shown
+  // regardless of the period selector. Twice (12 + 13 Sep 2026) the cash office opened the
+  // screen on "Today", which has no trading days yet, and read "$0 expected · nothing open"
+  // while 49 site-days from the 11th sat unconfirmed in the banner above it. The period bar
+  // now only scopes the Expected/Received figures and the "all days" table.
+  const [q, setQ] = useState(null);
+  useEffect(() => { let live = true; getCashRecon(90).then((r) => { if (live) setQ(r); }).catch(() => { if (live) setQ({ openItems: [], summary: {} }); }); return () => { live = false; }; }, [reloadKey]);
   const reload = () => setReloadKey((k) => k + 1);
   const $ = (v) => "$" + full(v);
   const rows = d ? [...(onlyOpen ? d.openItems : d.rows)].sort((a, b) => String(a.site || "").localeCompare(String(b.site || "")) || String(a.date).localeCompare(String(b.date))) : [];
+  const openItems = q ? (q.openItems || []) : [];
+  const openDays = openItems.length;
+  const openShort = openItems.reduce((a, r) => a + (r.unbanked == null ? Math.max(0, (r.expected || 0) - (r.depConfirmed || 0)) : r.unbanked), 0);
+  const provisionalDays = openItems.filter((r) => r.provisional).length;
+  // Tap a line in the "Sent to HQ" banner → land straight on that site-day's close.
+  const pickPending = (o) => {
+    const hit = openItems.find((r) => String(r.date) === String(o.tradingDate) && String(r.site || "").toLowerCase() === String(o.site || "").toLowerCase());
+    if (hit) setDrill(hit);
+    else setGd({ title: `${o.site} · ${fmtD(o.tradingDate)}`, sub: "not in the open queue", render: () => <Note tone="amber" title="Day already closed">This site-day is closed in the cash office, but the site still shows its remittance as unconfirmed. Reopen it from “Showing all days” with a wider period to confirm the receipt.</Note> });
+  };
   // Open view: one line per site — the accumulated still-open exposure — instead of
   // one line per site-day (which runs to hundreds of rows). Tap a site to see its days.
   const bySite = (() => {
     const m = new Map();
-    for (const r of (d && onlyOpen ? d.openItems : [])) {
+    for (const r of (onlyOpen ? openItems : [])) {
       let g = m.get(r.siteId);
       if (!g) { g = { siteId: r.siteId, site: r.site, days: [], openDays: 0, provisional: 0, expected: 0, received: 0, banked: 0, unbanked: 0, oldest: r.date, recvNull: false }; m.set(r.siteId, g); }
       g.days.push(r);
@@ -4269,7 +4294,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
       <SectionHead title="Cash office — banking reconciliation" sub={readOnly ? "Banked vs expected, by site and day — view only" : "Confirm site deposits, record the cash received, and close each day"} />
       {!extWindow && <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />}
       <RefreshBar data={d} busy={!d && !err} onRefresh={reload} />
-      {!readOnly && <HqPendingBanner forCashOffice />}
+      {!readOnly && <HqPendingBanner forCashOffice onPick={pickPending} />}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
       {d && (
@@ -4279,22 +4304,25 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
               onClick={() => setGd({ title: "Expected cash — by site & day", sub: `${$(d.summary.expected)} · every day in this window`, render: breakdownDrill(d.rows, ["Site · day", (r) => `${r.site} · ${fmtD(r.date)}`], [["Expected", "expected", $full]], "expected") })} />
             <CountPill n={$(d.summary.received)} label="Received cash" tone="ok"
               onClick={() => setGd({ title: "Received cash — by site & day", sub: `${$(d.summary.received)} · confirmed received`, render: breakdownDrill(d.rows, ["Site · day", (r) => `${r.site} · ${fmtD(r.date)}`], [["Received", "received", $full]], "received") })} />
-            <CountPill n={$(d.summary.openShort != null ? d.summary.openShort : d.summary.shortfall)} label="Still short (open)" tone={(d.summary.openShort ?? d.summary.shortfall) > 0 ? "red" : "ok"}
-              onClick={() => setGd({ title: "Still short — open days by site", sub: "cash expected but not yet banked/confirmed", render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Still short", "unbanked", $full]], "unbanked") })} />
-            <CountPill n={d.summary.openDays} label="Open days" tone={d.summary.openDays ? "amber" : "ok"}
-              onClick={() => setGd({ title: "Open days — by site", sub: `${d.summary.openDays} day-close${d.summary.openDays === 1 ? "" : "s"} still open`, render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Oldest", "oldest", (v) => fmtD(v)]], "openDays", { sumCols: false, totalLabel: `${d.summary.openDays} open` }) })} />
+            <CountPill n={$(openShort)} label="Still short (open)" tone={openShort > 0 ? "red" : "ok"}
+              onClick={() => setGd({ title: "Still short — open days by site", sub: "cash expected but not yet banked/confirmed · all outstanding days", render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Still short", "unbanked", $full]], "unbanked") })} />
+            <CountPill n={openDays} label="Open days" tone={openDays ? "amber" : "ok"}
+              onClick={() => setGd({ title: "Open days — by site", sub: `${openDays} day-close${openDays === 1 ? "" : "s"} still open · all outstanding days`, render: breakdownDrill(bySite, ["Site", "site"], [["Open days", "openDays", (v) => v], ["Oldest", "oldest", (v) => fmtD(v)]], "openDays", { sumCols: false, totalLabel: `${openDays} open` }) })} />
           </div>
-          {d.summary.provisionalDays > 0 && (
-            <Note tone="amber" title={`${d.summary.provisionalDays} site-day${d.summary.provisionalDays === 1 ? "" : "s"} provisional`}>
-              The official day-end figures reach {d.asOf ? fmtD(d.asOf) : "—"}. For days after that, expected cash is the site&apos;s own declaration until the official figure lands — you can confirm receipts and close those days now; the figure updates itself when the report arrives.
+          {provisionalDays > 0 && (
+            <Note tone="amber" title={`${provisionalDays} site-day${provisionalDays === 1 ? "" : "s"} provisional`}>
+              The official day-end figures reach {(q && q.asOf) ? fmtD(q.asOf) : d.asOf ? fmtD(d.asOf) : "—"}. For days after that, expected cash is the site&apos;s own declaration until the official figure lands — you can confirm receipts and close those days now; the figure updates itself when the report arrives.
             </Note>
           )}
           <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button className="disp" onClick={() => setOnlyOpen((v) => !v)} style={{ border: "1px solid var(--line)", background: onlyOpen ? "var(--navy)" : "#fff", color: onlyOpen ? "#fff" : "var(--navy)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{onlyOpen ? "Showing open days" : "Showing all days"}</button>
+            {onlyOpen && <span style={{ fontSize: 11.5, color: "var(--steel)" }}>every unconfirmed site-day, any date — the period above only scopes the figures</span>}
           </div>
           {onlyOpen ? (
-            bySite.length === 0
-              ? <Note tone="ok" title="Nothing open">Every day in this window is closed.</Note>
+            !q
+              ? <Panel><div style={{ color: "var(--steel)" }}>Loading open days…</div></Panel>
+              : bySite.length === 0
+              ? <Note tone="ok" title="Nothing open">Every site-day the sites have declared is confirmed and closed.</Note>
               : (
                 <Panel style={{ padding: 0, overflow: "hidden" }}>
                   <div style={{ overflowX: "auto" }}>
