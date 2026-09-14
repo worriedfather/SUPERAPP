@@ -4437,7 +4437,7 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
           </table>
         </div>
       </DetailSheet>}
-      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${drill.date}`} onClose={() => setDrill(null)}><CashOfficeDay row={drill} readOnly={readOnly} onDone={() => { setDrill(null); setSiteDrill(null); reload(); }} /></DetailSheet>}
+      {drill && <DetailSheet title={drill.site} sub={`Cash day · ${fmtD(drill.date)}`} onClose={() => setDrill(null)}><CashOfficeDay key={drill.siteId + drill.date} row={drill} siblings={openItems.filter((r) => r.siteId === drill.siteId && r.date !== drill.date)} onSwitch={(r) => setDrill(r)} readOnly={readOnly} onDone={() => { setDrill(null); setSiteDrill(null); reload(); }} /></DetailSheet>}
       {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Wrap>
   );
@@ -4445,10 +4445,19 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
 
 // The per-day drill: confirm/reject each deposit (view its slip), enter the cash
 // received, and close the day.
-function CashOfficeDay({ row, onDone, readOnly = false }) {
+function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch = null }) {
   const [deposits, setDeposits] = useState(row.deposits);
   const [cashReceived, setCashReceived] = useState(row.received != null ? String(row.received) : "");
   const [receiptNo, setReceiptNo] = useState("");
+  // WRONG-DAY GUARD. The clerk keys the envelope amount; if it equals what this site
+  // declared for a DIFFERENT open day (and not this one), they are almost certainly
+  // closing the wrong trading day — exactly what happened on 13 Sep 2026 (24 sites'
+  // 11-Sep envelopes keyed against 12 Sep). Name the day, offer to switch, and require
+  // an explicit tick to proceed anyway.
+  const [confirmDay, setConfirmDay] = useState(false);
+  const keyed = Number(cashReceived);
+  const near = (a, b) => Number.isFinite(a) && b > 0 && Math.abs(a - b) <= 5;
+  const twin = cashReceived !== "" && keyed > 0 && !near(keyed, row.hqSent || 0) ? siblings.find((s) => near(keyed, s.hqSent || 0)) : null;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [slip, setSlip] = useState(null);   // {seq, url|null}
@@ -4485,6 +4494,7 @@ function CashOfficeDay({ row, onDone, readOnly = false }) {
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <CountPill n={$(row.expected)} label="Expected cash" tone="ok" />
+        <CountPill n={$(row.hqSent || 0)} label={`Sent to HQ · site's figure for ${fmtD(row.date)}`} tone={row.hqSent > 0 ? "amber" : "ok"} />
         <CountPill n={$(confirmedBanked)} label="Confirmed banked" tone="ok" />
         {unbanked != null && <CountPill n={$(unbanked)} label="Unbanked" tone={unbanked > 0 ? "amber" : "ok"} />}
       </div>
@@ -4522,7 +4532,18 @@ function CashOfficeDay({ row, onDone, readOnly = false }) {
                 {shortfall > 0 ? `$${L(shortfall)} short of expected cash.` : shortfall < 0 ? `$${L(-shortfall)} over expected.` : "Matches expected cash."}
               </div>
             )}
-            <button className="pill" disabled={busy} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : "Close day"}</button>
+            {twin && (
+              <Note tone="red" title={`This looks like ${fmtD(twin.date)}'s envelope, not ${fmtD(row.date)}'s`}>
+                {row.site} declared <b>${L(twin.hqSent)}</b> sent to HQ for <b>{fmtD(twin.date)}</b>, which is still open — and <b>${L(row.hqSent || 0)}</b> for {fmtD(row.date)}, the day you are closing.
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {onSwitch && <button type="button" className="pill" onClick={() => onSwitch(twin)} style={{ padding: "7px 13px", fontSize: 12 }}>Close {fmtD(twin.date)} instead</button>}
+                  <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                    <input type="checkbox" checked={confirmDay} onChange={(e) => setConfirmDay(e.target.checked)} /> This really is {fmtD(row.date)}'s cash
+                  </label>
+                </div>
+              </Note>
+            )}
+            <button className="pill" disabled={busy || (!!twin && !confirmDay)} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : `Close ${fmtD(row.date)}`}</button>
           </>
         )}
       </div>
