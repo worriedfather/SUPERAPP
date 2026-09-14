@@ -1603,6 +1603,20 @@ function FuelContextBanner({ ctx }) {
           ? (ctx.alreadyAllocatedBefore > 0 && <> · earlier fills {L(ctx.alreadyAllocatedBefore)} L · this request {ctx.thisRequest ? L(ctx.thisRequest.litres) : "—"} L</>)
           : (<> · already allocated {L(ctx.alreadyAllocated)} L · <b style={{ color: "var(--navy)" }}>{L(ctx.headroom)} L</b> headroom</>)}
       </div>
+      {/* ADVISORY (owner, 2026-09-14 — no gate): the truck's MEASURED km/L against the estimate,
+          so an approver padding "+10–15%" sees whether the extra litres are justified. */}
+      {review && ctx.truck && ctx.truck.actualKmpl != null && (
+        <div style={{ marginTop: 6, fontSize: 12 }}>
+          <b>{ctx.truck.code}</b> actually does <b>{ctx.truck.actualKmpl} km/L</b> over {ctx.truck.legs} fills (estimate assumed {ctx.truck.plannedKmpl ?? "—"}).
+          {ctx.truck.litresAtActual != null && <> At that rate this route needs about <b>{L(ctx.truck.litresAtActual)} L</b>{ctx.truck.estimate != null ? <> vs the <b>{L(ctx.truck.estimate)} L</b> estimate</> : null}.</>}
+          {ctx.truck.modelVsActualPct != null && (ctx.truck.modelVsActualPct > 110
+            ? <span style={{ color: "#A23A2E", fontWeight: 700 }}> The estimate runs low for this truck — extra litres are justified.</span>
+            : ctx.truck.modelVsActualPct < 95
+              ? <span style={{ color: "#2C6B3F", fontWeight: 700 }}> This truck beats its estimate — extra litres aren't needed for consumption.</span>
+              : null)}
+        </div>
+      )}
+      {review && ctx.truck && ctx.truck.actualKmpl == null && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--steel)" }}>No measured fills yet for {ctx.truck.code || "this truck"} — the estimate is the only reference.</div>}
       {!review && ctx.headroom != null && ctx.headroom <= 0 && (
         <div style={{ marginTop: 6, fontWeight: 700, color: "#A23A2E" }}>Already at the {ctx.capPct || 200}% cap — no more fuel can be added unless logistics grow the route.</div>
       )}
