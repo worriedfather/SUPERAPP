@@ -63,7 +63,9 @@ const addDaysISO = (ymd, n) => { const d = new Date(ymd + "T00:00:00Z"); d.setUT
 // Sensible default shift, still user-overridable. DA shift clock: DAY = 06:00–18:00,
 // NIGHT = 18:00–06:00 (crosses midnight). A 06:00–17:59 submission is the day shift;
 // anything from 18:00 through 05:59 is the night shift.
-const defaultShift = () => { const h = new Date().getHours(); return h >= 6 && h < 18 ? "day" : "night"; };
+// Harare hour (0–23) regardless of the device's timezone — the ONLY clock shifts are read from.
+const harareHour = () => { try { const h = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Harare", hour: "2-digit", hour12: false }).format(new Date())); return Number.isFinite(h) ? h % 24 : new Date().getHours(); } catch { return new Date().getHours(); } };
+const defaultShift = () => { const h = harareHour(); return h >= 6 && h < 18 ? "day" : "night"; };
 
 /* ---------- small shared UI (matches App.jsx classes) ---------- */
 const Panel = ({ children, style, onClick, id }) => (
@@ -348,7 +350,9 @@ export function ReminderBar({ me }) {
 /* ============================================================ *
  *  SITE MANAGER — submit hub (Stock / Price / Sales)
  * ============================================================ */
-const shiftNow = () => { const h = new Date().getHours(); return h >= 6 && h < 18 ? "day" : "night"; };
+// HARARE hour, never the device's: a phone or browser set to another zone (or abroad) was
+// picking the wrong shift and the wrong trading date (2026-09-14 date/shift hardening).
+const shiftNow = () => { const h = harareHour(); return h >= 6 && h < 18 ? "day" : "night"; };
 const shiftLabel = (s) => (s === "day" ? "Day shift · 06:00–18:00" : "Night shift · 18:00–06:00");
 // The freshest COMPLETE shift to review right now = the opposite of the one
 // currently being collected. Evening (day shift 17:00–23:59 collecting) → show
@@ -3600,6 +3604,47 @@ export function AllocationReport() {
             </tr>))}</tbody>
         </table>
       </div></Panel>
+      {/* WHO pads, and WHICH trucks — the two views that answer "is it the system or the humans?".
+          Advisory only (owner, 2026-09-14): nothing is blocked; the evidence is just unmissable. */}
+      {d.byApprover && d.byApprover.length > 0 && (<>
+        <div className="lbl" style={{ marginBottom: 6 }}>By approver</div>
+        <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Approver</Th><Th right>Reqs</Th><Th right>Over</Th><Th right>Under</Th><Th right>Estimated</Th><Th right>Allocated</Th><Th right>Alloc % of est.</Th></tr></thead>
+            <tbody>{d.byApprover.map((a) => (
+              <tr key={a.approver} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td>{a.approver}</Td><Td right>{a.requests}</Td>
+                <Td right style={{ color: a.over ? "var(--red)" : "var(--steel)" }}>{a.over || "—"}</Td>
+                <Td right style={{ color: a.under ? "#C77A15" : "var(--steel)" }}>{a.under || "—"}</Td>
+                <Td right>{full(a.estimated)}</Td><Td right>{full(a.allocated)}</Td>
+                <Td right style={{ fontWeight: 700, color: a.pct > 105 ? "var(--red)" : a.pct < 95 ? "#C77A15" : "var(--ok)" }}>{a.pct != null ? `${a.pct}%` : "—"}</Td>
+              </tr>))}</tbody>
+          </table>
+        </div></Panel>
+      </>)}
+      {d.byTruck && d.byTruck.length > 0 && (<>
+        <div className="lbl" style={{ marginBottom: 6 }}>By truck · what the estimate assumed vs what the truck actually does</div>
+        <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 6 }}>
+          <b>Actual km/L</b> is measured fill-to-fill over the last 90 days. <b>Model vs actual</b> over 100% means the estimate assumes better economy than the truck delivers (the estimate is genuinely low — a calibration case); under 100% means the truck beats its estimate, so any padding isn&apos;t justified by consumption.
+        </div>
+        <Panel style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}><div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Truck</Th><Th right>Reqs</Th><Th right>Over</Th><Th right>Alloc % of est.</Th><Th right>Assumed km/L</Th><Th right>Actual km/L</Th><Th right>Legs</Th><Th right>Model vs actual</Th></tr></thead>
+            <tbody>{d.byTruck.map((t) => (
+              <tr key={t.truck} style={{ borderTop: "1px solid var(--line)" }}>
+                <Td>{t.truck}</Td><Td right>{t.requests}</Td>
+                <Td right style={{ color: t.over ? "var(--red)" : "var(--steel)" }}>{t.over || "—"}</Td>
+                <Td right style={{ fontWeight: 700, color: t.pct > 105 ? "var(--red)" : t.pct < 95 ? "#C77A15" : "var(--ok)" }}>{t.pct != null ? `${t.pct}%` : "—"}</Td>
+                <Td right>{t.plannedKmpl ?? "—"}</Td>
+                <Td right>{t.actualKmpl ?? "—"}</Td>
+                <Td right style={{ color: "var(--steel)" }}>{t.legs || "—"}</Td>
+                <Td right style={{ fontWeight: 700, color: t.modelVsActualPct == null ? "var(--steel)" : t.modelVsActualPct > 110 ? "var(--red)" : t.modelVsActualPct < 95 ? "var(--ok)" : "var(--navy)" }}>
+                  {t.modelVsActualPct == null ? "no fills yet" : `${t.modelVsActualPct}%${t.modelVsActualPct > 110 ? " · estimate low" : t.modelVsActualPct < 95 ? " · beats estimate" : ""}`}
+                </Td>
+              </tr>))}</tbody>
+          </table>
+        </div></Panel>
+      </>)}
       <div className="lbl" style={{ marginBottom: 6 }}>Over / under-allocations · biggest first</div>
       <FilterBox value={q} onChange={setQ} />
       <Panel style={{ padding: 0, overflow: "hidden" }}><div style={{ overflowX: "auto" }}>
@@ -4478,7 +4523,7 @@ function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch 
     if (!(Number(cashReceived) >= 0) || cashReceived === "") { setMsg({ tone: "amber", title: "Enter cash received", body: "Type the actual cash received from the site (0 or more)." }); return; }
     setBusy(true);
     try {
-      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), receiptNo: receiptNo.trim() || null, closed: true });
+      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), receiptNo: receiptNo.trim() || null, closed: true, confirmDay: !!(twin && confirmDay) });
       setMsg({ tone: "ok", title: "Day closed", body: `${row.site} · ${row.date} reconciled and closed.` });
       setTimeout(onDone, 800);
     } catch (e) { setMsg({ tone: "red", title: "Not closed", body: e.message }); }
