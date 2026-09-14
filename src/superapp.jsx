@@ -4503,6 +4503,10 @@ function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch 
   const keyed = Number(cashReceived);
   const near = (a, b) => Number.isFinite(a) && b > 0 && Math.abs(a - b) <= 5;
   const twin = cashReceived !== "" && keyed > 0 && !near(keyed, row.hqSent || 0) ? siblings.find((s) => near(keyed, s.hqSent || 0)) : null;
+  // Closing at $0 while the site says it sent money asserts "never arrived" — if the envelope
+  // is still in transit the day should stay open instead. Eight such closes found 14 Sep 2026.
+  const zeroWithMoney = cashReceived !== "" && keyed === 0 && (row.hqSent || 0) > 500;
+  const needsTick = !!twin || zeroWithMoney;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [slip, setSlip] = useState(null);   // {seq, url|null}
@@ -4523,7 +4527,7 @@ function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch 
     if (!(Number(cashReceived) >= 0) || cashReceived === "") { setMsg({ tone: "amber", title: "Enter cash received", body: "Type the actual cash received from the site (0 or more)." }); return; }
     setBusy(true);
     try {
-      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), receiptNo: receiptNo.trim() || null, closed: true, confirmDay: !!(twin && confirmDay) });
+      await closeDay({ siteId: row.siteId, tradingDate: row.date, cashReceived: Number(cashReceived), receiptNo: receiptNo.trim() || null, closed: true, confirmDay: !!(needsTick && confirmDay) });
       setMsg({ tone: "ok", title: "Day closed", body: `${row.site} · ${row.date} reconciled and closed.` });
       setTimeout(onDone, 800);
     } catch (e) { setMsg({ tone: "red", title: "Not closed", body: e.message }); }
@@ -4588,7 +4592,17 @@ function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch 
                 </div>
               </Note>
             )}
-            <button className="pill" disabled={busy || (!!twin && !confirmDay)} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : `Close ${fmtD(row.date)}`}</button>
+            {zeroWithMoney && (
+              <Note tone="red" title={`${row.site} says it sent $${L(row.hqSent)} for ${fmtD(row.date)}`}>
+                Closing at $0 records that this cash never arrived. If the envelope is still on its way, leave the day open and come back to it. Only close at $0 if it truly never came.
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                    <input type="checkbox" checked={confirmDay} onChange={(e) => setConfirmDay(e.target.checked)} /> Nothing arrived for {fmtD(row.date)} — close it at $0
+                  </label>
+                </div>
+              </Note>
+            )}
+            <button className="pill" disabled={busy || (needsTick && !confirmDay)} onClick={close} style={{ width: "100%" }}>{busy ? "Closing…" : row.status === "closed" ? "Update & re-close day" : `Close ${fmtD(row.date)}`}</button>
           </>
         )}
       </div>
