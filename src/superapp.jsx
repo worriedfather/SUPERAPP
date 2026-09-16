@@ -241,6 +241,18 @@ function exportRetail(which, d) {
       ["Site", "Region", "Day Blend Sales", "Day Diesel Sales", "Night Blend Sales", "Night Diesel Sales"],
       d.sites.map((s) => { const dd = d.sales.day[s.id] || {}, nn = d.sales.night[s.id] || {};
         return [s.name, s.region, dd.blendSales ?? "", dd.dieselSales ?? "", nn.blendSales ?? "", nn.dieselSales ?? ""]; }));
+  } else if (which === "tenders") {
+    const t = d.tenders || { bySite: {} };
+    downloadCsv(`DA_Tenders_${d.date}.csv`,
+      ["Site", "Region", "Source", "Total", "Cash", "DA card", "Petrotrade coupon", "Petrotrade card", "Redan coupon", "Redan card", "Pump test", "Lubes", "Other", "Swipe (site)", "Mobile money (site)", "USD cash (site)", "Banked (site)", "Sent to HQ (site)"],
+      d.sites.map((s) => { const x = t.bySite[String(s.id)] || {}; const f = x.final, i = x.indicative, dd = x.declared || {};
+        const src = f ? "day-end" : i ? "indicative" : "";
+        const tot = f ? f.total : i ? (i.cash + i.daCard + i.petro) : "";
+        return [s.name, s.region, src, tot, f ? f.cash : i ? i.cash : "", f ? f.daCard : i ? i.daCard : "", f ? f.petroCoupon : i ? i.petro : "", f ? f.petroCard : "", f ? f.redanCoupon : "", f ? f.redanCard : "", f ? f.pumpTest : "", f ? f.lubes : "", f ? f.other : "",
+          dd.swipe ?? "", dd.mobile ?? "", dd.usdCash ?? "", dd.banked ?? "", dd.sentToHq ?? ""]; }));
+  } else if (which === "compliance") {
+    downloadCsv(`DA_Compliance_${d.date}.csv`, ["Site", "Score %", "Sales days", "Stock days", "Price days", "Window days", "Overdue now", "Last reported"],
+      (d.compliance || []).map((r) => [r.site, r.pct, r.salesDays, r.stockDays, r.priceDays, r.days, (r.outstanding || []).join(" "), r.lastReported ?? ""]));
   } else {
     const rows = [];
     for (const [id, p] of Object.entries(d.price.bySite)) {
@@ -5491,7 +5503,11 @@ function SiteSearch({ q, setQ, shown, total, placeholder = "Search sites…" }) 
 function ComplianceBoard({ rows }) {
   const days = rows[0]?.days || 14;
   const avg = rows.length ? Math.round(rows.reduce((a, r) => a + r.pct, 0) / rows.length) : 0;
-  const bar = (n) => <span style={{ color: n >= days ? "var(--ok)" : n === 0 ? "var(--red)" : "var(--amber)" }}>{n}/{days}</span>;
+  // "13 of 14" = days reported out of the 14-day window — NOT a date. (Owner read "x/14" as
+  // "the 14th" on 16 Sep 2026; the window is named in the footer with its real dates.)
+  const bar = (n) => <span style={{ color: n >= days ? "var(--ok)" : n === 0 ? "var(--red)" : "var(--amber)" }}>{n} of {days}</span>;
+  const winDates = (rows[0]?.daily || []).map((x) => x.date);
+  const winFrom = winDates.length ? winDates[winDates.length - 1] : null, winTo = winDates.length ? winDates[0] : null;
   const [drill, setDrill] = useState(null);
   const cell = (ok, k) => <td key={k} style={{ textAlign: "center", padding: "4px 2px", color: ok ? "var(--ok)" : "var(--red)", fontWeight: 700 }}>{ok ? "✓" : "✕"}</td>;
   const SHIFT_LBL = { night: "Night", midday: "Midday", day: "Day" };
@@ -5515,7 +5531,7 @@ function ComplianceBoard({ rows }) {
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Overdue now</Th><Th right>Score</Th><Th right>Sales</Th><Th right>Stock</Th><Th right>Price</Th></tr></thead>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Site</Th><Th right>Overdue now</Th><Th right>Score</Th><Th right>Sales days</Th><Th right>Stock days</Th><Th right>Price days</Th></tr></thead>
             <tbody>{shown.map((r) => (
               <tr key={r.site} onClick={() => setDrill(r)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: (r.outstanding && r.outstanding.length) ? "#FDECEA" : r.pct === 0 ? "#FDECEA" : r.pct < 50 ? "#FFF7E6" : "#fff" }}>
                 <Td>{(r.outstanding && r.outstanding.length) ? "⚠ " : ""}{r.site}<span style={{ color: "var(--steel)" }}> ›</span></Td>
@@ -5527,7 +5543,9 @@ function ComplianceBoard({ rows }) {
           </table>
         </div>
       </Panel>
-      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Days each site reported in the last {days}. Tap a site for its day-by-day record. Chase the red/amber managers.</div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>
+        <b>"13 of 14"</b> = the number of days the site reported out of the {days}-day window{winFrom && winTo ? <> (<b>{fmtD(winFrom)} → {fmtD(winTo)}</b>, the {days} days up to the board's date)</> : null} — it is a count, not a date. "Overdue now" is today's shifts past their deadline. Tap a site for its day-by-day record. Chase the red/amber managers.
+      </div>
       {drill && (
         <DetailSheet title={drill.site} sub={`${drill.pct}% compliance · last ${drill.days} days${drill.lastReported ? ` · last reported ${fmtD(drill.lastReported)}` : " · never reported"}`} onClose={() => setDrill(null)}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
@@ -5818,7 +5836,7 @@ export function RetailDashboard() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["tenders", "Tenders"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
@@ -5827,6 +5845,7 @@ export function RetailDashboard() {
       {data && which === "stock" && <StockBoard d={data} onSite={openSite} />}
       {data && which === "price" && <PriceBoard d={data} onSite={openSite} />}
       {data && which === "sales" && <SalesBoard d={data} onSite={openSite} />}
+      {data && which === "tenders" && <TendersBoard d={data} onSite={openSite} />}
       {data && which === "compliance" && <ComplianceBoard rows={data.compliance || []} />}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
@@ -6068,6 +6087,82 @@ function SalesBoard({ d, onSite }) {
         </table>
       </Panel>
       <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}</div>
+    </>
+  );
+}
+
+// SALES BY TENDER (owner, 2026-09-16): how the day's revenue was paid — cash, DA card,
+// Petrotrade (card + coupon), Redan (card + coupon), pump tests, lubes — from the day-end
+// report (final, US$). Swipe and mobile money have NO line in the day-end, so those come
+// from the site's own cash-handling submission and are labelled as the site's declaration.
+// Until the day-end lands, the sites' shift submissions (cash / DA card / Petrotrade) stand in.
+function TendersBoard({ d, onSite }) {
+  const [q, setQ] = useState("");
+  const t = d.tenders || { bySite: {}, totals: { final: {}, declared: {}, indicative: {} }, missing: [] };
+  const $ = (v) => (v == null ? "—" : "$" + L(Math.round(v)));
+  const useFinal = (t.finalSites || 0) > 0;
+  // columns: the named tenders that carry ANY money on this day (a tender nobody used is noise)
+  const FINAL_COLS = [["cash", "Cash"], ["daCard", "DA card"], ["petroCoupon", "Petrotrade coupon"], ["petroCard", "Petrotrade card"], ["redanCoupon", "Redan coupon"], ["redanCard", "Redan card"], ["pumpTest", "Pump test"], ["lubes", "Lubes"], ["other", "Other"]];
+  const IND_COLS = [["cash", "Cash"], ["daCard", "DA card"], ["petro", "Petrotrade"]];
+  const tot = useFinal ? (t.totals.final || {}) : (t.totals.indicative || {});
+  const cols = (useFinal ? FINAL_COLS : IND_COLS).filter(([k]) => Math.abs(Number(tot[k]) || 0) >= 1);
+  const decl = t.totals.declared || {};
+  const declCols = [["swipe", "Swipe"], ["mobile", "Mobile money"]].filter(([k]) => (Number(decl[k]) || 0) >= 1);
+  const rowOf = (site) => { const x = t.bySite[String(site.id)]; if (!x) return null; return useFinal ? x.final : x.indicative; };
+  const rowTotal = (r) => r ? (useFinal ? (Number(r.total) || 0) : cols.reduce((a, [k]) => a + (Number(r[k]) || 0), 0)) : -1;
+  const [sortKey, setSortKey] = useState("total");
+  const [sortDir, setSortDir] = useState("desc");
+  const sortBy = (k) => { if (sortKey === k) setSortDir((x) => (x === "desc" ? "asc" : "desc")); else { setSortKey(k); setSortDir("desc"); } };
+  const metric = (site) => { const r = rowOf(site); if (!r) return null; if (sortKey === "total") return rowTotal(r); if (sortKey.startsWith("decl:")) { const dd = t.bySite[String(site.id)]?.declared; return dd ? Number(dd[sortKey.slice(5)]) || 0 : null; } return Number(r[sortKey]) || 0; };
+  const shown = d.sites.slice().sort((a, b) => {
+    const ma = metric(a), mb = metric(b);
+    if (ma == null && mb == null) return String(a.name).localeCompare(String(b.name));
+    if (ma == null) return 1; if (mb == null) return -1;
+    return sortDir === "desc" ? mb - ma : ma - mb;
+  }).filter((x) => siteMatch(x.name, q));
+  const grand = useFinal ? (Number(tot.total) || 0) : cols.reduce((a, [k]) => a + (Number(tot[k]) || 0), 0);
+  const pct = (v) => (grand > 0 && v != null ? ` (${Math.round((v / grand) * 100)}%)` : "");
+  const SortTh = ({ k, children }) => (
+    <Th right><span onClick={() => sortBy(k)} style={{ cursor: "pointer", userSelect: "none", textDecoration: sortKey === k ? "underline" : "none", whiteSpace: "nowrap" }}>{children}{sortKey === k ? (sortDir === "desc" ? " ↓" : " ↑") : ""}</span></Th>
+  );
+  const reported = useFinal ? t.finalSites : t.indicativeSites;
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <CountPill n={reported || 0} total={d.sites.length} label="Reported" tone={(reported || 0) >= d.sites.length ? "ok" : "amber"} />
+        <CountPill n={$(grand)} label={useFinal ? "Total sales · day-end" : "Total sales · indicative"} tone="ok" />
+        {cols.slice(0, 3).map(([k, lbl]) => <CountPill key={k} n={$(tot[k]) + pct(Number(tot[k]) || 0)} label={lbl} tone="ok" />)}
+      </div>
+      {useFinal
+        ? <Note tone="ok" title="Final — from the day-end report">Each tender in US$ as the day-end report records it. Cash, DA card, Petrotrade and Redan (card and coupon), pump tests and lubes; "Other" is whatever the report's total holds beyond the named tenders.</Note>
+        : <Note tone="blue" title="Indicative so far">The day-end report for this day is not in yet. These are the sites' shift submissions (cash / DA card / Petrotrade), day and night added.</Note>}
+      {declCols.length > 0 && <Note tone="amber" title="Swipe and mobile money: the site's own figures">The day-end report has no swipe or mobile-money line, so those columns come from each site's cash-handling submission for the day, not from the report.</Note>}
+      {t.missing && t.missing.length > 0 && <MissingList names={t.missing} />}
+      <SiteSearch q={q} setQ={setQ} shown={shown.length} total={d.sites.length} />
+      <Panel style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
+              <Th>Site</Th><SortTh k="total">Total</SortTh>{cols.map(([k, lbl]) => <SortTh key={k} k={k}>{lbl}</SortTh>)}{declCols.map(([k, lbl]) => <SortTh key={k} k={"decl:" + k}>{lbl} <span style={{ opacity: 0.7, fontWeight: 400 }}>(site)</span></SortTh>)}
+            </tr></thead>
+            <tbody>{shown.map((site, i) => { const r = rowOf(site); const dd = t.bySite[String(site.id)]?.declared; return (
+              <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: r ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
+                <Td>{r ? <span style={{ color: "var(--steel)", marginRight: 6 }}>{i + 1}.</span> : null}{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
+                <Td right style={{ fontWeight: 700 }}>{r ? $(rowTotal(r)) : "—"}</Td>
+                {cols.map(([k]) => <Td key={k} right>{r ? $(r[k]) : "—"}</Td>)}
+                {declCols.map(([k]) => <Td key={k} right style={{ color: "#B26A00" }}>{dd ? $(dd[k]) : "—"}</Td>)}
+              </tr>
+            ); })}
+            <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
+              <Td style={{ fontWeight: 700 }}>Total</Td>
+              <Td right style={{ fontWeight: 700 }}>{$(grand)}</Td>
+              {cols.map(([k]) => <Td key={k} right style={{ fontWeight: 700 }}>{$(tot[k])}<div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400 }}>{pct(Number(tot[k]) || 0).trim()}</div></Td>)}
+              {declCols.map(([k]) => <Td key={k} right style={{ fontWeight: 700, color: "#B26A00" }}>{$(decl[k])}</Td>)}
+            </tr></tbody>
+          </table>
+        </div>
+      </Panel>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "total" ? "total sales" : "that column"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change. Tenders nobody used on this day are hidden.</div>
     </>
   );
 }
