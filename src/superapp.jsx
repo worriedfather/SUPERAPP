@@ -7496,6 +7496,7 @@ function importDetail(imp) {
         <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <tbody>
+              {imp.ref && row("Reference", imp.ref)}
               {row("Supplier", imp.supplier || "—")}
               {row("Product", imp.product)}
               {row("Warehouse", imp.warehouse)}
@@ -7629,7 +7630,7 @@ export function WarehouseImports({ me }) {
       {/* recent imports */}
       {bal && bal.recentImports.length > 0 && (() => {
         const q = impQ.trim().toLowerCase();
-        const rows = q ? bal.recentImports.filter((r) => [r.supplier, r.warehouse, r.product, r.orderNo].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))) : bal.recentImports;
+        const rows = q ? bal.recentImports.filter((r) => [r.ref, r.supplier, r.warehouse, r.product, r.orderNo].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))) : bal.recentImports;
         const totL = rows.reduce((a, r) => a + (Number(r.quantity) || 0), 0);
         const totV = rows.reduce((a, r) => a + (Number(r.value) || 0), 0);
         return (
@@ -7645,11 +7646,11 @@ export function WarehouseImports({ me }) {
           </div>
           <div style={{ overflowX: "auto" }}>
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Date</Th><Th>Depot</Th><Th>Supplier</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
-            <tbody>{rows.length === 0 ? <tr><Td colSpan={6} style={{ color: "var(--steel)", padding: "12px 14px" }}>No entries match “{impQ}”.</Td></tr> : rows.map((r, i) => (
+            <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Ref</Th><Th>Date</Th><Th>Depot</Th><Th>Supplier</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
+            <tbody>{rows.length === 0 ? <tr><Td colSpan={7} style={{ color: "var(--steel)", padding: "12px 14px" }}>No entries match “{impQ}”.</Td></tr> : rows.map((r, i) => (
               <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r) })}
                 style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
-                <Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.supplier || "—"}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
+                <Td style={{ color: "var(--steel)", whiteSpace: "nowrap" }}>{r.ref || "—"}</Td><Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.supplier || "—"}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>
             ))}</tbody>
           </table>
