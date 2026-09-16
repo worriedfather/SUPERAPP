@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
   getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
-  postWarehouseImport, voidWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
+  postWarehouseImport, voidWarehouseImport, editWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getDayendComments, computeDayend, closeDayend,
@@ -4716,12 +4716,17 @@ function UnaccountedDrill({ days, from, to }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
         <KpiCard label="Unaccounted for" value={$(d.unaccounted)} sub={`${d.sites.length} site${d.sites.length === 1 ? "" : "s"} with a gap`} />
       </div>
+      {Array.isArray(d.financeMonths) && d.financeMonths.length > 0 && (
+        <Note tone="ok" title={`${d.financeMonths.length === 1 ? "This month is" : "These months are"} finance's month-end reconciliation`}>
+          {d.financeMonths.map((m) => new Date(m + "-01T00:00:00Z").toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })).join(", ")}: the figures are finance's revenue-to-cash recon per site, final. What shows below for {d.financeMonths.length === 1 ? "that month" : "those months"} is finance's own variance, not the sites' day-by-day app submissions.
+        </Note>
+      )}
       {d.sites.map((s) => (
         <div key={s.siteId} style={{ border: "1px solid var(--line)", borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
           <div onClick={() => setOpen(open === s.siteId ? null : s.siteId)}
             style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
             <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
-            <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{s.days.length} day{s.days.length === 1 ? "" : "s"}</span>
+            <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{s.days.every((x) => x.source === "finance") ? `${s.days.length} month${s.days.length === 1 ? "" : "s"}` : `${s.days.length} ${s.days.length === 1 ? "entry" : "entries"}`}</span>
             <span className="mono" style={{ fontWeight: 800, color: s.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{s.unaccounted > 0 ? $(s.unaccounted) : `(${$(Math.abs(s.unaccounted))}) over`}</span>
             <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
           </div>
@@ -4730,10 +4735,10 @@ function UnaccountedDrill({ days, from, to }) {
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Day</Th><Th right>Unaccounted</Th><Th>Record</Th></tr></thead>
                 <tbody>{s.days.map((r) => (
-                  <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.source === "none" ? "#FFF7E6" : "#fff" }}>
-                    <Td>{fmtD(r.date)}</Td>
+                  <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.source === "none" ? "#FFF7E6" : r.source === "finance" ? "#F1F6F1" : "#fff" }}>
+                    <Td>{String(r.date).length === 7 ? new Date(r.date + "-01T00:00:00Z").toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }) : fmtD(r.date)}</Td>
                     <Td right style={{ fontWeight: 700, color: r.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{r.unaccounted > 0 ? $(r.unaccounted) : `(${$(Math.abs(r.unaccounted))})`}</Td>
-                    <Td style={{ fontSize: 11, color: "var(--steel)" }}>{r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
+                    <Td style={{ fontSize: 11, color: "var(--steel)" }}>{r.source === "finance" ? "finance month-end recon — final variance" : r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -7644,10 +7649,10 @@ function importDetail(imp, opts = {}) {
       </Panel>
       {imp.note && <Panel style={{ marginTop: 12 }}><div className="lbl" style={{ marginBottom: 4 }}>Note</div><div style={{ fontSize: 13 }}>{imp.note}</div></Panel>}
       {opts.canEdit && (
-        <button type="button" onClick={opts.onVoid} className="pill-ghost"
-          style={{ width: "100%", marginTop: 14, color: "var(--red)", borderColor: "#E8C4C0" }}>
-          Void this entry (mistake / placeholder)
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button type="button" onClick={opts.onEdit} className="pill" style={{ flex: 2 }}>Edit entry</button>
+          <button type="button" onClick={opts.onVoid} className="pill-ghost" style={{ flex: 1, color: "var(--red)", borderColor: "#E8C4C0" }}>Remove</button>
+        </div>
       )}
     </>
   );
@@ -7688,6 +7693,7 @@ export function WarehouseImports({ me }) {
   const [drill, setDrill] = useState(null);
   const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / SORD
   const [voidTarget, setVoidTarget] = useState(null);
+  const [editing, setEditing] = useState(null);   // the import being edited (supersede on save)
   const canEdit = ["admin", "logistics", "depot", "logistics_manager", "logistics_lead", "operations_manager"].includes(me?.kind);
   const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", supplier: "Trafigura", importDate: todayISO(), quantity: "", priceExcl: "", duties: "", orderNo: "", petrolPrice: "", blendRatio: "0.2", ethanolPrice: "1.10" });
   const isBlend = f.product === "Blend";
@@ -7704,13 +7710,30 @@ export function WarehouseImports({ me }) {
     if (isBlend && !isPetrotrade && !(Number(f.petrolPrice) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the petrol price so the blend cost can be worked out." });
     setBusy(true);
     try {
-      await postWarehouseImport({ ...f, quantity: Number(f.quantity), deviceTime: new Date().toISOString() });
-      setMsg({ tone: "ok", title: "Import recorded", body: `${L(Number(f.quantity))} L ${f.product} into ${f.warehouse}` });
+      const body = { ...f, quantity: Number(f.quantity), deviceTime: new Date().toISOString() };
+      if (editing) {
+        await editWarehouseImport(editing.seq, body);
+        setMsg({ tone: "ok", title: "Entry updated", body: `${editing.ref} corrected — ${L(Number(f.quantity))} L ${f.product}` });
+        setEditing(null);
+      } else {
+        await postWarehouseImport(body);
+        setMsg({ tone: "ok", title: "Import recorded", body: `${L(Number(f.quantity))} L ${f.product} into ${f.warehouse}` });
+      }
       setF((s) => ({ ...s, quantity: "", orderNo: "" }));
       load();
     } catch (x) { setMsg({ tone: "red", title: "Not saved", body: x.message }); }
     finally { setBusy(false); }
   };
+  const startEdit = (imp) => {
+    setDrill(null); setVoidTarget(null); setMsg(null); setEditing({ seq: imp.seq, ref: imp.ref });
+    setF((s) => ({ ...s, warehouse: imp.warehouse, product: imp.product, supplier: imp.supplier, importDate: imp.date,
+      quantity: String(imp.quantity), orderNo: imp.sord || imp.orderNo || "",
+      priceExcl: imp.priceExcl != null ? String(imp.priceExcl) : "",
+      duties: imp.duties != null ? String(imp.duties) : "",
+      petrolPrice: imp.product === "Blend" && imp.priceExcl != null ? String(imp.priceExcl) : (s.petrolPrice || "") }));
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const cancelEdit = () => { setEditing(null); setF((s) => ({ ...s, quantity: "", orderNo: "" })); setMsg(null); };
   const doVoid = async () => {
     const r = voidTarget; if (!r) return;
     try { await voidWarehouseImport(r.seq, ""); setVoidTarget(null); setMsg({ tone: "ok", title: "Entry voided", body: `${r.ref} removed — stock, cost and the list updated. Re-enter the correct one if needed.` }); load(); }
@@ -7752,6 +7775,7 @@ export function WarehouseImports({ me }) {
       <Panel style={{ marginBottom: 14 }}>
         <form onSubmit={send}>
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+          {editing && <Note tone="amber" title={`Editing ${editing.ref}`}>Change the fields and save — this replaces the entry (the original is kept in the ledger). <button type="button" onClick={cancelEdit} style={{ marginLeft: 6, border: "none", background: "none", color: "var(--navy)", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}>Cancel edit</button></Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
             <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "Ethanol", "ULP"]} /></Field></div>
@@ -7782,7 +7806,7 @@ export function WarehouseImports({ me }) {
             </>
           )}
           <Field label="SORD number"><input value={f.orderNo} onChange={(e) => set("orderNo")(e.target.value)} placeholder="e.g. DAMO-260701" /></Field>
-          <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Saving…" : "Record import"}</button>
+          <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Saving…" : editing ? "Save changes" : "Record import"}</button>
         </form>
       </Panel>
       {/* recent imports */}
@@ -7806,7 +7830,7 @@ export function WarehouseImports({ me }) {
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Ref</Th><Th>Date</Th><Th>Depot</Th><Th>Supplier</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
             <tbody>{rows.length === 0 ? <tr><Td colSpan={7} style={{ color: "var(--steel)", padding: "12px 14px" }}>No entries match “{impQ}”.</Td></tr> : rows.map((r, i) => (
-              <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r, { canEdit, onVoid: () => { setDrill(null); setVoidTarget(r); } }) })}
+              <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r, { canEdit, onEdit: () => startEdit(r), onVoid: () => { setDrill(null); setVoidTarget(r); } }) })}
                 style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
                 <Td style={{ color: "var(--steel)", whiteSpace: "nowrap" }}>{r.ref || "—"}</Td><Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.supplier || "—"}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>

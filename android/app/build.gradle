@@ -14,7 +14,7 @@ android {
         applicationId "zw.co.damotors.fuel"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 192
+        versionCode 193
         versionName "1.9.39"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
