@@ -7541,7 +7541,7 @@ function depotDetail(w, imports) {
 }
 
 export function WarehouseImports({ me }) {
-  const SUP = ["Opening balance", "Trafigura", "Kemexon", "Strauss", "Glencore", "Green Fuel", "FECZ", "Other"];
+  const SUP = ["Opening balance", "Trafigura", "Kemexon", "Strauss", "Glencore", "Green Fuel", "FECZ", "Petrotrade", "Other"];
   const [bal, setBal] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -7550,6 +7550,7 @@ export function WarehouseImports({ me }) {
   const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / order no
   const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", supplier: "Trafigura", importDate: todayISO(), quantity: "", priceExcl: "", duties: "", orderNo: "", petrolPrice: "", blendRatio: "0.2", ethanolPrice: "1.10" });
   const isBlend = f.product === "Blend";
+  const isPetrotrade = /petrotrade/i.test(f.supplier || "");   // replacement fuel — no cost, excluded from margin
   const blendPrice = (Number(f.petrolPrice) || 0) * (1 - (Number(f.blendRatio) || 0)) + (Number(f.ethanolPrice) || 0) * (Number(f.blendRatio) || 0);
   const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
   const load = useCallback(() => { getWarehouseBalances().then(setBal).catch((e) => setErr(e.message)); }, []);
@@ -7559,7 +7560,7 @@ export function WarehouseImports({ me }) {
     e.preventDefault(); setMsg(null);
     if (!f.supplier) return setMsg({ tone: "amber", title: "Almost there", body: "Pick a supplier (or “Opening balance”)." });
     if (!(Number(f.quantity) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the quantity received (litres)." });
-    if (isBlend && !(Number(f.petrolPrice) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the petrol price so the blend cost can be worked out." });
+    if (isBlend && !isPetrotrade && !(Number(f.petrolPrice) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the petrol price so the blend cost can be worked out." });
     setBusy(true);
     try {
       await postWarehouseImport({ ...f, quantity: Number(f.quantity), deviceTime: new Date().toISOString() });
@@ -7605,7 +7606,9 @@ export function WarehouseImports({ me }) {
             <div style={{ flex: "1 1 140px" }}><Field label="Date"><input type="date" value={f.importDate} onChange={(e) => set("importDate")(e.target.value)} /></Field></div>
           </div>
           <Field label="Quantity received (L)"><Num value={f.quantity} onChange={set("quantity")} placeholder="e.g. 400000" /></Field>
-          {isBlend ? (
+          {isPetrotrade ? (
+            <Note tone="amber" title="Petrotrade replacement — no cost">Fuel returned by Petrotrade against coupons already sold. It's loaded into the warehouse as stock but carries <b>no unit cost</b> and is <b>excluded from the margin</b> — no cost fields needed.</Note>
+          ) : isBlend ? (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <div style={{ flex: "1 1 110px" }}><Field label="Petrol incl-duty ($/L)"><Num value={f.petrolPrice} onChange={set("petrolPrice")} placeholder="2.107" /></Field></div>
