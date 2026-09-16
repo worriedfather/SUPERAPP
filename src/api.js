@@ -325,6 +325,7 @@ export const getExecutive = (period, from, to, scope) => {
 };
 export const getInventory = () => call("/api/inventory");
 export const postWarehouseImport = (b) => call("/api/warehouse/import", { method: "POST", body: b });
+export const voidWarehouseImport = (seq, reason) => call(`/api/warehouse/import/${seq}/void`, { method: "POST", body: { reason } });
 export const getWarehouseBalances = () => call("/api/warehouse/balances");
 export const postTrip = (b) => call("/api/trip", { method: "POST", body: b });
 export const editTrip = (tripNo, b) => call(`/api/trip/${encodeURIComponent(tripNo)}/edit`, { method: "POST", body: b });

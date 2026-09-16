@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
   getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
-  postWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
+  postWarehouseImport, voidWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getDayendComments, computeDayend, closeDayend,
@@ -7480,7 +7480,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
    logistics team logs each fuel purchase into a warehouse; the balance is a
    running record (opening + imports − dispatched). */
 // Full detail behind one recorded import (purchase).
-function importDetail(imp) {
+function importDetail(imp, opts = {}) {
   const row = (label, val) => (
     <tr style={{ borderTop: "1px solid var(--line)" }}><Td style={{ color: "var(--steel)" }}>{label}</Td><Td right>{val}</Td></tr>
   );
@@ -7504,12 +7504,18 @@ function importDetail(imp) {
               {row("Price excl. duty", m(imp.priceExcl))}
               {row("Duty", m(imp.duties))}
               {row("Price incl. duty", m(imp.priceIncl))}
-              {imp.orderNo && row("Order no.", imp.orderNo)}
+              {(imp.sord || imp.orderNo) && row("SORD number", imp.sord || imp.orderNo)}
             </tbody>
           </table>
         </div>
       </Panel>
       {imp.note && <Panel style={{ marginTop: 12 }}><div className="lbl" style={{ marginBottom: 4 }}>Note</div><div style={{ fontSize: 13 }}>{imp.note}</div></Panel>}
+      {opts.canEdit && (
+        <button type="button" onClick={opts.onVoid} className="pill-ghost"
+          style={{ width: "100%", marginTop: 14, color: "var(--red)", borderColor: "#E8C4C0" }}>
+          Void this entry (mistake / placeholder)
+        </button>
+      )}
     </>
   );
 }
@@ -7547,7 +7553,9 @@ export function WarehouseImports({ me }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [drill, setDrill] = useState(null);
-  const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / order no
+  const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / SORD
+  const [voidTarget, setVoidTarget] = useState(null);
+  const canEdit = ["admin", "logistics", "depot", "logistics_manager", "logistics_lead", "operations_manager"].includes(me?.kind);
   const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", supplier: "Trafigura", importDate: todayISO(), quantity: "", priceExcl: "", duties: "", orderNo: "", petrolPrice: "", blendRatio: "0.2", ethanolPrice: "1.10" });
   const isBlend = f.product === "Blend";
   const isPetrotrade = /petrotrade/i.test(f.supplier || "");   // replacement fuel — no cost, excluded from margin
@@ -7570,10 +7578,24 @@ export function WarehouseImports({ me }) {
     } catch (x) { setMsg({ tone: "red", title: "Not saved", body: x.message }); }
     finally { setBusy(false); }
   };
+  const doVoid = async () => {
+    const r = voidTarget; if (!r) return;
+    try { await voidWarehouseImport(r.seq, ""); setVoidTarget(null); setMsg({ tone: "ok", title: "Entry voided", body: `${r.ref} removed — stock, cost and the list updated. Re-enter the correct one if needed.` }); load(); }
+    catch (x) { setVoidTarget(null); setMsg({ tone: "red", title: "Not voided", body: x.message }); }
+  };
   const PROD_COL = { Diesel: "#2B3990", Blend: "#C07A00", ULP: "#6BC048" };
   return (
     <Wrap>
       <SectionHead title="Warehouse" sub="Record fuel imports · running balance per depot" />
+      {voidTarget && (
+        <Note tone="amber" title={`Void ${voidTarget.ref}?`}>
+          {voidTarget.product} · {full(voidTarget.quantity)} L · {voidTarget.warehouse} · {fmtD(voidTarget.date)}. This removes it from stock, cost and the list — it stays in the ledger as a voided entry.
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" className="pill" style={{ background: "var(--red)" }} onClick={doVoid}>Confirm void</button>
+            <button type="button" className="pill-ghost" onClick={() => setVoidTarget(null)}>Cancel</button>
+          </div>
+        </Note>
+      )}
       {/* running balances */}
       {err && <Note tone="red" title="Could not load balances">{err}</Note>}
       {bal && (
@@ -7626,7 +7648,7 @@ export function WarehouseImports({ me }) {
               {(f.priceExcl || f.duties) ? <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: -6, marginBottom: 12 }}>Landed cost: <b style={{ color: "var(--navy)" }}>${incl.toFixed(4)}/L</b> · total ${compact(incl * (Number(f.quantity) || 0))}</div> : null}
             </>
           )}
-          <Field label="Order / invoice no. (optional)"><input value={f.orderNo} onChange={(e) => set("orderNo")(e.target.value)} placeholder="e.g. MBV 0215953" /></Field>
+          <Field label="SORD number"><input value={f.orderNo} onChange={(e) => set("orderNo")(e.target.value)} placeholder="e.g. DAMO-260701" /></Field>
           <button className="pill" disabled={busy} style={{ width: "100%" }}>{busy ? "Saving…" : "Record import"}</button>
         </form>
       </Panel>
@@ -7643,7 +7665,7 @@ export function WarehouseImports({ me }) {
             <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{rows.length} {rows.length === 1 ? "entry" : "entries"} · {full(totL)} L{totV ? ` · $${compact(totV)}` : ""}</div>
           </div>
           <div style={{ padding: "0 14px 8px", position: "relative" }}>
-            <input value={impQ} onChange={(e) => setImpQ(e.target.value)} placeholder="Search supplier, depot, product or order no…"
+            <input value={impQ} onChange={(e) => setImpQ(e.target.value)} placeholder="Search SORD, supplier, depot or product…"
               style={{ width: "100%", padding: "8px 30px 8px 11px", borderRadius: 9, border: "1px solid var(--line)", fontSize: 13, boxSizing: "border-box" }} />
             {impQ && <button type="button" onClick={() => setImpQ("")} style={{ position: "absolute", right: 22, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "var(--steel)", cursor: "pointer", fontSize: 16 }}>×</button>}
           </div>
@@ -7651,7 +7673,7 @@ export function WarehouseImports({ me }) {
           <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Ref</Th><Th>Date</Th><Th>Depot</Th><Th>Supplier</Th><Th>Product</Th><Th right>Litres</Th><Th right>$/L</Th></tr></thead>
             <tbody>{rows.length === 0 ? <tr><Td colSpan={7} style={{ color: "var(--steel)", padding: "12px 14px" }}>No entries match “{impQ}”.</Td></tr> : rows.map((r, i) => (
-              <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r) })}
+              <tr key={i} onClick={() => setDrill({ title: `${r.supplier || "Import"} · ${r.product}`, sub: `${r.warehouse} · ${fmtD(r.date)}`, render: importDetail(r, { canEdit, onVoid: () => { setDrill(null); setVoidTarget(r); } }) })}
                 style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
                 <Td style={{ color: "var(--steel)", whiteSpace: "nowrap" }}>{r.ref || "—"}</Td><Td>{fmtD(r.date)}</Td><Td>{r.warehouse}</Td><Td>{r.supplier || "—"}</Td><Td>{r.product} ›</Td><Td right>{L(r.quantity)}</Td><Td right>{r.priceIncl != null ? r.priceIncl.toFixed(3) : "—"}</Td>
               </tr>
@@ -7661,6 +7683,24 @@ export function WarehouseImports({ me }) {
         </Panel>
         );
       })()}
+      {bal && bal.bySord && bal.bySord.length > 0 && (
+        <Panel style={{ padding: 0, overflow: "hidden", marginTop: 14 }}>
+          <div className="lbl" style={{ padding: "12px 14px 6px" }}>Balances by SORD</div>
+          <div style={{ padding: "0 14px 8px", fontSize: 11.5, color: "var(--steel)" }}>Litres received against each order reference (voided entries excluded).</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>SORD</Th><Th>Depot</Th><Th>Products</Th><Th right>Litres</Th><Th right>Value</Th><Th>Last</Th></tr></thead>
+              <tbody>{bal.bySord.map((s, i) => (
+                <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td style={{ whiteSpace: "nowrap" }}>{s.sord}</Td><Td>{s.warehouse}</Td>
+                  <Td style={{ fontSize: 11 }}>{Object.entries(s.products).map(([p, l]) => `${p} ${full(l)}`).join(" · ")}</Td>
+                  <Td right>{full(s.litres)}</Td><Td right>{s.value ? "$" + compact(s.value) : "—"}</Td><Td>{fmtD(s.lastDate)}</Td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
       {drill && <DetailSheet title={drill.title} sub={drill.sub} onClose={() => setDrill(null)}>{drill.render()}</DetailSheet>}
     </Wrap>
   );
