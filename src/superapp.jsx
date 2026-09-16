@@ -5997,12 +5997,44 @@ function SalesBoard({ d, onSite }) {
     ? { blendSales: d.sales.totals.day.blendSales + d.sales.totals.night.blendSales, dieselSales: d.sales.totals.day.dieselSales + d.sales.totals.night.dieselSales }
     : d.sales.totals[shift];
   const [q, setQ] = useState("");
+  // Sales VALUE per site = litres × that site's own DA pump price (from the price survey) —
+  // shown only where both prices are in; never a network average (owner rule: state the source).
+  const priceOf = (id, fuel) => { const a = d.price?.bySite?.[id]?.analysis?.[fuel]; return a && a.da != null ? Number(a.da) : null; };
+  const hasPrices = !!(d.price && d.price.bySite);
+  const valueOf = (id, v) => {
+    if (!v) return null;
+    const pb = priceOf(id, "Blend"), pd = priceOf(id, "Diesel");
+    const b = Number(v.blendSales) || 0, dl = Number(v.dieselSales) || 0;
+    if ((b > 0 && pb == null) || (dl > 0 && pd == null)) return null;   // can't value it honestly
+    return b * (pb || 0) + dl * (pd || 0);
+  };
+  // Sortable: tap a header. Default = biggest total volume first ("largest to smallest in
+  // terms of sales" — owner, 2026-09-16); the rank column makes the order visible.
+  const [sortKey, setSortKey] = useState("total");
+  const [sortDir, setSortDir] = useState("desc");
+  const sortBy = (k) => { if (sortKey === k) setSortDir((x) => (x === "desc" ? "asc" : "desc")); else { setSortKey(k); setSortDir("desc"); } };
+  const metric = (site) => {
+    const v = s[site.id];
+    if (!v) return null;
+    const b = Number(v.blendSales) || 0, dl = Number(v.dieselSales) || 0;
+    if (sortKey === "blend") return b;
+    if (sortKey === "diesel") return dl;
+    if (sortKey === "value") return valueOf(site.id, v);
+    return b + dl;
+  };
   const shownSites = d.sites.slice().sort((a, b) => {
-    const va = s[a.id], vb = s[b.id];
-    const ta = va ? (Number(va.blendSales) || 0) + (Number(va.dieselSales) || 0) : -1;
-    const tb = vb ? (Number(vb.blendSales) || 0) + (Number(vb.dieselSales) || 0) : -1;
-    return tb - ta;   // biggest sales volume first
+    const ma = metric(a), mb = metric(b);
+    if (ma == null && mb == null) return String(a.name).localeCompare(String(b.name));
+    if (ma == null) return 1;   // sites with no figure sink to the bottom whichever way we sort
+    if (mb == null) return -1;
+    return sortDir === "desc" ? mb - ma : ma - mb;
   }).filter((x) => siteMatch(x.name, q));
+  const rankOf = new Map(shownSites.filter((x) => metric(x) != null).map((x, i) => [x.id, i + 1]));
+  const tValue = d.sites.reduce((a, x) => { const val = valueOf(x.id, s[x.id]); return val == null ? a : a + val; }, 0);
+  const valuedCount = d.sites.filter((x) => valueOf(x.id, s[x.id]) != null).length;
+  const SortTh = ({ k, children, right = true }) => (
+    <Th right={right}><span onClick={() => sortBy(k)} style={{ cursor: "pointer", userSelect: "none", textDecoration: sortKey === k ? "underline" : "none" }}>{children}{sortKey === k ? (sortDir === "desc" ? " ↓" : " ↑") : ""}</span></Th>
+  );
   return (
     <>
       <Segmented options={[["day", "Day"], ["night", "Night"], ["total", "Day + Night"]]} value={shift} onChange={setShift} />
@@ -6017,19 +6049,25 @@ function SalesBoard({ d, onSite }) {
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-            <Th>Site</Th><Th right>Blend sold</Th><Th right>Diesel sold</Th></tr></thead>
-          <tbody>{shownSites.map((site) => { const v = s[site.id]; return (
+            <Th>Site</Th><SortTh k="blend">Blend sold</SortTh><SortTh k="diesel">Diesel sold</SortTh><SortTh k="total">Total L</SortTh>{hasPrices && <SortTh k="value">Sales $</SortTh>}</tr></thead>
+          <tbody>{shownSites.map((site) => { const v = s[site.id]; const val = valueOf(site.id, v); const rk = rankOf.get(site.id); return (
             <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: v ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
-              <Td>{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
-              <Td right>{v ? L(v.blendSales) : "—"}</Td><Td right>{v ? L(v.dieselSales) : "—"}</Td></tr>
+              <Td>{rk ? <span style={{ color: "var(--steel)", marginRight: 6 }}>{rk}.</span> : null}{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
+              <Td right>{v ? L(v.blendSales) : "—"}</Td><Td right>{v ? L(v.dieselSales) : "—"}</Td>
+              <Td right style={{ fontWeight: 700 }}>{v ? L((Number(v.blendSales) || 0) + (Number(v.dieselSales) || 0)) : "—"}</Td>
+              {hasPrices && <Td right style={{ fontWeight: 700, color: "var(--navy)" }}>{val == null ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>{v ? "no price" : "—"}</span> : "$" + L(Math.round(val))}</Td>}
+            </tr>
           ); })}
           <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
             <Td style={{ fontWeight: 700 }}>Total</Td>
             <Td right style={{ fontWeight: 700 }}>{L(t.blendSales)}</Td>
             <Td right style={{ fontWeight: 700 }}>{L(t.dieselSales)}</Td>
+            <Td right style={{ fontWeight: 700 }}>{L((Number(t.blendSales) || 0) + (Number(t.dieselSales) || 0))}</Td>
+            {hasPrices && <Td right style={{ fontWeight: 700 }}>{valuedCount ? `$${L(Math.round(tValue))}` : "—"}{valuedCount && valuedCount < submitted ? <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400 }}>{valuedCount} of {submitted} sites priced</div> : null}</Td>}
           </tr></tbody>
         </table>
       </Panel>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}</div>
     </>
   );
 }
