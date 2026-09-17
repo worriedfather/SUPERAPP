@@ -5014,12 +5014,53 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
 }
 
 const ZIG_RATE = 31;   // ZWL-book amounts ÷ this = ZiG
+// Payee list + search, kept as its OWN component so a keystroke re-renders ONLY this
+// table — not the parent's total/category panels. The query is debounced (150ms) and the
+// filter memoised, and the list is capped at 100 rows, so searching the full ~1,400-payee
+// list stays smooth on a phone (owner, 2026-09-17: search "freezing… terrible").
+function PayeeTable({ payees, onDrill, money }) {
+  const [q, setQ] = useState("");
+  const [dq, setDq] = useState("");
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim().toLowerCase()), 150); return () => clearTimeout(t); }, [q]);
+  const filtered = useMemo(() => (dq
+    ? payees.filter((p) => (p.payee || "").toLowerCase().includes(dq) || (p.category || "").toLowerCase().includes(dq))
+    : payees), [payees, dq]);
+  const shown = filtered.slice(0, 100);
+  return (
+    <Panel style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "12px 14px 8px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="lbl" style={{ marginBottom: 0 }}>By payee</div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search payee…" inputMode="search"
+          style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, minWidth: 160 }} />
+      </div>
+      <div style={{ overflowX: "auto", maxHeight: 460 }}>
+        <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ background: "var(--navy)", color: "#fff", position: "sticky", top: 0 }}><Th>Payee</Th><Th>Category</Th><Th right>Paid</Th><Th right>Count</Th></tr></thead>
+          <tbody>{shown.map((p, i) => (
+            <tr key={p.payee + i} onClick={() => onDrill({ payee: p.payee, label: p.payee })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
+              <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{p.payee}<span style={{ color: "var(--steel)" }}> ›</span></Td>
+              <Td><span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 100, background: "#F4F6FA", color: OUTFLOW_CAT_COLOR[p.category] || "var(--steel)", fontWeight: 600 }}>{p.category}</span></Td>
+              <Td right style={{ fontWeight: 700 }}>{money(p.total)}</Td>
+              <Td right style={{ color: "var(--steel)" }}>{p.n}</Td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {dq && filtered.length === 0 && <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--steel)" }}>No payee matches "{q}".</div>}
+      {filtered.length > shown.length && (
+        <div style={{ padding: "8px 14px", fontSize: 11, color: "var(--steel)", borderTop: "1px solid var(--line)" }}>
+          Showing {shown.length} of {filtered.length.toLocaleString()}{dq ? " matches" : " payees"} — type to narrow.
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function CashOutflows({ embedded = false, from = null, to = null } = {}) {
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);
   const [currency, setCurrency] = useState("USD");
   const [d, setD] = useState(null), [err, setErr] = useState(null);
-  const [q, setQ] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [drill, setDrill] = useState(null);
   const [gd, setGd] = useState(null);   // Total → by-category breakdown drill
@@ -5046,7 +5087,6 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
   const $ = (v) => cur + full(conv(v));
   const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
   const payees = d?.byPayee || [];
-  const filtered = q ? payees.filter((p) => (p.payee || "").toLowerCase().includes(q.toLowerCase()) || (p.category || "").toLowerCase().includes(q.toLowerCase())) : payees;
   const maxCat = Math.max(1, ...(d?.byCategory || []).map((c) => c.total));
   return (
     <Shell>
@@ -5081,25 +5121,7 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
               </div>
             ))}
           </Panel>
-          <Panel style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "12px 14px 8px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div className="lbl" style={{ marginBottom: 0 }}>By payee</div>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search payee…" style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, minWidth: 160 }} />
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 460 }}>
-              <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: "var(--navy)", color: "#fff", position: "sticky", top: 0 }}><Th>Payee</Th><Th>Category</Th><Th right>Paid</Th><Th right>Count</Th></tr></thead>
-                <tbody>{filtered.slice(0, 200).map((p, i) => (
-                  <tr key={p.payee + i} onClick={() => openDrill({ payee: p.payee, label: p.payee })} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
-                    <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{p.payee}<span style={{ color: "var(--steel)" }}> ›</span></Td>
-                    <Td><span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 100, background: "#F4F6FA", color: OUTFLOW_CAT_COLOR[p.category] || "var(--steel)", fontWeight: 600 }}>{p.category}</span></Td>
-                    <Td right style={{ fontWeight: 700 }}>{$(p.total)}</Td>
-                    <Td right style={{ color: "var(--steel)" }}>{p.n}</Td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </Panel>
+          <PayeeTable payees={payees} onDrill={openDrill} money={$} />
           <div style={{ fontSize: 11, color: "var(--steel)", margin: "10px 2px", lineHeight: 1.5 }}>
             Source: the daily cash-office whiteslips (the CASH_BREAKDOWN sheets). Only days whose line items reconcile exactly to the sheet's own printed total are included — a day that doesn't reconcile is skipped rather than shown wrong. Payee names are canonicalised so the same recipient totals correctly.
           </div>
