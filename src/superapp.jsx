@@ -5046,7 +5046,7 @@ export function CashOutflows({ embedded = false, from = null, to = null } = {}) 
   const $ = (v) => cur + full(conv(v));
   const Shell = embedded ? ({ children }) => <>{children}</> : Wrap;
   const payees = d?.byPayee || [];
-  const filtered = q ? payees.filter((p) => p.payee.toLowerCase().includes(q.toLowerCase()) || (p.category || "").toLowerCase().includes(q.toLowerCase())) : payees;
+  const filtered = q ? payees.filter((p) => (p.payee || "").toLowerCase().includes(q.toLowerCase()) || (p.category || "").toLowerCase().includes(q.toLowerCase())) : payees;
   const maxCat = Math.max(1, ...(d?.byCategory || []).map((c) => c.total));
   return (
     <Shell>
