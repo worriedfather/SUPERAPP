@@ -859,7 +859,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
           </Note>
         )}
         {litresEntered && salesValue > 0 && (
-          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}{hasULP && ulpPrice ? ` · ULP $${ulpPrice}` : ""}{hasULP && !ulpPrice ? " · ⚠ no ULP pump price set — ULP value not counted" : ""}</div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 4 }}>≈ {dollars(salesValue)} at pump price{blendPrice ? ` · blend $${blendPrice}` : ""}{dieselPrice ? ` · diesel $${dieselPrice}` : ""}{hasULP && ulpPrice ? ` · ULP $${ulpPrice}` : ""}{hasULP && !ulpPrice ? " · ⚠ no ULP pump price set — ULP value not counted" : ""}{config.priceDate ? <> · <b style={{ color: config.priceDate === date ? "var(--steel)" : "#B26A00" }}>prices from the survey of {fmtD(config.priceDate)}</b></> : ""}</div>
         )}
 
         {/* Split the sales by tender — the CASH portion is what the Cash tab reconciles */}
@@ -5057,7 +5057,10 @@ function PayeeTable({ payees, onDrill, money }) {
 }
 
 export function CashOutflows({ embedded = false, from = null, to = null } = {}) {
-  const [period, setPeriod] = useState("month");
+  // Default to YEAR, not the current month: the bank-outflow feed lags (it can be weeks
+  // behind), so "this month" is often EMPTY — which made the whole by-payee list and its
+  // search come up blank ("no payee matches", owner 2026-09-17). Year always has data.
+  const [period, setPeriod] = useState("year");
   const [range, setRange] = useState(defaultRange);
   const [currency, setCurrency] = useState("USD");
   const [d, setD] = useState(null), [err, setErr] = useState(null);

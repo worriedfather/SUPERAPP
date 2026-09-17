@@ -12,8 +12,8 @@ export const GOOGLE_MAPS_KEY =
 /* This build's Android versionCode. Keep it in step with android/app/build.gradle
    `versionCode` on every release — the server compares its MIN_BUILD to this to
    force old apps to update. */
-export const APP_BUILD = 199;
-export const APP_VERSION = "1.9.45";
+export const APP_BUILD = 200;
+export const APP_VERSION = "1.9.46";
 export const PLAY_URL = "https://play.google.com/store/apps/details?id=zw.co.damotors.fuel";
 /* STORE UPDATES (2026-09-11): DA OPS is now on Google Play AND TestFlight, so every
    "update" goes THROUGH THE STORES — never the browser / APK. These deep-link schemes open
