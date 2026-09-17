@@ -362,7 +362,7 @@ export const getLubeProducts = () => call("/api/lube/products");
 export const postLubeSale = (b) => call("/api/lube/sale", { method: "POST", body: b });
 export const getLubeSales = (days = 7) => call(`/api/lube/sales?days=${days}`);
 export const getWarehouseConfig = (warehouse) => call(`/api/warehouse-config?warehouse=${encodeURIComponent(warehouse)}`);
-export const getRetail = (date) => call(`/api/retail?date=${encodeURIComponent(date)}`);
+export const getRetail = (date, from, to) => call(`/api/retail?date=${encodeURIComponent(date)}${from && to && from !== to ? `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` : ""}`);
 const rangeQS = (days, from, to) => (from && to ? `from=${from}&to=${to}` : `days=${days}`);
 export const getHaulage = (days = 14, from = null, to = null) => call(`/api/haulage?${rangeQS(days, from, to)}`);
 export const getWetstock = (days = 30, from = null, to = null) => call(`/api/wetstock?${rangeQS(days, from, to)}`);

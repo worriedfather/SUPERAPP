@@ -5819,11 +5819,15 @@ export function RetailDashboard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [drill, setDrill] = useState(null);
-  const date = periodWindow(period, range).retailDate;
+  const pw = periodWindow(period, range);
+  const date = pw.retailDate;
+  // Multi-day periods (Month/Last month/Year/Range) aggregate the SALES total over the
+  // window; single days (Today/Yesterday) don't. Stock/Price stay the representative-day snapshot.
+  const [wFrom, wTo] = pw.from !== pw.to ? [pw.from, pw.to] : [null, null];
   const load = useCallback(() => {
     setData(null); setErr(null);
-    getRetail(date).then(setData).catch((e) => setErr(e.message));
-  }, [date]);
+    getRetail(date, wFrom, wTo).then(setData).catch((e) => setErr(e.message));
+  }, [date, wFrom, wTo]);
   useEffect(() => { load(); }, [load]);
   // tap any site (on any board) → one sheet with its full picture for the day
   const openSite = (site) => setDrill({ title: site.name, sub: `${site.region ? site.region + " · " : ""}${fmtD(data.date)}`, render: retailSiteDetail(data, site) });
@@ -5834,7 +5838,9 @@ export function RetailDashboard() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, margin: "2px 2px 12px" }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, color: "var(--navy)" }}>Retail sites</h2>
-          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>Stock · Price · Sales · showing <b style={{ color: "var(--navy)" }}>{fmtD(data?.date || date)}</b></div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 3 }}>{data?.aggregated
+            ? <>Sales summed <b style={{ color: "var(--navy)" }}>{fmtD(data.window.from)} → {fmtD(data.window.to)}</b> ({data.window.days}d) · stock/price as at <b style={{ color: "var(--navy)" }}>{fmtD(data.date)}</b></>
+            : <>Stock · Price · Sales · showing <b style={{ color: "var(--navy)" }}>{fmtD(data?.date || date)}</b></>}</div>
         </div>
         <div style={{ minWidth: 240, flex: "0 1 340px" }}>
           <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} showLabel={false} />
@@ -6015,7 +6021,10 @@ function SalesBoard({ d, onSite }) {
   // NOT a sum of the two indicative shift readings. Summing was right only in the old cumulative-
   // reading era; since ~23 Aug the readings are per-shift and the day-end is the source of truth
   // (owner, 2026-09-17). Day / Night still show each shift's own submission.
-  const isTotal = shift === "total";
+  // A multi-day period aggregates the daily totals — the day/night split doesn't apply, so
+  // we force the summed total, hide the shift toggle, and hide "vs last month" (below).
+  const aggregated = !!d.aggregated;
+  const isTotal = aggregated || shift === "total";
   const finalBy = d.sales.final || {};
   const s = isTotal ? finalBy : d.sales[shift];
   const total = d.sites.length;
@@ -6030,7 +6039,7 @@ function SalesBoard({ d, onSite }) {
   // day last calendar month. Shown independent of the shift toggle so the arrow always means
   // better/worse than a typical last-month day. Green up = sold more than last month.
   const prevM = d.sales.prevMonth || null;
-  const hasPrev = !!(prevM && prevM.bySite);
+  const hasPrev = !!(prevM && prevM.bySite) && !aggregated;   // "vs a typical day" is meaningless on a summed window
   const fullDayTotal = (id) => { const c = finalBy[id]; return c ? (Number(c.blendSales) || 0) + (Number(c.dieselSales) || 0) : null; };
   const cmpOf = (id) => {
     const prior = hasPrev ? (prevM.bySite[id]?.avgDaily ?? null) : null;
@@ -6085,7 +6094,8 @@ function SalesBoard({ d, onSite }) {
   );
   return (
     <>
-      <Segmented options={[["day", "Day"], ["night", "Night"], ["total", "Day + Night"]]} value={shift} onChange={setShift} />
+      {!aggregated && <Segmented options={[["day", "Day"], ["night", "Night"], ["total", "Day + Night"]]} value={shift} onChange={setShift} />}
+      {aggregated && <Note tone="blue" title={`Summed over ${d.window.days} days`}>Each site's total sales across the selected period (from the day-end figures). Switch to Today/Yesterday for the day/night split.</Note>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
         <CountPill n={submitted} total={total} label="Reported" tone={submitted >= total ? "ok" : "amber"} />
       </div>
