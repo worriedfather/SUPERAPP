@@ -6025,6 +6025,29 @@ function SalesBoard({ d, onSite }) {
   // shown only where both prices are in; never a network average (owner rule: state the source).
   const priceOf = (id, fuel) => { const a = d.price?.bySite?.[id]?.analysis?.[fuel]; return a && a.da != null ? Number(a.da) : null; };
   const hasPrices = !!(d.price && d.price.bySite);
+  // "vs last month, same span": each site's full DAY (day+night) total vs its average trading
+  // day last calendar month. Shown independent of the shift toggle so the arrow always means
+  // better/worse than a typical last-month day. Green up = sold more than last month.
+  const prevM = d.sales.prevMonth || null;
+  const hasPrev = !!(prevM && prevM.bySite);
+  const fullDayTotal = (id) => { const c = combine(id); return c ? (Number(c.blendSales) || 0) + (Number(c.dieselSales) || 0) : null; };
+  const cmpOf = (id) => {
+    const prior = hasPrev ? (prevM.bySite[id]?.avgDaily ?? null) : null;
+    const cur = fullDayTotal(id);
+    if (prior == null || prior <= 0 || cur == null) return { prior, cur, delta: null, pct: null };
+    const delta = cur - prior;
+    return { prior, cur, delta, pct: (delta / prior) * 100 };
+  };
+  const CmpCell = ({ prior, delta, pct }) => {
+    if (pct == null) return <Td right><span style={{ color: "var(--steel)" }}>—</span></Td>;
+    const up = delta >= 0, col = up ? "var(--ok)" : "var(--red)";
+    return (
+      <Td right>
+        <div style={{ color: col, fontWeight: 700, whiteSpace: "nowrap" }}>{up ? "▲" : "▼"} {pct > 0 ? "+" : ""}{pct.toFixed(1)}%</div>
+        <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400, whiteSpace: "nowrap" }}>{delta > 0 ? "+" : ""}{L(Math.round(delta))} · {L(prior)}/d</div>
+      </Td>
+    );
+  };
   const valueOf = (id, v) => {
     if (!v) return null;
     const pb = priceOf(id, "Blend"), pd = priceOf(id, "Diesel");
@@ -6073,13 +6096,14 @@ function SalesBoard({ d, onSite }) {
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-            <Th>Site</Th><SortTh k="blend">Blend sold</SortTh><SortTh k="diesel">Diesel sold</SortTh><SortTh k="total">Total L</SortTh>{hasPrices && <SortTh k="value">Sales $</SortTh>}</tr></thead>
+            <Th>Site</Th><SortTh k="blend">Blend sold</SortTh><SortTh k="diesel">Diesel sold</SortTh><SortTh k="total">Total L</SortTh>{hasPrices && <SortTh k="value">Sales $</SortTh>}{hasPrev && <Th right>vs {prevM.label}</Th>}</tr></thead>
           <tbody>{shownSites.map((site) => { const v = s[site.id]; const val = valueOf(site.id, v); const rk = rankOf.get(site.id); return (
             <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: v ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
               <Td>{rk ? <span style={{ color: "var(--steel)", marginRight: 6 }}>{rk}.</span> : null}{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
               <Td right>{v ? L(v.blendSales) : "—"}</Td><Td right>{v ? L(v.dieselSales) : "—"}</Td>
               <Td right style={{ fontWeight: 700 }}>{v ? L((Number(v.blendSales) || 0) + (Number(v.dieselSales) || 0)) : "—"}</Td>
               {hasPrices && <Td right style={{ fontWeight: 700, color: "var(--navy)" }}>{val == null ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>{v ? "no price" : "—"}</span> : "$" + L(Math.round(val))}</Td>}
+              {hasPrev && <CmpCell {...cmpOf(site.id)} />}
             </tr>
           ); })}
           <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
@@ -6088,10 +6112,17 @@ function SalesBoard({ d, onSite }) {
             <Td right style={{ fontWeight: 700 }}>{L(t.dieselSales)}</Td>
             <Td right style={{ fontWeight: 700 }}>{L((Number(t.blendSales) || 0) + (Number(t.dieselSales) || 0))}</Td>
             {hasPrices && <Td right style={{ fontWeight: 700 }}>{valuedCount ? `$${L(Math.round(tValue))}` : "—"}{valuedCount && valuedCount < submitted ? <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400 }}>{valuedCount} of {submitted} sites priced</div> : null}</Td>}
+            {hasPrev && (() => {
+              const curNet = d.sites.reduce((a, x) => { const tt = fullDayTotal(x.id); return tt == null ? a : a + tt; }, 0);
+              const priorNet = prevM.networkAvgDaily || 0;
+              if (!priorNet || !curNet) return <Td right>—</Td>;
+              const delta = curNet - priorNet;
+              return <CmpCell prior={priorNet} delta={delta} pct={(delta / priorNet) * 100} />;
+            })()}
           </tr></tbody>
         </table>
       </Panel>
-      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}</div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}{hasPrev ? ` · "vs ${prevM.label}" compares each site's full-day sales to its average trading day in ${prevM.label} (▲ green = sold more); "/d" is that average.` : ""}</div>
     </>
   );
 }
