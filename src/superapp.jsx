@@ -4738,7 +4738,7 @@ function UnaccountedDrill({ days, from, to }) {
                   <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.source === "none" ? "#FFF7E6" : r.source === "finance" ? "#F1F6F1" : "#fff" }}>
                     <Td>{String(r.date).length === 7 ? new Date(r.date + "-01T00:00:00Z").toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }) : fmtD(r.date)}</Td>
                     <Td right style={{ fontWeight: 700, color: r.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{r.unaccounted > 0 ? $(r.unaccounted) : `(${$(Math.abs(r.unaccounted))})`}</Td>
-                    <Td style={{ fontSize: 11, color: "var(--steel)" }}>{r.source === "finance" ? "finance month-end recon — final variance" : r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
+                    <Td style={{ fontSize: 11, color: r.source === "adjustment" ? "#2C6B3F" : "var(--steel)" }}>{r.source === "adjustment" ? ("finance adjustment — " + (r.note || "")) : r.source === "finance" ? "finance month-end recon — final variance" : r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -5841,7 +5841,7 @@ export function RetailDashboard() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["tenders", "Tenders"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["tenders", "Sales by tender"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
@@ -6006,20 +6006,21 @@ function StockBoard({ d, onSite }) {
 function SalesBoard({ d, onSite }) {
   // Open on the freshest complete shift for the clock (see naturalShift); the
   // executive can still switch to the other shift or the Day + Night total.
-  const [shift, setShift] = useState(() => pickShift((sh) => sh !== "total" && Object.keys(d.sales[sh] || {}).length > 0, "total"));
-  // "total" = day + night combined per site
+  // Default to the FULL day (day + night). A single-shift default landed on the night
+  // shift, whose values are INCREMENTAL (night reading − day reading) — so ~40 sites that
+  // recorded no extra night sales showed as 0 and looked like non-submissions (owner,
+  // 2026-09-17: "why so many blanks"). Day + Night shows every reporting site's real total.
+  const [shift, setShift] = useState("total");
+  // "total" = the AUTHORITATIVE whole-day figure per site (day-end preferred; server d.sales.final),
+  // NOT a sum of the two indicative shift readings. Summing was right only in the old cumulative-
+  // reading era; since ~23 Aug the readings are per-shift and the day-end is the source of truth
+  // (owner, 2026-09-17). Day / Night still show each shift's own submission.
   const isTotal = shift === "total";
-  const combine = (id) => {
-    const dd = d.sales.day[id], nn = d.sales.night[id];
-    if (!dd && !nn) return undefined;
-    return { blendSales: (dd?.blendSales || 0) + (nn?.blendSales || 0), dieselSales: (dd?.dieselSales || 0) + (nn?.dieselSales || 0) };
-  };
-  const s = isTotal ? Object.fromEntries(d.sites.map((x) => [x.id, combine(x.id)]).filter(([, v]) => v)) : d.sales[shift];
+  const finalBy = d.sales.final || {};
+  const s = isTotal ? finalBy : d.sales[shift];
   const total = d.sites.length;
   const submitted = Object.keys(s).length;
-  const t = isTotal
-    ? { blendSales: d.sales.totals.day.blendSales + d.sales.totals.night.blendSales, dieselSales: d.sales.totals.day.dieselSales + d.sales.totals.night.dieselSales }
-    : d.sales.totals[shift];
+  const t = isTotal ? (d.sales.totals.final || { blendSales: 0, dieselSales: 0 }) : d.sales.totals[shift];
   const [q, setQ] = useState("");
   // Sales VALUE per site = litres × that site's own DA pump price (from the price survey) —
   // shown only where both prices are in; never a network average (owner rule: state the source).
@@ -6030,7 +6031,7 @@ function SalesBoard({ d, onSite }) {
   // better/worse than a typical last-month day. Green up = sold more than last month.
   const prevM = d.sales.prevMonth || null;
   const hasPrev = !!(prevM && prevM.bySite);
-  const fullDayTotal = (id) => { const c = combine(id); return c ? (Number(c.blendSales) || 0) + (Number(c.dieselSales) || 0) : null; };
+  const fullDayTotal = (id) => { const c = finalBy[id]; return c ? (Number(c.blendSales) || 0) + (Number(c.dieselSales) || 0) : null; };
   const cmpOf = (id) => {
     const prior = hasPrev ? (prevM.bySite[id]?.avgDaily ?? null) : null;
     const cur = fullDayTotal(id);
