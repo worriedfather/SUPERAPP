@@ -3747,7 +3747,7 @@ export function ManagerBirdsEye({ me } = {}) {
   // detail tabs (day-end reconciliation, tank/status trends, cash banking).
   const HIDE_TABS = (me && me.kind === "logistics_manager") ? new Set(["dayend", "tanktrends", "statustrends", "cash", "inflows"])
     : (me && me.kind === "accounts_logistics") ? new Set(["inflows", "cash", "prices"])   // no cash inflows / cash banked / prices for this role
-    : (me && me.kind === "reporting_accountant") ? new Set(["inflows", "cash"])            // no cash inflows / cash banked for this role
+    : (me && me.kind === "reporting_accountant") ? new Set(["cash"])                       // cash inflows opened to reporting accountants (owner, 2026-09-17); cash banked still not
     : (me && me.kind === "manager") ? new Set(["cash"])                                     // no cash banked for the retail manager
     : new Set();
   const TABS = [["scorecard", "Scorecard"], ["dayend", "Day end"], ["tanktrends", "Tank trends"], ["statustrends", "Status trends"], ["midday", "Midday dip"], ["deliveries", "Deliveries"], ["nightshift", "Night shift"], ["dayshift", "Day shift"], ["losses", "Losses"], ["inflows", "Cash inflows"], ["cash", "Cash banked"], ["prices", "Prices"]].filter(([k]) => !HIDE_TABS.has(k));

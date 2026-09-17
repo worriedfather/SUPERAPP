@@ -612,7 +612,7 @@ const ROLE_TABS = {
               ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["cash", "Cash"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
+  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["cash", "Cash"], ["inflows", "Cash inflows"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
   // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
   manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
@@ -625,7 +625,7 @@ const ROLE_TABS = {
   // requests and sees truck/driver efficiency.
   yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
-  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["review", "Submissions"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["tripsreg", "All trips"]],
+  reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["review", "Submissions"], ["inflows", "Cash inflows"], ["cash", "Cash"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["tripsreg", "All trips"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
   accounts_logistics: [["hub", "Home"], ["recon", "Warehouse"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["retail", "Retail"], ["tracking", "Journey tracking"]],
   // admin: full access (superuser).
