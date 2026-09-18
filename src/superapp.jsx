@@ -1426,6 +1426,12 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
               <span className="mono" style={{ fontWeight: 800, color: varTone }}>{okVar ? "✓ balanced" : dollars(Math.abs(variance))}</span>
             </div>
           )}
+          {/* Over today's figure = earlier held cash being remitted: say so, and show what it does to the carried balance */}
+          {official && variance != null && variance < -1 && carryover > 0 && (
+            Math.abs(variance) <= carryover + 1
+              ? <div style={{ fontSize: 11.5, color: "#2C6B3F", marginTop: 4, lineHeight: 1.45 }}>The extra <b>{dollars(Math.abs(variance))}</b> comes off the <b>{dollars(carryover)}</b> still on hand from previous days, oldest first → <b>{dollars(Math.max(0, carryover - Math.abs(variance)))}</b> left to remit after this.</div>
+              : <div style={{ fontSize: 11.5, color: "#C0563A", marginTop: 4, lineHeight: 1.45 }}>Only <b>{dollars(carryover)}</b> is still on hand from previous days — you can be over by that much at most.</div>
+          )}
           {variance != null && !okVar && !official && (
             <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3 }}>Official figure isn’t in yet — submit what you counted; HQ reconciles against the official number.</div>
           )}
@@ -4692,7 +4698,7 @@ function CarriedDrill() {
                   <tbody>{held.map((r) => (
                     <tr key={r.date} style={{ borderTop: "1px solid var(--line)" }}>
                       <Td>{fmtD(r.date)}</Td>
-                      <Td right style={{ fontWeight: 700, color: "#B4801F" }}>{$(r.declared)}</Td>
+                      <Td right style={{ fontWeight: 700, color: "#B4801F" }}>{$(r.declared)}{r.declaredOriginal > r.declared ? <span style={{ fontWeight: 400, color: "var(--steel)" }}> of {$(r.declaredOriginal)} · rest since remitted</span> : null}</Td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -4701,7 +4707,7 @@ function CarriedDrill() {
           </div>
         );
       })}
-      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Only what each site itself declared as cash still held and not yet sent to HQ. It clears when the site records the hand-over.</div>
+      <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 6 }}>Only what each site itself declared as cash still held and not yet sent to HQ. When a later day remits more than that day&apos;s own cash, the extra clears the oldest held cash first, so a day drops off this list once its cash has gone up.</div>
     </>
   );
 }
@@ -4714,12 +4720,17 @@ function UnaccountedDrill({ days, from, to }) {
   const $ = (v) => "$" + full(v);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading…</div>;
-  if (!d.sites.length) return <Note tone="ok" title="Fully accounted">Every site's expected cash in this window has been accounted for.</Note>;
+  if (!d.sites.length) return <Note tone="ok" title="Fully accounted">{d.openingDate ? `Everything before ${fmtD(d.openingDate)} is settled for every site, and nothing since then is outstanding in this window.` : "Every site's expected cash in this window has been accounted for."}</Note>;
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
         <KpiCard label="Unaccounted for" value={$(d.unaccounted)} sub={`${d.sites.length} site${d.sites.length === 1 ? "" : "s"} with a gap`} />
       </div>
+      {d.openingDate && (
+        <Note tone="ok" title={`Cash position starts ${fmtD(d.openingDate)}`}>
+          Everything before {fmtD(d.openingDate)} is settled for every site, so that part of this window shows nothing to chase{d.openingSettled ? ` (${$(Math.abs(d.openingSettled))} of earlier differences cleared)` : ""}. What is listed below is from {fmtD(d.openingDate)} onward.
+        </Note>
+      )}
       {Array.isArray(d.financeMonths) && d.financeMonths.length > 0 && (
         <Note tone="ok" title={`${d.financeMonths.length === 1 ? "This month is" : "These months are"} finance's month-end reconciliation`}>
           {d.financeMonths.map((m) => new Date(m + "-01T00:00:00Z").toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })).join(", ")}: the figures are finance's revenue-to-cash recon per site, final. What shows below for {d.financeMonths.length === 1 ? "that month" : "those months"} is finance's own variance, not the sites' day-by-day app submissions.
@@ -4877,6 +4888,11 @@ function CashWaterfall({ d, extra, onSite, onUnacc, onCarried }) {
   return (
     <Panel style={{ marginBottom: 12 }}>
       <span className="lbl">Cash reconciliation <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· sales down to what's reached head office</span></span>
+      {d.openingDate && (
+        <div style={{ fontSize: 11.5, color: "#2C6B3F", background: "#EEF6EE", border: "1px solid #CFE3CF", borderRadius: 8, padding: "6px 10px", marginTop: 8, lineHeight: 1.45 }}>
+          Cash position starts <b>{fmtD(d.openingDate)}</b>. Everything before it is settled for every site{d.openingSettled ? <> — <b>{$(Math.abs(d.openingSettled))}</b> of earlier differences in this window is counted as placed</> : null}; cash on hand and unaccounted run from that date.
+        </div>
+      )}
       <div style={{ marginTop: 6 }}>
         <Row label="Sales — all tenders" val={sales == null ? 0 : sales} strong />
         <Row label="DA card" val={daCard} deduct />
