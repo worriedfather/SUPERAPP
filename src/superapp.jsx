@@ -4745,6 +4745,13 @@ function UnaccountedDrill({ days, from, to }) {
             <span className="mono" style={{ fontWeight: 800, color: s.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{s.unaccounted > 0 ? $(s.unaccounted) : `(${$(Math.abs(s.unaccounted))}) over`}</span>
             <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
           </div>
+          {open === s.siteId && s.netting && (s.netting.matched > 0 || s.netting.heldDeclared > 0) && (
+            <div style={{ fontSize: 11.5, color: "var(--steel)", padding: "8px 12px", borderTop: "1px solid var(--line)", background: "#F7FAF7", lineHeight: 1.45 }}>
+              {s.netting.matched > 0 && <>This site holds cash and sends it up in batches: <b style={{ color: "var(--navy)" }}>{$(s.netting.matched)}</b> held on earlier days was cleared by {s.netting.sends} later send{s.netting.sends === 1 ? "" : "s"}, oldest first, and is not listed. </>}
+              {s.netting.heldDeclared > 0 && <><b style={{ color: "var(--navy)" }}>{$(s.netting.heldDeclared)}</b> of the newest days is cash the site has declared it still holds. </>}
+              What remains below is what is genuinely outstanding.
+            </div>
+          )}
           {open === s.siteId && (
             <div style={{ overflowX: "auto", borderTop: "1px solid var(--line)" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
@@ -4753,7 +4760,16 @@ function UnaccountedDrill({ days, from, to }) {
                   <tr key={r.date} style={{ borderTop: "1px solid var(--line)", background: r.source === "none" ? "#FFF7E6" : r.source === "finance" ? "#F1F6F1" : "#fff" }}>
                     <Td>{String(r.date).length === 7 ? new Date(r.date + "-01T00:00:00Z").toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" }) : fmtD(r.date)}</Td>
                     <Td right style={{ fontWeight: 700, color: r.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{r.unaccounted > 0 ? $(r.unaccounted) : `(${$(Math.abs(r.unaccounted))})`}</Td>
-                    <Td style={{ fontSize: 11, color: r.source === "adjustment" ? "#2C6B3F" : "var(--steel)" }}>{r.source === "adjustment" ? ("finance adjustment — " + (r.note || "")) : r.source === "finance" ? "finance month-end recon — final variance" : r.source === "none" ? "nothing submitted" : r.source === "legacy" ? "old app — takings only, no split" : r.source === "app" ? "partial — site submission short" : "partial — HQ recon short"}</Td>
+                    <Td style={{ fontSize: 11, color: r.source === "adjustment" ? "#2C6B3F" : "var(--steel)" }}>{
+                      r.source === "adjustment" ? ("finance adjustment — " + (r.note || ""))
+                      : r.source === "finance" ? "finance month-end recon — final variance"
+                      : r.source === "over" ? "sent up more than earlier held cash explains"
+                      : r.source === "onhand" ? "declared still on hand, beyond the open days"
+                      : r.source === "none" ? "nothing submitted"
+                      : r.source === "legacy" ? "old app — takings only, no split"
+                      : r.unaccounted < 0 ? "sent up more than the day's cash"
+                      : r.netted ? `still outstanding — $${full(r.original)} that day, the rest since sent up or declared held`
+                      : r.source === "app" ? "not yet sent up or declared" : "partial — HQ recon short"}</Td>
                   </tr>
                 ))}</tbody>
               </table>
