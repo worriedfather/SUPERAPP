@@ -1307,10 +1307,14 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
     if (accounted === 0) { setMsg({ tone: "amber", title: "Nothing to submit", body: "Record how at least one part of the cash was handled." }); return; }
     // HARD RULE: against the OFFICIAL figure the submission must balance to the
     // dollar before it goes in (server enforces this too). Managers may override.
-    if (!isManager && official && variance != null && Math.abs(variance) >= 1) {
+    // Being OVER is fine when the extra is cash the site was still holding from earlier days
+    // (carryover) — that is a site remitting what it owed, not a double entry. Over by more
+    // than the carried balance is still refused. (Mutare 4th Street, 2026-09-18.)
+    const overWithinCarry = variance != null && variance < 0 && Math.abs(variance) <= carryover + 1;
+    if (!isManager && official && variance != null && Math.abs(variance) >= 1 && !overWithinCarry) {
       setMsg({ tone: "amber", title: "Doesn't balance — not submitted", body: variance > 0
         ? `${dollars(Math.abs(variance))} of today's ${dollars(expected)} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
-        : `You've accounted for ${dollars(Math.abs(variance))} MORE than today's ${dollars(expected)} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
+        : `You've accounted for ${dollars(Math.abs(variance))} MORE than today's ${dollars(expected)}${carryover > 0 ? `, and only ${dollars(carryover)} of earlier cash is still held at the site` : ""} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
       return;
     }
     // Bank name + deposit slip are NOT asked for here — the site just declares the amount
@@ -1325,7 +1329,7 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
         swipe: n(f.swipe), ecocash: n(f.ecocash), petty: n(f.petty), daCard: n(f.daCard), cashOnHand: n(f.cashOnHand),
         expected, deviceTime: new Date().toISOString(),
       });
-      const tail = official && expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : "over"}` : "";
+      const tail = official && expected != null && Math.abs(variance) >= 1 ? ` · ${dollars(Math.abs(variance))} ${variance > 0 ? "unaccounted" : overWithinCarry ? "of earlier held cash remitted" : "over"}` : "";
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
       setDone({ tone: official && variance != null && Math.abs(variance) >= 1 ? "amber" : "ok", title: `Cash handling recorded${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · ${dollars(accounted)} accounted for${tail}${r && r.bridgedDeposit ? ` · $${n(f.banked).toLocaleString()} deposit sent to the cash office to confirm` : ""}` });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
