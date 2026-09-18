@@ -4745,10 +4745,10 @@ function UnaccountedDrill({ days, from, to }) {
             <span className="mono" style={{ fontWeight: 800, color: s.unaccounted > 0 ? "var(--red)" : "#C0563A" }}>{s.unaccounted > 0 ? $(s.unaccounted) : `(${$(Math.abs(s.unaccounted))}) over`}</span>
             <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
           </div>
-          {open === s.siteId && s.netting && (s.netting.matched > 0 || s.netting.heldDeclared > 0) && (
+          {open === s.siteId && s.netting && (s.netting.matched >= 100 || s.netting.heldDeclared >= 100) && (
             <div style={{ fontSize: 11.5, color: "var(--steel)", padding: "8px 12px", borderTop: "1px solid var(--line)", background: "#F7FAF7", lineHeight: 1.45 }}>
-              {s.netting.matched > 0 && <>This site holds cash and sends it up in batches: <b style={{ color: "var(--navy)" }}>{$(s.netting.matched)}</b> held on earlier days was cleared by {s.netting.sends} later send{s.netting.sends === 1 ? "" : "s"}, oldest first, and is not listed. </>}
-              {s.netting.heldDeclared > 0 && <><b style={{ color: "var(--navy)" }}>{$(s.netting.heldDeclared)}</b> of the newest days is cash the site has declared it still holds. </>}
+              {s.netting.matched >= 100 && <>This site holds cash and sends it up in batches: <b style={{ color: "var(--navy)" }}>{$(s.netting.matched)}</b> held on earlier days was cleared by {s.netting.sends} later send{s.netting.sends === 1 ? "" : "s"}, oldest first, and is not listed. </>}
+              {s.netting.heldDeclared >= 100 && <><b style={{ color: "var(--navy)" }}>{$(s.netting.heldDeclared)}</b> of the newest days is cash the site has declared it still holds. </>}
               What remains below is what is genuinely outstanding.
             </div>
           )}
@@ -4763,7 +4763,7 @@ function UnaccountedDrill({ days, from, to }) {
                     <Td style={{ fontSize: 11, color: r.source === "adjustment" ? "#2C6B3F" : "var(--steel)" }}>{
                       r.source === "adjustment" ? ("finance adjustment — " + (r.note || ""))
                       : r.source === "finance" ? "finance month-end recon — final variance"
-                      : r.source === "over" ? "sent up more than earlier held cash explains"
+                      : r.source === "over" ? "cash held from before this period, sent up — counted in the tile as prior-day cash remitted"
                       : r.source === "onhand" ? "declared still on hand, beyond the open days"
                       : r.source === "none" ? "nothing submitted"
                       : r.source === "legacy" ? "old app — takings only, no split"
@@ -4951,13 +4951,18 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
   const [carriedDrill, setCarriedDrill] = useState(false);
   const [unaccDrill, setUnaccDrill] = useState(false);
   const [gd, setGd] = useState(null);   // general per-site drill sheet
+  const [gapDays, setGapDays] = useState(null);   // siteId → { days[], netting } from the unaccounted drill
+  const [show, setShow] = useState("all");        // by-site filter: all | short | holding | over | notsub | ok
   const w = embedded ? { from, to, days: 90 } : periodWindow(period, range);
   const effFrom = w.from, effTo = w.to;
   useEffect(() => {
     if (embedded && !(effFrom && effTo)) return;
     if (!embedded && period === "range" && !(range.from && range.to)) return;
-    setD(null); setErr(null); setExtra(null);
+    setD(null); setErr(null); setExtra(null); setGapDays(null);
     getCashInflows(w.days || 90, effFrom, effTo).then(setD).catch((e) => setErr(e.message));
+    // the day-level picture behind each site's gap (already netted hold-then-send) → shown on the
+    // site card, so WHERE the short sits is visible without opening anything
+    getCashUnaccounted(w.days || 90, effFrom, effTo).then((u) => setGapDays(Object.fromEntries((u.sites || []).map((s) => [String(s.siteId), s])))).catch(() => setGapDays({}));
     // Sales (all tenders) + tender split for the Sales→Expected-cash bridge, and the
     // HQ-CONFIRMED received figure (cash-office day-close) for the downstream line.
     Promise.all([getCash(w.days || 90, effFrom, effTo).catch(() => null), getCashRecon(w.days || 90, effFrom, effTo).catch(() => null)])
@@ -5006,40 +5011,93 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           {/* Phone-first: one card per site (no sideways scroll). The key numbers are on
               two lines; the status badge flags the exception; tap opens the full breakdown
               (every channel + prior-day cash) in a detail sheet. */}
-          <Panel style={{ padding: 0, overflow: "hidden" }}>
-            {filtered.map((s) => {
-              const unacc = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
-              const prior = s.overRemit || Math.max(0, s.submitted - s.expected);
+          {/* BY SITE, redesigned (owner, 2026-09-18: "easier to spot where the short is coming from —
+              what they submitted and what we expected"). Every card reads EXPECTED − PLACED = GAP,
+              with a bar of where the money went and the exact days the gap sits on. Exceptions
+              first. One money figure is only ever called ONE thing:
+                short   = expected cash not placed AND not declared as held   (red)
+                holding = not placed, but the site has declared it still holds it (amber)
+                extra   = sent up more than this period's cash (earlier held cash going up) */}
+          {(() => {
+            const rows = filtered.map((s) => {
               const notSub = s.subDays === 0;
-              const badge = notSub ? { t: "not submitted", c: "#B4801F", bg: "#FBEFD2" }
-                : unacc > 50 ? { t: `$${L(unacc)} short`, c: "#fff", bg: "#B23B3B" }
-                : { t: "✓ balanced", c: "#2F7D3B", bg: "#E4F3E6" };
-              // build a short, non-zero-only channel summary so the sub-line stays compact
-              const bits = notSub ? [] : [
-                s.hq > 50 && `HQ ${$(s.hq)}`, s.banked > 50 && `bank ${$(s.banked)}`,
-                s.swipe > 50 && `swipe ${$(s.swipe)}`, s.mobile > 50 && `mobile ${$(s.mobile)}`,
-                s.petty > 50 && `petty ${$(s.petty)}`, s.onHand > 50 && `on-till ${$(s.onHand)}`,
-              ].filter(Boolean);
-              return (
-                <div key={s.siteId} onClick={() => setGd({ title: s.site, sub: "how the cash reconciles · this window", render: () => <CashSiteDrill s={s} /> })}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 14px", borderTop: "1px solid var(--line)", background: notSub ? "#FFF9EE" : "#fff", cursor: "pointer" }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></div>
-                    <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Exp <b style={{ color: "var(--ink)" }}>{$(s.expected)}</b>{bits.length ? " · " + bits.join(" · ") : (notSub ? "" : " · —")}
-                    </div>
-                    {(prior > 50 || (s.carriedDeclared || 0) > 50) && (
-                      <div style={{ fontSize: 10.5, color: "#B4801F", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {prior > 50 && `+${$(prior)} prior-day cash banked`}{prior > 50 && (s.carriedDeclared || 0) > 50 ? " · " : ""}{(s.carriedDeclared || 0) > 50 && `${$(s.carriedDeclared)} still on hand`}
-                      </div>
-                    )}
-                  </div>
-                  <span style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 700, color: badge.c, background: badge.bg, borderRadius: 20, padding: "3px 10px", whiteSpace: "nowrap" }}>{badge.t}</span>
+              const gap = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
+              const held = Math.min(gap, Math.max(0, s.carriedDeclared || 0));   // the part of the gap the site has declared it holds
+              const short = Math.max(0, gap - held);
+              const extra = s.overRemit || Math.max(0, s.submitted - s.expected);
+              const kind = notSub && s.expected > 0 ? "notsub" : short > 50 ? "short" : held > 50 ? "holding" : extra > 50 ? "over" : "ok";
+              return { s, notSub, gap, held, short, extra, kind, placed: Math.min(s.submitted || 0, s.expected || 0) };
+            });
+            const count = (k) => rows.filter((r) => r.kind === k).length;
+            const order = { notsub: 0, short: 1, holding: 2, over: 3, ok: 4 };
+            const shown = rows.filter((r) => show === "all" || r.kind === show)
+              .sort((a, b) => (order[a.kind] - order[b.kind]) || (b.short + b.held - (a.short + a.held)) || (b.s.expected - a.s.expected));
+            const CHIPS = [["all", "All", rows.length, "var(--navy)"], ["short", "Short", count("short"), "#B23B3B"], ["holding", "Holding cash", count("holding"), "#B4801F"], ["notsub", "Not submitted", count("notsub"), "#B4801F"], ["over", "Sent up extra", count("over"), "#2C5C8A"], ["ok", "Balanced", count("ok"), "#2F7D3B"]];
+            const KIND = { notsub: { t: "not submitted", c: "#B4801F", bg: "#FBEFD2" }, ok: { t: "✓ balanced", c: "#2F7D3B", bg: "#E4F3E6" } };
+            const Cell = ({ label, value, color, bold }) => (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--steel)" }}>{label}</div>
+                <div className="mono" style={{ fontSize: 13.5, fontWeight: bold ? 800 : 700, color: color || "var(--ink)", whiteSpace: "nowrap" }}>{value}</div>
+              </div>
+            );
+            return (
+              <>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0 10px" }}>
+                  {CHIPS.filter(([k, , n]) => k === "all" || n > 0).map(([k, label, n, col]) => (
+                    <button key={k} type="button" className="disp" onClick={() => setShow(k)}
+                      style={{ border: `1.5px solid ${show === k ? col : "var(--line)"}`, background: show === k ? col : "#fff", color: show === k ? "#fff" : col, borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{label} · {n}</button>
+                  ))}
                 </div>
-              );
-            })}
-            {filtered.length === 0 && <div style={{ padding: 16, color: "var(--steel)", fontSize: 13 }}>No sites match.</div>}
-          </Panel>
+                <Panel style={{ padding: 0, overflow: "hidden" }}>
+                  {shown.map(({ s, notSub, gap, held, short, extra, kind, placed }) => {
+                    const badge = KIND[kind] || (kind === "short" ? { t: `$${L(short)} short`, c: "#fff", bg: "#B23B3B" } : kind === "holding" ? { t: `holding $${L(held)}`, c: "#7A5410", bg: "#FBE7B8" } : { t: `+$${L(extra)} extra sent up`, c: "#2C5C8A", bg: "#E3EEF8" });
+                    const base = Math.max(s.expected || 0, 1);
+                    const seg = (v) => `${Math.max(0, Math.min(100, (v / base) * 100))}%`;
+                    const chans = [["HQ", s.hq, "#1F2E6B"], ["Bank", s.banked, "#3D6FB5"], ["Swipe", s.swipe, "#3E8E8A"], ["Mobile", s.mobile, "#6FB3A8"], ["Petty", s.petty, "#9AA6B8"], ["On till", s.onHand, "#C9A227"]].filter(([, v]) => v > 50);
+                    const scale = (s.submitted || 0) > 0 ? placed / s.submitted : 0;   // when the site sent up extra, the bar shows only the part that belongs to this period
+                    const gd0 = gapDays && gapDays[String(s.siteId)];
+                    const where = gd0 ? gd0.days.filter((x) => x.unaccounted > 1 && /^\d{4}-\d{2}-\d{2}$/.test(String(x.date))).sort((a, b) => b.unaccounted - a.unaccounted) : [];
+                    return (
+                      <div key={s.siteId} onClick={() => setGd({ title: s.site, sub: "how the cash reconciles · this window", render: () => <CashSiteDrill s={s} /> })}
+                        style={{ padding: "12px 14px", borderTop: "1px solid var(--line)", background: kind === "short" ? "#FFF8F7" : kind === "notsub" ? "#FFF9EE" : "#fff", cursor: "pointer", borderLeft: `4px solid ${kind === "short" ? "#B23B3B" : kind === "holding" || kind === "notsub" ? "#D9A93A" : kind === "over" ? "#7FA6CC" : "#CFE3CF"}` }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.site} <span style={{ color: "var(--steel)", fontWeight: 400 }}>›</span></div>
+                          <span style={{ flex: "0 0 auto", fontSize: 11, fontWeight: 700, color: badge.c, background: badge.bg, borderRadius: 20, padding: "3px 10px", whiteSpace: "nowrap" }}>{badge.t}</span>
+                        </div>
+                        {!notSub && (
+                          <>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8, marginTop: 8 }}>
+                              <Cell label="Expected" value={$(s.expected)} />
+                              <Cell label="Placed by the site" value={$(placed)} />
+                              <Cell label={gap > 50 ? (short > 50 ? "Not placed" : "Held at the site") : "Gap"} value={gap > 50 ? $(gap) : "✓ none"} color={short > 50 ? "#B23B3B" : gap > 50 ? "#B4801F" : "#2F7D3B"} bold />
+                            </div>
+                            <div style={{ display: "flex", height: 8, borderRadius: 5, overflow: "hidden", background: "#EEF1F5", marginTop: 8 }} aria-hidden="true">
+                              {chans.map(([k, v, col]) => <div key={k} style={{ width: seg(v * scale), background: col }} />)}
+                              {held > 50 && <div style={{ width: seg(held), background: "#E8B94A" }} />}
+                              {short > 50 && <div style={{ width: seg(short), background: "#C8463F" }} />}
+                            </div>
+                            <div className="mono" style={{ fontSize: 10.5, color: "var(--steel)", marginTop: 5, lineHeight: 1.5 }}>
+                              {chans.length ? chans.map(([k, v, col]) => <span key={k} style={{ marginRight: 10, whiteSpace: "nowrap" }}><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 2, background: col, marginRight: 4 }} />{k} {$(v)}</span>) : "nothing placed yet"}
+                            </div>
+                            {gap > 50 && (
+                              <div style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5, color: short > 50 ? "#8A2B26" : "#7A5410" }}>
+                                {short > 50 && <><b>${L(short)}</b> is not sent up and not declared as held. </>}
+                                {held > 50 && <><b>${L(held)}</b> the site has declared it still holds. </>}
+                                {where.length > 0 && <span style={{ color: "var(--ink)" }}>Sits on: {where.slice(0, 4).map((x) => `${fmtD(x.date)} $${L(x.unaccounted)}`).join(" · ")}{where.length > 4 ? ` · +${where.length - 4} more days` : ""}</span>}
+                              </div>
+                            )}
+                            {extra > 50 && <div style={{ fontSize: 11.5, marginTop: 6, color: "#2C5C8A" }}>Sent up <b>${L(extra)}</b> more than this period&apos;s cash: earlier held cash going up. It is not counted against this period.</div>}
+                          </>
+                        )}
+                        {notSub && <div style={{ fontSize: 11.5, marginTop: 6, color: "#7A5410" }}>Expected <b>{$(s.expected)}</b>, and no cash handling has been submitted for this window.</div>}
+                      </div>
+                    );
+                  })}
+                  {shown.length === 0 && <div style={{ padding: 16, color: "var(--steel)", fontSize: 13 }}>No sites match.</div>}
+                </Panel>
+              </>
+            );
+          })()}
         </>
       )}
       {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
