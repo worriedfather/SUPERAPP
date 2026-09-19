@@ -10,7 +10,7 @@ import {
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
   getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
-  postWarehouseImport, voidWarehouseImport, editWarehouseImport, getWarehouseBalances, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
+  postWarehouseImport, voidWarehouseImport, editWarehouseImport, getWarehouseBalances, setBlendRatio, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getDayendComments, computeDayend, closeDayend,
@@ -2092,8 +2092,10 @@ function warehouseStockDrill(warehouses) {
   return () => {
     const rows = warehouses || [];
     if (!rows.length) return <div style={{ color: "var(--steel)", fontSize: 13 }}>No warehouse data yet.</div>;
-    const prods = ["Blend", "Diesel", "ULP"];
-    if (rows.some((w) => ((w.products && w.products.Ethanol) || 0) > 0)) prods.splice(2, 0, "Ethanol");   // ethanol column only when a depot (Chisumbanje) holds it
+    // what the depots physically hold: the two petrol INGREDIENTS and diesel (Blend is made at the
+    // gantry); a Blend column appears only when ready Blend from a Petrotrade refund is on hand
+    const prods = ["Diesel", "ULP", "Ethanol"];
+    if (rows.some((w) => ((w.products && w.products.Blend) || 0) > 0)) prods.push("Blend");
     const tot = {}; prods.forEach((p) => tot[p] = rows.reduce((s, w) => s + ((w.products && w.products[p]) || 0), 0));
     const totAll = rows.reduce((s, w) => s + (w.stock || 0), 0);
     return (
@@ -7627,7 +7629,11 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
   useEffect(() => { load(); }, [load]);
 
   const dropTotal = drops.filter((d) => !d.collect).reduce((a, d) => a + (Number(d.qty) || 0), 0);   // pickups don't count toward the load
-  const whStock = bal?.warehouses.find((w) => w.name === f.warehouse)?.products?.[f.product] ?? null;
+  // Blend is not stocked — what can be LOADED is limited by the scarcer ingredient (ULP / ethanol)
+  const whRow = bal?.warehouses.find((w) => w.name === f.warehouse) || null;
+  const isBlendLoad = f.product === "Blend" && !!(whRow && whRow.blend);
+  const whStock = isBlendLoad ? whRow.blend.loadable : (whRow?.products?.[f.product] ?? null);
+  const limitedBy = isBlendLoad ? whRow.blend.limiting : null;
   const overStock = whStock != null && dropTotal > whStock;
   const setDrop = (i, k, v) => setDrops((ds) => ds.map((d, j) => (j === i ? { ...d, [k]: v } : d)));
   const valid = f.driverCard && drops.some((d) => d.site && Number(d.qty) > 0 && !d.collect) && !overStock && String(f.endPoint || "").trim() && dropTotal >= 5000 && dropTotal <= 50000;
@@ -7639,7 +7645,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
     if (dropTotal < 5000) return setMsg({ tone: "amber", title: "Load too small", body: `The load is ${L(dropTotal)} L — a trip must carry at least 5,000 L.` });
     if (dropTotal > 50000) return setMsg({ tone: "amber", title: "Load too large", body: `The load is ${L(dropTotal)} L — a truck carries at most 50,000 L.` });
     if (!String(f.endPoint || "").trim()) return setMsg({ tone: "amber", title: "End point required", body: "Set where the truck returns to. Logistics maps the full trip so the driver only collects and delivers." });
-    if (overStock) return setMsg({ tone: "amber", title: "Not enough stock", body: `The drops (${L(dropTotal)} L) exceed ${f.warehouse} ${f.product} available (${L(whStock)} L).` });
+    if (overStock) return setMsg({ tone: "amber", title: "Not enough stock", body: isBlendLoad ? `The drops (${L(dropTotal)} L) are more Blend than ${f.warehouse} can load (${L(whStock)} L). It is limited by ${limitedBy === "Ethanol" ? "ethanol" : "ULP"} — more of that has to arrive first.` : `The drops (${L(dropTotal)} L) exceed ${f.warehouse} ${f.product} available (${L(whStock)} L).` });
     setBusy(true);
     try {
       const clean = drops.filter((d) => d.site && (Number(d.qty) > 0 || d.collect))
@@ -7675,9 +7681,9 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
             <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse}
               onChange={(v) => setF((s) => ({ ...s, warehouse: v, product: v === "Chisumbanje" ? "Ethanol" : s.product }))}
               options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP", "Ethanol"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP"]} /></Field></div>
           </div>
-          {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b>{overStock ? " — drops exceed this" : ""}</div>}
+          {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{isBlendLoad ? <>{f.warehouse} can load <b>{L(whStock)} L</b> of Blend · limited by {limitedBy === "Ethanol" ? "ethanol" : "ULP"}</> : <>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b></>}{overStock ? " — drops exceed this" : ""}</div>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 160px" }}><Field label="Driver"><Picker value={f.driverCard} placeholder="Select driver…" title="Driver"
               onChange={(card) => {
@@ -7824,7 +7830,8 @@ function depotDetail(w, imports) {
   return () => (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-        {["Blend", "Diesel", "ULP"].map((p) => <Stat key={p} label={p} value={L(w.products[p])} unit="L" />)}
+        {w.blend && <Stat label="Blend you can load" value={L(w.blend.loadable)} unit="L" />}
+        {["Diesel", "ULP", "Ethanol"].map((p) => <Stat key={p} label={p} value={L(w.products[p])} unit="L" />)}
       </div>
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <div className="lbl" style={{ padding: "12px 14px 6px" }}>Recent imports here</div>
@@ -7842,6 +7849,113 @@ function depotDetail(w, imports) {
         )}
       </Panel>
     </>
+  );
+}
+
+// DEPOT CARDS FOR THE BLENDING DEPOTS (owner, 2026-09-19). DA never stocks Blend: it holds ULP
+// and ethanol at NOIC, and NOIC blends as the truck loads. So the headline is "Blend you can
+// load" = whichever ingredient runs out first at the ratio in force, with that ingredient named,
+// the days of cover at the recent loading rate, what is stranded, and what to order. The ratio
+// is a dated setting logistics can change here.
+function BlendDepots({ bal, onOpen, onChanged, canEdit }) {
+  const depots = (bal.warehouses || []).filter((w) => w.blend);
+  const br = bal.blendRatio || { current: 0.2, history: [] };
+  const [edit, setEdit] = useState(false);
+  const [pct, setPct] = useState(String(Math.round((br.current || 0) * 1000) / 10));
+  const [from, setFrom] = useState(todayISO());
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  if (!depots.length) return null;
+  const pctNow = Math.round((br.current || 0) * 1000) / 10;
+  const last = (br.history || []).filter((h) => h.from <= todayISO()).slice(-1)[0];
+  const save = async () => {
+    setMsg(null);
+    const v = Number(pct);
+    if (!(v >= 0 && v <= 50)) { setMsg({ tone: "amber", body: "Enter the ethanol share as a percentage between 0 and 50." }); return; }
+    setBusy(true);
+    try { await setBlendRatio({ percent: v, effectiveFrom: from, note }); setEdit(false); setNote(""); onChanged && onChanged(); }
+    catch (e) { setMsg({ tone: "red", body: e.message }); }
+    finally { setBusy(false); }
+  };
+  const Bar = ({ label, litres, makes, max, limiting, col }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", gap: 8, alignItems: "center", marginTop: 6 }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: limiting ? "var(--red)" : "var(--navy)" }}>{label}</span>
+      <div>
+        <div style={{ height: 8, borderRadius: 5, background: "#EEF1F5", overflow: "hidden" }} aria-hidden="true"><div style={{ width: `${Math.max(2, Math.min(100, max > 0 ? (makes / max) * 100 : 0))}%`, height: "100%", background: limiting ? "#C8463F" : col }} /></div>
+        <div className="mono" style={{ fontSize: 10.5, color: limiting ? "var(--red)" : "var(--steel)", marginTop: 2 }}>{full(litres)} L held · enough for {full(makes)} L of Blend{limiting ? " · runs out first" : ""}</div>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <span className="lbl">Blend is made at the depot</span>
+        <span style={{ fontSize: 12, color: "var(--steel)" }}>NOIC blends at <b style={{ color: "var(--navy)" }}>{pctNow}% ethanol</b>{last ? ` · since ${fmtD(last.from)}` : ""}</span>
+        {canEdit && !edit && <button type="button" className="disp" onClick={() => setEdit(true)} style={{ border: "1px solid var(--line)", background: "#fff", color: "var(--navy)", borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Change ratio</button>}
+      </div>
+      {edit && (
+        <Panel style={{ marginBottom: 10 }}>
+          {msg && <Note tone={msg.tone} title="Not saved">{msg.body}</Note>}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ flex: "1 1 120px" }}><Field label="Ethanol share (%)"><Num value={pct} onChange={setPct} placeholder="20" /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Applies from"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field></div>
+            <div style={{ flex: "2 1 200px" }}><Field label="Why (optional)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="NOIC notice of …" style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontSize: 14 }} /></Field></div>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "2px 0 10px" }}>Loads from that date use the new share; earlier loads keep the share that applied on their day. Both depots always use the same share.</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="pill" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save ratio"}</button>
+            <button type="button" className="pill-ghost" onClick={() => { setEdit(false); setMsg(null); }}>Cancel</button>
+          </div>
+          {(br.history || []).length > 1 && <div className="mono" style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>History: {br.history.map((h) => `${Math.round(h.ratio * 1000) / 10}% from ${fmtD(h.from)}`).join(" · ")}</div>}
+        </Panel>
+      )}
+      {(bal.misKeyedBlend || []).length > 0 && (
+        <Note tone="amber" title={`${bal.misKeyedBlend.length} receipt${bal.misKeyedBlend.length === 1 ? "" : "s"} keyed as Blend — counted as ULP`}>
+          Blend is never bought, so {bal.misKeyedBlend.map((m) => `${m.ref} (${full(m.litres)} L, ${m.supplier}, ${m.warehouse})`).join(" and ")} {bal.misKeyedBlend.length === 1 ? "is" : "are"} treated as ULP in the figures below. Open each one and re-key it as ULP so the record is right.
+        </Note>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12 }}>
+        {depots.map((w) => {
+          const b = w.blend, max = Math.max(b.ulpMakes, b.ethanolMakes, 1);
+          const low = b.daysCover != null && b.daysCover < 4, warn = b.daysCover != null && b.daysCover < 7;
+          const tone = low ? "var(--red)" : warn ? "#B4801F" : "var(--navy)";
+          const need = b.order7 || { ulp: 0, ethanol: 0 };
+          return (
+            <div key={w.name} className="card" role="button" tabIndex={0} onClick={() => onOpen && onOpen(w)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen && onOpen(w); } }}
+              style={{ padding: "14px 16px", cursor: "pointer", borderLeft: `4px solid ${low ? "#B23B3B" : warn ? "#D9A93A" : "#CFE3CF"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <span className="lbl">{w.name}</span>
+                {(low || warn) && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: low ? "#B23B3B" : "#C79A2E", borderRadius: 20, padding: "2px 9px", whiteSpace: "nowrap" }}>order {b.limiting === "Ethanol" ? "ethanol" : "ULP"} {low ? "now" : "soon"}</span>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10, marginTop: 8 }}>
+                <div>
+                  <div style={{ fontSize: 9.5, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--steel)" }}>Blend you can load</div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: tone, lineHeight: 1.1 }}>{full(b.loadable)}<span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>L</span></div>
+                  <div style={{ fontSize: 11, color: tone }}>{b.daysCover != null ? `${b.daysCover} days at ${full(b.avgDailyLoad)} L a day` : "no recent loads to judge cover"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 9.5, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--steel)" }}>Diesel</div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: "var(--navy)", lineHeight: 1.1 }}>{full(w.products.Diesel)}<span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>L</span></div>
+                </div>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <Bar label="ULP" litres={b.ulp} makes={b.ulpMakes} max={max} limiting={b.limiting === "ULP"} col="#6BC048" />
+                <Bar label="Ethanol" litres={b.ethanol} makes={b.ethanolMakes} max={max} limiting={b.limiting === "Ethanol"} col="#3E8E8A" />
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--ink)", marginTop: 8, lineHeight: 1.5 }}>
+                {b.ready > 0 && <div>Ready Blend from Petrotrade refunds: <b>{full(b.ready)} L</b>, loaded first.</div>}
+                {b.strandedUlp > 1000 && <div><b>{full(b.strandedUlp)} L</b> of ULP cannot be loaded until more ethanol arrives.</div>}
+                {b.strandedEthanol > 1000 && <div><b>{full(b.strandedEthanol)} L</b> of ethanol is waiting on more ULP.</div>}
+                {b.ethanolInbound > 0 && <div>Ethanol on the road to this depot: <b>{full(b.ethanolInbound)} L</b>.</div>}
+                {(need.ulp > 0 || need.ethanol > 0) && <div style={{ color: "#8A2B26" }}>To hold 7 days of loading: order {[need.ulp > 0 && `${full(need.ulp)} L ULP`, need.ethanol > 0 && `${full(need.ethanol)} L ethanol`].filter(Boolean).join(" and ")}.</div>}
+                {w.hasNegativeProduct && <div style={{ color: "#8A2B26" }}>More {w.negativeProducts.join(" and ")} was loaded than the records show received — a stocktake is needed.</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -7868,7 +7982,7 @@ export function WarehouseImports({ me }) {
     e.preventDefault(); setMsg(null);
     if (!f.supplier) return setMsg({ tone: "amber", title: "Almost there", body: "Pick a supplier (or “Opening balance”)." });
     if (!(Number(f.quantity) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the quantity received (litres)." });
-    if (isBlend && !isPetrotrade && !(Number(f.petrolPrice) > 0)) return setMsg({ tone: "amber", title: "Almost there", body: "Enter the petrol price so the blend cost can be worked out." });
+    if (isBlend && !isPetrotrade) return setMsg({ tone: "amber", title: "Blend is not bought", body: "Record this receipt as ULP, and the ethanol as Ethanol. Only a Petrotrade fuel refund is received as Blend." });
     setBusy(true);
     try {
       const body = { ...f, quantity: Number(f.quantity), deviceTime: new Date().toISOString() };
@@ -7915,9 +8029,10 @@ export function WarehouseImports({ me }) {
       )}
       {/* running balances */}
       {err && <Note tone="red" title="Could not load balances">{err}</Note>}
+      {bal && <BlendDepots bal={bal} onChanged={load} canEdit={!!me && ["logistics", "logistics_manager", "logistics_lead", "admin", "operations_manager", "executive"].includes(me.kind)} onOpen={(w) => setDrill({ title: w.name, sub: `${compact(w.stock)} L on hand`, render: depotDetail(w, bal.recentImports) })} />}
       {bal && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 16 }}>
-          {bal.warehouses.map((w) => (
+          {bal.warehouses.filter((w) => !w.blend).map((w) => (
             <div key={w.name} className="card" role="button" tabIndex={0}
               onClick={() => setDrill({ title: w.name, sub: `${compact(w.stock)} L on hand`, render: depotDetail(w, bal.recentImports) })}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrill({ title: w.name, sub: `${compact(w.stock)} L on hand`, render: depotDetail(w, bal.recentImports) }); } }}
@@ -7926,7 +8041,7 @@ export function WarehouseImports({ me }) {
               <div className="lbl" style={{ marginBottom: 3 }}>{w.name}</div>
               <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: w.stock < 0 ? "var(--red)" : "var(--navy)", lineHeight: 1 }}>{full(w.stock)}<span style={{ fontSize: 12, color: "var(--steel)", marginLeft: 3 }}>L</span></div>
               <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
-                {["Blend", "Diesel", "ULP"].map((p) => <span key={p} className="mono" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 100, background: "#F4F6FA", color: PROD_COL[p] }}>{full(w.products[p])}</span>)}
+                {["Diesel", "ULP", "Ethanol"].filter((p) => (w.products[p] || 0) > 0).map((p) => <span key={p} className="mono" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 100, background: "#F4F6FA", color: PROD_COL[p] || "#3E8E8A" }}>{p} {full(w.products[p])}</span>)}
               </div>
             </div>
           ))}
@@ -7939,7 +8054,7 @@ export function WarehouseImports({ me }) {
           {editing && <Note tone="amber" title={`Editing ${editing.ref}`}>Change the fields and save — this replaces the entry (the original is kept in the ledger). <button type="button" onClick={cancelEdit} style={{ marginLeft: 6, border: "none", background: "none", color: "var(--navy)", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}>Cancel edit</button></Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Warehouse"><Picker value={f.warehouse} onChange={set("warehouse")} options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
-            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={["Blend", "Diesel", "Ethanol", "ULP"]} /></Field></div>
+            <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={(v) => setF((s0) => ({ ...s0, product: v, ...(v === "Blend" ? { supplier: "Petrotrade" } : {}) }))} options={[{ value: "Diesel", label: "Diesel" }, { value: "ULP", label: "ULP (petrol)" }, { value: "Ethanol", label: "Ethanol" }, { value: "Blend", label: "Blend — Petrotrade refund only" }]} /></Field></div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="Supplier"><Picker value={f.supplier} onChange={set("supplier")} title="Supplier" options={SUP} /></Field></div>
@@ -7949,14 +8064,7 @@ export function WarehouseImports({ me }) {
           {isPetrotrade ? (
             <Note tone="amber" title="Petrotrade replacement — no cost">Fuel returned by Petrotrade against coupons already sold. It's loaded into the warehouse as stock but carries <b>no unit cost</b> and is <b>excluded from the margin</b> — no cost fields needed.</Note>
           ) : isBlend ? (
-            <>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ flex: "1 1 110px" }}><Field label="Petrol incl-duty ($/L)"><Num value={f.petrolPrice} onChange={set("petrolPrice")} placeholder="2.107" /></Field></div>
-                <div style={{ flex: "1 1 90px" }}><Field label="Ethanol ratio"><Num value={f.blendRatio} onChange={set("blendRatio")} placeholder="0.2" /></Field></div>
-                <div style={{ flex: "1 1 100px" }}><Field label="Ethanol ($/L)"><Num value={f.ethanolPrice} onChange={set("ethanolPrice")} placeholder="1.10" /></Field></div>
-              </div>
-              {f.petrolPrice ? <div className="mono" style={{ fontSize: 12, color: "var(--steel)", marginTop: -6, marginBottom: 12 }}>Blend cost: <b style={{ color: "var(--navy)" }}>${blendPrice.toFixed(4)}/L</b> <span style={{ color: "var(--steel)" }}>= petrol ×{(1 - (Number(f.blendRatio) || 0)).toFixed(2)} + ethanol ×{f.blendRatio}</span> · total ${compact(blendPrice * (Number(f.quantity) || 0))}</div> : null}
-            </>
+            <Note tone="red" title="Blend is not bought">NOIC blends it from your ULP and ethanol as the truck loads. Record this receipt as <b>ULP</b>, and the ethanol as <b>Ethanol</b>. Only a Petrotrade fuel refund arrives as finished Blend: choose Petrotrade as the supplier for that.</Note>
           ) : (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
