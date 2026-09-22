@@ -1301,6 +1301,7 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   const carryover = exp && Number(exp.carryover) > 0 ? n(exp.carryover) : 0;
   const remitDue = expected != null ? (exp && exp.totalDue != null ? n(exp.totalDue) : expected + carryover) : null;
   const variance = expected != null ? expected - accounted : null;   // + = short / unaccounted (TODAY)
+  const tolerance = exp && Number(exp.tolerance) > 0 ? n(exp.tolerance) : 25;   // server's accepted gap (US$)
 
   const send = async (e) => {
     e.preventDefault(); setMsg(null);
@@ -1311,9 +1312,11 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
     // (carryover) — that is a site remitting what it owed, not a double entry. Over by more
     // than the carried balance is still refused. (Mutare 4th Street, 2026-09-18.)
     const overWithinCarry = variance != null && variance < 0 && Math.abs(variance) <= carryover + 1;
-    if (!isManager && official && variance != null && Math.abs(variance) >= 1 && !overWithinCarry) {
+    // A SMALL gap (within the server's tolerance, $25) goes through — it is recorded and shown
+    // as unaccounted, it just doesn't stop the site (owner, 2026-09-22). Bigger gaps still do.
+    if (!isManager && official && variance != null && Math.abs(variance) > tolerance && !overWithinCarry) {
       setMsg({ tone: "amber", title: "Doesn't balance — not submitted", body: variance > 0
-        ? `${dollars(Math.abs(variance))} of today's ${dollars(expected)} is still unplaced. Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
+        ? `${dollars(Math.abs(variance))} of today's ${dollars(expected)} is still unplaced (a gap up to ${dollars(tolerance)} would go through). Count again — anything still at the site goes under "Cash on hand" (it carries to tomorrow), till spend under "Petty cash".`
         : `You've accounted for ${dollars(Math.abs(variance))} MORE than today's ${dollars(expected)}${carryover > 0 ? `, and only ${dollars(carryover)} of earlier cash is still held at the site` : ""} — the same money may be entered twice. Notes counted under "Sent to HQ" must not also appear under "Banked".` });
       return;
     }
@@ -1434,6 +1437,9 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
           )}
           {variance != null && !okVar && !official && (
             <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3 }}>Official figure isn’t in yet — submit what you counted; HQ reconciles against the official number.</div>
+          )}
+          {official && variance != null && variance >= 1 && variance <= tolerance && (
+            <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 3 }}>A gap up to {dollars(tolerance)} goes through — it is recorded as unaccounted for this day.</div>
           )}
         </div>
 
