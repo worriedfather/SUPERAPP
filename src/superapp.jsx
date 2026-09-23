@@ -7966,7 +7966,7 @@ function BlendDepots({ bal, onOpen, onChanged, canEdit }) {
 }
 
 export function WarehouseImports({ me }) {
-  const SUP = ["Opening balance", "Trafigura", "Kemexon", "Strauss", "Glencore", "Green Fuel", "FECZ", "Petrotrade", "Other"];
+  const SUP = ["Opening balance", "Trafigura", "Arterium", "Kemexon", "Strauss", "Glencore", "Green Fuel", "FECZ", "Petrotrade", "Other"];
   const [bal, setBal] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -7975,7 +7975,7 @@ export function WarehouseImports({ me }) {
   const [impQ, setImpQ] = useState("");   // search all fuel entries by supplier / depot / product / SORD
   const [voidTarget, setVoidTarget] = useState(null);
   const [editing, setEditing] = useState(null);   // the import being edited (supersede on save)
-  const canEdit = ["admin", "logistics", "depot", "logistics_manager", "logistics_lead", "operations_manager"].includes(me?.kind);
+  const canEdit = ["admin", "logistics", "depot", "logistics_manager", "logistics_lead", "operations_manager", "accounts_logistics"].includes(me?.kind);
   const [f, setF] = useState({ warehouse: "Msasa", product: "Diesel", supplier: "Trafigura", importDate: todayISO(), quantity: "", priceExcl: "", duties: "", orderNo: "", petrolPrice: "", blendRatio: "0.2", ethanolPrice: "1.10" });
   const isBlend = f.product === "Blend";
   const isPetrotrade = /petrotrade/i.test(f.supplier || "");   // replacement fuel — no cost, excluded from margin
@@ -8035,7 +8035,7 @@ export function WarehouseImports({ me }) {
       )}
       {/* running balances */}
       {err && <Note tone="red" title="Could not load balances">{err}</Note>}
-      {bal && <BlendDepots bal={bal} onChanged={load} canEdit={!!me && ["logistics", "logistics_manager", "logistics_lead", "admin", "operations_manager", "executive"].includes(me.kind)} onOpen={(w) => setDrill({ title: w.name, sub: `${compact(w.stock)} L on hand`, render: depotDetail(w, bal.recentImports) })} />}
+      {bal && <BlendDepots bal={bal} onChanged={load} canEdit={!!me && ["logistics", "logistics_manager", "logistics_lead", "admin", "operations_manager", "executive", "accounts_logistics"].includes(me.kind)} onOpen={(w) => setDrill({ title: w.name, sub: `${compact(w.stock)} L on hand`, render: depotDetail(w, bal.recentImports) })} />}
       {bal && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 16 }}>
           {bal.warehouses.filter((w) => !w.blend).map((w) => (
