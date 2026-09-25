@@ -592,7 +592,7 @@ const ROLE_TABS = {
   driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // filing delivery notes is the SITE's job — the driver approves; Recovery = did the site's tank come back
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
-  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["wetstock", "Losses"]],
+  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
@@ -612,18 +612,22 @@ const ROLE_TABS = {
               ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"],
               ["wetstock", "Losses"], ["cash", "Cash"], ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
   // Managers: day-end summary, fleet status, deliveries/losses, sales & cash.
-  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["cash", "Cash"], ["inflows", "Cash inflows"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
-  // Manager who ALSO receives cash (Adventure): manager view + the Cash office.
-  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
+  manager: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["submit", "Site submit"], ["retail", "Retail"], ["birdseye", "Birds-eye"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["inventory", "Inventory"], ["cash", "Cash"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
+  // Manager who ALSO receives cash (Adventure): the FULL manager view + the Cash office + Device
+  // requests. Kept a strict superset of `manager` so a screen added to managers never skips him again.
+  manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["submit", "Site submit"], ["retail", "Retail"], ["birdseye", "Birds-eye"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["inventory", "Inventory"], ["cash", "Cash"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["cashoffice", "Cash office"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
-  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["wetstock", "Losses"]],
+  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
   retail_approver: [["hub", "Home"], ["approvals", "My approvals"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
   yard: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"]],
   // Yard lead (Shaahid): the yard role PLUS driver management — approves fuel
   // requests and sees truck/driver efficiency.
-  yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"]],
+  // yard_lead / yard_supervisor ALSO carry retail_supervisor for the DA Yard site (owner 2026-09-24):
+  // the yard tabs first, then the full site-supervisor set.
+  yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
+  yard_supervisor: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
   reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["review", "Submissions"], ["inflows", "Cash inflows"], ["cash", "Cash"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["tripsreg", "All trips"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
@@ -974,9 +978,10 @@ function App() {
     }).catch(() => {});
     // POLL, don't just check once: a tab/app left open must notice a new deploy on
     // its own (was one-shot on launch → an open tab never updated). Check on load,
-    // every 60s while visible, and the moment the tab is refocused.
+    // every 5 minutes while visible, and the moment the tab is refocused (a once-a-minute
+    // check made the app feel like it was "refreshing" every minute — owner, 2026-09-24).
     check();
-    const iv = setInterval(() => { if (document.visibilityState === "visible") check(); }, 60000);
+    const iv = setInterval(() => { if (document.visibilityState === "visible") check(); }, 300000);
     const onVis = () => { if (document.visibilityState === "visible") check(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { cancelled = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
@@ -1055,7 +1060,7 @@ function App() {
   // Schedule this person's daily submission reminders on the device. Fires even
   // with the app closed; no server/Firebase.
   useEffect(() => {
-    const REMIND = ["site_manager", "retail_supervisor", "depot", "logistics", "yard"];
+    const REMIND = ["site_manager", "retail_supervisor", "depot", "logistics", "yard", "yard_lead", "yard_supervisor"];
     if (me && REMIND.includes(me.kind)) syncReminders(me.kind, me.site).catch(() => {});
   }, [me]);
 
@@ -1090,7 +1095,18 @@ function App() {
   // back flow: the Home hub (icon grid) is the menu, each module opens over it,
   // and a Back control returns to the hub. Master data is web/desktop-only.
   const hideOnNative = ([k]) => !(k === "master" && isMobileApp());
-  const rawTabs = me ? (ROLE_TABS[me.kind] || []).filter(hideOnNative) : [];
+  // Named per-user grant: Allan & Tinei may edit trip offloading allocations (owner 2026-09-24) —
+  // that's done in the Schedule screen, so add it just for them, not for the whole manager role.
+  // (The server independently allow-lists them for /trip/:id/edit; create & cancel stay logistics-only.)
+  const TRIP_EDIT_LOGINS = ["allan", "tinei"];
+  const rawTabs = (() => {
+    if (!me) return [];
+    let t = (ROLE_TABS[me.kind] || []).filter(hideOnNative);
+    if (TRIP_EDIT_LOGINS.includes(String(me.login || "").toLowerCase()) && !t.some(([k]) => k === "schedule")) {
+      t = [...t, ["schedule", "Schedule"]];
+    }
+    return t;
+  })();
   const homeTab = rawTabs.some(([k]) => k === "hub") ? "hub" : (rawTabs.some(([k]) => k === "dhome") ? "dhome" : (rawTabs[0]?.[0] || null));
   // Home always sits at the very top of the side nav.
   const tabs = homeTab ? [...rawTabs].sort((a, b) => (a[0] === homeTab ? -1 : b[0] === homeTab ? 1 : 0)) : rawTabs;

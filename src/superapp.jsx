@@ -41,6 +41,10 @@ function decodePolyline(str) {
 }
 import { remindersOn, setRemindersOn, syncReminders, cancelReminders, sendTestNotification } from "./notify.js";
 
+// Kinds that are bound to a forecourt as its supervisor — includes the composite yard kinds, which
+// carry retail_supervisor for the DA Yard site (server: auth.js ROLE_ALIASES / isSiteKind).
+const SITE_KINDS = ["site_manager", "retail_supervisor", "supervisor_cashier", "yard_lead", "yard_supervisor"];
+
 // Accounting format used app-wide: 0 decimals, thousands separators, and
 // NEGATIVES IN PARENTHESES — e.g. -3912 → "(3,912)". Non-numbers → "—".
 const acct = (n) => {
@@ -387,7 +391,7 @@ const pickShift = (has, fallback) => {
  *  with its figures, who filed it, when; request an unlock to correct.
  * ============================================================ */
 export function SubmissionReview({ me }) {
-  const siteBound = !!(me && me.site) && ["site_manager", "retail_supervisor", "supervisor_cashier"].includes(me.kind);
+  const siteBound = !!(me && me.site) && SITE_KINDS.includes(me.kind);
   const [sites, setSites] = useState([]);
   useEffect(() => { if (!siteBound) getSites().then((r) => setSites(r.sites || [])).catch(() => {}); }, [siteBound]);
   const [site, setSite] = useState(siteBound ? me.site : "");
@@ -4225,7 +4229,7 @@ const cashBtn = (color) => ({ border: `1px solid ${color || "var(--line)"}`, col
 // office has evidence to confirm against. Every missing field is advised (no dead
 // button, no silent failure).
 export function SiteDeposit({ me }) {
-  const fixed = me?.kind === "site_manager" || me?.kind === "retail_supervisor";
+  const fixed = !!me && SITE_KINDS.includes(me.kind);
   const [sites, setSites] = useState([]);
   const [site, setSite] = useState("");
   const [f, setF] = useState({ tradingDate: todayISO(), depositDate: todayISO(), bank: "", amount: "", reference: "" });
@@ -6609,7 +6613,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
           {trip && !trip.collected && (() => {
             // Logistics (David Malan / Kuda / Ranga / Aalia), the yard lead (Shaahid) and admin
             // may confirm collection on the driver's behalf — matches the /collect endpoint roles.
-            const canConfirmOnBehalf = ["logistics", "depot", "logistics_lead", "logistics_manager", "accounts_logistics", "yard_lead", "admin"].includes(me?.kind);
+            const canConfirmOnBehalf = ["logistics", "depot", "logistics_lead", "logistics_manager", "accounts_logistics", "yard_lead", "yard_supervisor", "admin"].includes(me?.kind);
             const drv = trip.driver || "the driver";
             return (
             <div style={{ border: "1px solid #C9D4F5", background: "#EEF2FF", borderRadius: 12, padding: 14, margin: "4px 0 10px" }}>
