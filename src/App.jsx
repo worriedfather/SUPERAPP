@@ -635,7 +635,7 @@ const ROLE_TABS = {
   // admin: full access (superuser).
   admin: [["exec", "Summary"], ["radar", "Radar"], ["cockpit", "Watchlist"], ["hub", "Home"], ["driver", "Request"], ["approver", "Approve"], ["approvals", "My approvals"], ["submit", "Site submit"], ["review", "Submissions"], ["pumps", "Pumps"], ["retail", "Retail"], ["inflows", "Cash inflows"],
           ["recon", "Warehouse"], ["schedule", "Schedule"], ["deliver", "Delivery"], ["dapprove", "Approve deliveries"], ["deliverynotes", "Delivery notes"], ["inventory", "Inventory"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["wetstock", "Losses"], ["cash", "Cash"], ["cashoffice", "Cash office"], ["deposit", "Deposit"], ["fleetstatus", "Fleet status"], ["yardwork", "Yard"],
-          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
+          ["cardsys", "Fuel drawn"], ["fleet", "Efficiency"], ["intel", "Intelligence"], ["master", "Master data"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"], ["trips", "Trips"], ["birdseye", "Birds-eye"], ["league", "Driver league"], ["incoming", "Site deliveries"], ["rrequest", "Site fuel request"], ["recovery", "Recovery"], ["dhome", "Driver home"], ["drequest", "Driver request"]],
 };
 
 /* Module cards on the Home hub, grouped. Keyed by tab key. */
