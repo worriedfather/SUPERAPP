@@ -8244,27 +8244,38 @@ function DeliveryNoteView({ d }) {
           {[["Driver — loaded", d.driverApproval], ["Site — received", d.siteApproval]].map(([label, a]) => (
             <div key={label} style={{ flex: "1 1 45%", minWidth: 140, border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px" }}>
               <div style={{ fontSize: 11, color: "var(--steel)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</div>
-              <div style={{ fontWeight: 700, color: "var(--navy)", marginTop: 3 }}>{a ? a.name : "—"}</div>
+              <div style={{ fontWeight: 700, color: a ? "var(--navy)" : "var(--amber)", marginTop: 3 }}>{a ? a.name : "not signed yet"}</div>
               {a && a.at && <div className="mono" style={{ fontSize: 11, color: "var(--steel)" }}>{a.at}</div>}
             </div>
           ))}
         </div>
+        {d.rejection && (
+          <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 10, background: "#FDF1F0", border: "1px solid #E8C4C0", fontSize: 12 }}>
+            <b style={{ color: "var(--red)" }}>Sent back</b> by {d.rejection.name}{d.rejection.at ? ` · ${d.rejection.at}` : ""}{d.rejection.note ? ` — ${d.rejection.note}` : ""}. File the note again from the Delivery tab.
+          </div>
+        )}
       </Panel>
     </>
   );
 }
 
-export function ApprovedDeliveries({ onCapture } = {}) {
+// siteMode (a supervisor reviewing THEIR site): every note in every state — posted, waiting for a
+// signature, sent back — so the site can check what it captured; the manager view lists posted only.
+export function ApprovedDeliveries({ onCapture, siteMode = false } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [note, setNote] = useState(null);
   const [awaiting, setAwaiting] = useState(null);
-  useEffect(() => { setD(null); setErr(null); getApprovedDeliveries(90).then(setD).catch((e) => setErr(e.message)); getAwaitingNotes().then(setAwaiting).catch(() => {}); }, [reloadKey]);
+  useEffect(() => { setD(null); setErr(null); getApprovedDeliveries(90, siteMode).then(setD).catch((e) => setErr(e.message)); if (!siteMode) getAwaitingNotes().then(setAwaiting).catch(() => {}); }, [reloadKey, siteMode]);
   const list = (d && d.deliveries) || [];
+  const stateOf = (x) => x.status === "posted" ? { t: "Posted", c: "#3C9A52" }
+    : x.status === "rejected" ? { t: "Sent back", c: "var(--red)" }
+    : !x.siteApproval ? { t: "Site to sign", c: "var(--amber)" } : { t: "Driver to sign", c: "var(--amber)" };
+  const pendingN = list.filter((x) => x.status === "pending").length, backN = list.filter((x) => x.status === "rejected").length;
   const aw = (awaiting && awaiting.drops) || [];
   return (
     <Wrap>
-      <SectionHead title="Delivery notes" sub="Drops awaiting a note, and signed-off notes to view/print" />
+      <SectionHead title={siteMode ? "My delivery notes" : "Delivery notes"} sub={siteMode ? "Every delivery note for your site, last 90 days — tap one to check what was captured" : "Drops awaiting a note, and signed-off notes to view/print"} />
       <RefreshBar data={d ? { asOf: todayISO() } : null} busy={!d && !err} onRefresh={() => setReloadKey((k) => k + 1)} />
       {aw.length > 0 && (
         <Panel style={{ marginBottom: 12, borderLeft: "4px solid #C79A2E" }}>
@@ -8288,20 +8299,25 @@ export function ApprovedDeliveries({ onCapture } = {}) {
       )}
       {err && <Note tone="red" title="Could not load">{err}</Note>}
       {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
-      {d && list.length === 0 && <Note tone="ok" title="No approved deliveries yet">Once a delivery note is signed off by both the driver and the receiving site, it appears here.</Note>}
+      {siteMode && d && list.length > 0 && (pendingN > 0 || backN > 0) && (
+        <Note tone="amber" title={[pendingN > 0 ? `${pendingN} waiting for a signature` : null, backN > 0 ? `${backN} sent back` : null].filter(Boolean).join(" · ")}>A note only counts once the driver and the site have both signed it. A note that was sent back must be re-filed from the Delivery tab.</Note>
+      )}
+      {d && list.length === 0 && <Note tone="ok" title={siteMode ? "No delivery notes yet" : "No approved deliveries yet"}>{siteMode ? "Delivery notes you file from the Delivery tab appear here, whatever their state." : "Once a delivery note is signed off by both the driver and the receiving site, it appears here."}</Note>}
       {d && list.length > 0 && (
         <Panel style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>DN</Th><Th>Date</Th><Th>Site</Th><Th>Product</Th><Th right>Received</Th><Th right>Loss</Th></tr></thead>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>DN</Th><Th>Date</Th>{siteMode ? <Th>Trip</Th> : <Th>Site</Th>}<Th>Product</Th><Th right>Loaded</Th><Th right>Received</Th><Th right>Loss</Th>{siteMode && <Th>State</Th>}</tr></thead>
               <tbody>{list.map((x) => (
                 <tr key={x.dnNo} onClick={() => setNote(x)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer" }}>
                   <Td style={{ fontWeight: 600, color: "var(--navy)" }}>{x.dnNo}<span style={{ color: "var(--steel)" }}> ›</span></Td>
                   <Td style={{ color: "var(--steel)" }}>{fmtD(x.date)}</Td>
-                  <Td>{x.site}</Td>
+                  {siteMode ? <Td style={{ color: "var(--steel)" }}>{x.tripNo || "—"}</Td> : <Td>{x.site}</Td>}
                   <Td style={{ color: "var(--steel)" }}>{x.commodity || "—"}</Td>
+                  <Td right style={{ color: "var(--steel)" }}>{x.qtyLoaded != null ? L(x.qtyLoaded) + " L" : "—"}</Td>
                   <Td right>{x.siteDip != null ? L(x.siteDip) + " L" : "—"}</Td>
                   <Td right style={{ fontWeight: 700, color: x.adjustedLossPct != null && x.adjustedLossPct > 0.3 ? "var(--red)" : "var(--steel)" }}>{x.adjustedLoss != null ? L(x.adjustedLoss) + " L" : "—"}</Td>
+                  {siteMode && <Td style={{ fontWeight: 700, color: stateOf(x).c, whiteSpace: "nowrap" }}>{stateOf(x).t}</Td>}
                 </tr>))}</tbody>
             </table>
           </div>

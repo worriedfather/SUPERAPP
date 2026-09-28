@@ -592,7 +592,7 @@ const ROLE_TABS = {
   driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // filing delivery notes is the SITE's job — the driver approves; Recovery = did the site's tank come back
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
-  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
+  retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["deliverynotes", "Delivery notes"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Cash office: confirms site deposits, records cash received, closes each day.
   cash_office: [["hub", "Home"], ["cashoffice", "Cash office"], ["cash", "Cash"]],
   // Fleet manager / fleet approver: fleet data + approves fleet fuel requests.
@@ -617,7 +617,7 @@ const ROLE_TABS = {
   // requests. Kept a strict superset of `manager` so a screen added to managers never skips him again.
   manager_cashier: [["hub", "Home"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["deliverynotes", "Delivery notes"], ["league", "Driver league"], ["dapprove", "Approve deliveries"], ["review", "Submissions"], ["submit", "Site submit"], ["retail", "Retail"], ["birdseye", "Birds-eye"], ["pumps", "Pumps"], ["wetstock", "Losses"], ["inventory", "Inventory"], ["cash", "Cash"], ["inflows", "Cash inflows"], ["intel", "Intelligence"], ["cashoffice", "Cash office"], ["staff", "Staff assignment"], ["unlocks", "Unlock requests"], ["devices", "Device requests"], ["tracking", "Journey tracking"], ["tripsreg", "All trips"]],
   // Site supervisor who ALSO receives cash (Donald): supervisor tools + the Cash office.
-  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
+  supervisor_cashier: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["deliverynotes", "Delivery notes"], ["rrequest", "Fuel request"], ["cashoffice", "Cash office"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Retail approver (Adam): the full manager view PLUS approving SITE fuel requests.
   retail_approver: [["hub", "Home"], ["approvals", "My approvals"], ["unlocks", "Unlock requests"], ["devices", "Device requests"]],
   // Yard: log trucks into the workshop, post daily updates, close cases.
@@ -626,8 +626,8 @@ const ROLE_TABS = {
   // requests and sees truck/driver efficiency.
   // yard_lead / yard_supervisor ALSO carry retail_supervisor for the DA Yard site (owner 2026-09-24):
   // the yard tabs first, then the full site-supervisor set.
-  yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
-  yard_supervisor: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
+  yard_lead: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["approver", "Approve fuel"], ["approvals", "My approvals"], ["fleet", "Efficiency"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["deliverynotes", "Delivery notes"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
+  yard_supervisor: [["hub", "Home"], ["yardwork", "Workshop"], ["fleetstatus", "Fleet status"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["deliverynotes", "Delivery notes"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
   // Reporting accountant (Madhvi): retail manager + cash office + the executive Bird's-eye.
   reporting_accountant: [["hub", "Home"], ["exec", "Summary"], ["review", "Submissions"], ["inflows", "Cash inflows"], ["cash", "Cash"], ["wetstock", "Losses"], ["logistics", "Deliveries"], ["flow", "Delivery flow"], ["tripsreg", "All trips"]],
   // Accounting & logistics manager (Aalia): cash office + logistics ops + manager view.
@@ -1258,7 +1258,7 @@ function App() {
         {tab === "dapprove" && <DeliveryApprovals me={me} initial={deliverPrefill} onLeave={() => setDeliverPrefill(null)} />}
         {tab === "recovery" && <DriverRecovery />}
         {tab === "incoming" && <DeliveriesInProgress />}
-        {tab === "deliverynotes" && <ApprovedDeliveries onCapture={(tripNo, site, dropIndex) => { setDeliverPrefill({ tripNo, site, dropIndex: Number.isInteger(dropIndex) ? dropIndex : null }); setTab("deliver"); }} />}
+        {tab === "deliverynotes" && <ApprovedDeliveries siteMode={!!me && ["retail_supervisor", "site_manager", "supervisor_cashier", "yard_lead", "yard_supervisor"].includes(me.kind)} onCapture={(tripNo, site, dropIndex) => { setDeliverPrefill({ tripNo, site, dropIndex: Number.isInteger(dropIndex) ? dropIndex : null }); setTab("deliver"); }} />}
         {tab === "flow" && <DeliveryFlow />}
         {tab === "logistics" && <LogisticsDashboard />}
         {tab === "league" && <DriverLeague />}
