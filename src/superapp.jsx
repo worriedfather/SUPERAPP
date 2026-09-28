@@ -8303,7 +8303,26 @@ export function ApprovedDeliveries({ onCapture, siteMode = false } = {}) {
         <Note tone="amber" title={[pendingN > 0 ? `${pendingN} waiting for a signature` : null, backN > 0 ? `${backN} sent back` : null].filter(Boolean).join(" · ")}>A note only counts once the driver and the site have both signed it. A note that was sent back must be re-filed from the Delivery tab.</Note>
       )}
       {d && list.length === 0 && <Note tone="ok" title={siteMode ? "No delivery notes yet" : "No approved deliveries yet"}>{siteMode ? "Delivery notes you file from the Delivery tab appear here, whatever their state." : "Once a delivery note is signed off by both the driver and the receiving site, it appears here."}</Note>}
-      {d && list.length > 0 && (
+      {/* SITE view: one card per note — everything visible on a phone, nothing scrolls sideways */}
+      {siteMode && d && list.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {list.map((x) => { const st = stateOf(x); const lossBad = x.adjustedLossPct != null && x.adjustedLossPct > 0.3; return (
+            <div key={x.dnNo} onClick={() => setNote(x)} style={{ background: "#fff", border: "1px solid var(--line)", borderLeft: `4px solid ${st.c}`, borderRadius: 12, padding: "10px 12px", cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <span style={{ fontWeight: 800, color: "var(--navy)" }}>{x.dnNo} <span style={{ color: "var(--steel)", fontWeight: 400, fontSize: 12 }}>· {x.commodity || "—"}</span></span>
+                <span style={{ fontWeight: 700, fontSize: 12, color: st.c, whiteSpace: "nowrap" }}>{st.t}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 2 }}>{fmtD(x.date)}{x.tripNo ? ` · ${x.tripNo}` : ""}{x.truck ? ` · ${x.truck}` : ""}{x.driver ? ` · ${x.driver}` : ""}</div>
+              <div className="mono" style={{ display: "flex", gap: 14, marginTop: 7, fontSize: 12.5, flexWrap: "wrap" }}>
+                <span><span style={{ color: "var(--steel)", fontSize: 11 }}>Loaded </span><b>{x.qtyLoaded != null ? L(x.qtyLoaded) : "—"}</b></span>
+                <span><span style={{ color: "var(--steel)", fontSize: 11 }}>Received </span><b>{x.siteDip != null ? L(x.siteDip) : "—"}</b></span>
+                <span><span style={{ color: "var(--steel)", fontSize: 11 }}>Loss </span><b style={{ color: lossBad ? "var(--red)" : "var(--ink)" }}>{x.adjustedLoss != null ? `${L(x.adjustedLoss)} L${x.adjustedLossPct != null ? ` (${Number(x.adjustedLossPct).toFixed(2)}%)` : ""}` : "—"}</b></span>
+              </div>
+              {x.rejection && <div style={{ fontSize: 11.5, color: "var(--red)", marginTop: 5 }}>Sent back by {x.rejection.name}{x.rejection.note ? `: ${x.rejection.note}` : ""}</div>}
+            </div>); })}
+        </div>
+      )}
+      {!siteMode && d && list.length > 0 && (
         <Panel style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
