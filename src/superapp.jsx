@@ -701,7 +701,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   // sold computes on day one; every submission after this reverts to single-reading.
   const [pumps, setPumps] = useState(sortTanks(config.pumps || []).map((p) => {
     const prior = lastPumpByLabel[p.label]?.closing;
-    return { label: p.label, product: p.product, tank: p.tank, seeded: prior != null, opening: prior ?? "", closing: "", test: "" };
+    return { label: p.label, product: p.product, tanks: p.tanks || (p.tank ? [p.tank] : []), seeded: prior != null, opening: prior ?? "", closing: "", test: "" };
   }));
   const hasPumps = pumps.length > 0;
   // seed sales from the last submission (like tanks seed from lastStock) so
@@ -830,7 +830,7 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
               <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, padding: "6px 8px", borderRadius: 10, background: "#fff", border: `1px solid ${bad ? "var(--red, #C0392B)" : "var(--line)"}` }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 12.5 }}>{p.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.product}{p.tank ? ` · ${p.tank}` : ""}{!p.seeded ? " · first reading" : ` · was ${L(p.opening)}`}</div>
+                  <div style={{ fontSize: 11, color: "var(--steel)" }}>{p.product}{p.tanks?.length ? ` · ${p.tanks.join(" + ")}` : ""}{!p.seeded ? " · first reading" : ` · was ${L(p.opening)}`}</div>
                 </div>
                 {showOpen && (p.seeded
                   ? <div className="mono" style={{ width: 96, textAlign: "center", fontSize: 12, color: "var(--steel)" }}>{L(p.opening)}</div>
@@ -1240,7 +1240,7 @@ function HqPendingBanner({ site, forCashOffice = false, onPick = null }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
         {lines.map((o, i) => (
           <div key={i} onClick={onPick ? () => onPick(o) : undefined} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, cursor: onPick ? "pointer" : "default" }}>
-            <span style={{ color: "var(--ink)" }}>{forCashOffice ? `${o.site} · ` : ""}{fmtD(o.tradingDate)}{o.overdue ? <b style={{ color: "#B23B3B" }}> · overdue</b> : ""}{onPick ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</span>
+            <span style={{ color: "var(--ink)" }}>{forCashOffice ? `${o.site} · ` : ""}{fmtD(o.tradingDate)}{o.overdue ? <b style={{ color: "#B23B3B" }}> · overdue</b> : ""}{o.closedShort ? <span style={{ color: "#8A6516" }}> · closed at ${L(o.received || 0)}, tap to record the cash now received</span> : ""}{onPick ? <span style={{ color: "var(--steel)" }}> ›</span> : null}</span>
             <span className="mono" style={{ color: "var(--navy)", fontWeight: 700 }}>{$(o.pending)}</span>
           </div>
         ))}
@@ -4366,8 +4366,13 @@ export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   // Tap a line in the "Sent to HQ" banner → land straight on that site-day's close.
   const pickPending = (o) => {
     const hit = openItems.find((r) => String(r.date) === String(o.tradingDate) && String(r.site || "").toLowerCase() === String(o.site || "").toLowerCase());
-    if (hit) setDrill(hit);
-    else setGd({ title: `${o.site} · ${fmtD(o.tradingDate)}`, sub: "not in the open queue", render: () => <Note tone="amber" title="Day already closed">This site-day is closed in the cash office, but the site still shows its remittance as unconfirmed. Reopen it from “Showing all days” with a wider period to confirm the receipt.</Note> });
+    if (hit) { setDrill(hit); return; }
+    // Not in the open queue = the day was already closed (typically at $0 while the envelope was
+    // still travelling). Open the close sheet anyway so the clerk can key what has now arrived and
+    // its receipt number — a new close supersedes the earlier one (append-only).
+    const prev = (d && d.rows || []).find((r) => String(r.date) === String(o.tradingDate) && String(r.siteId) === String(o.siteId));
+    setDrill(prev ? { ...prev, reclose: true, hqSent: prev.hqSent || o.sent || 0 }
+      : { siteId: o.siteId, site: o.site, date: o.tradingDate, expected: null, hqSent: o.sent || 0, received: o.received || 0, deposits: [], status: "closed", reclose: true });
   };
   // Open view: one line per site — the accumulated still-open exposure — instead of
   // one line per site-day (which runs to hundreds of rows). Tap a site to see its days.
@@ -4608,6 +4613,12 @@ function CashOfficeDay({ row, onDone, readOnly = false, siblings = [], onSwitch 
           </>
         ) : (
           <>
+            {(row.reclose || row.status === "closed") && (
+              <Note tone="amber" title={`This day was already closed${row.received != null ? ` at $${L(row.received)}` : ""}`}>
+                {row.hqSent > 0 ? <>The site declared <b>${L(row.hqSent)}</b> sent to HQ for {fmtD(row.date)}. </> : null}
+                Enter the cash that has now arrived and its receipt number — this close replaces the earlier one.
+              </Note>
+            )}
             <Field label="Actual cash received from the site (US$)"><Num value={cashReceived} onChange={setCashReceived} /></Field>
             <Field label="Receipt number"><input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} placeholder="receipt / reference no." style={{ width: "100%", boxSizing: "border-box", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", fontSize: 14 }} /></Field>
             {shortfall != null && (
@@ -4679,9 +4690,10 @@ const OUTFLOW_CAT_COLOR = {
 // Cash INFLOWS — full money received from sites (cash counted + card/POS swipe + banked).
 // Drill behind ON HAND (CARRIED): per site, the day-by-day ledger of how the
 // un-remitted balance built up — expected vs cleared vs declared-held per day.
-function CarriedDrill() {
+function CarriedDrill({ to = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null), [open, setOpen] = useState(null);
-  useEffect(() => { getCashCarried().then(setD).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { setD(null); getCashCarried(to).then(setD).catch((e) => setErr(e.message)); }, [to]);
+  const ageOf = (iso) => { if (!iso) return null; const end = new Date((to || todayISO()) + "T00:00:00Z"); return Math.max(0, Math.round((end - new Date(iso + "T00:00:00Z")) / 86400000)); };
   const $ = (v) => "$" + full(v);
   if (err) return <Note tone="red" title="Couldn't load">{err}</Note>;
   if (!d) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading…</div>;
@@ -4690,7 +4702,12 @@ function CarriedDrill() {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
-        <KpiCard label="Cash on hand at sites" value={$(d.declared)} sub={`${holders.length} site${holders.length === 1 ? "" : "s"} holding cash`} />
+        <KpiCard label="Cash on hand at sites" value={$(d.declared)} sub={`${holders.length} site${holders.length === 1 ? "" : "s"} holding cash${to ? ` · as at ${fmtD(to)}` : ""}`} />
+      </div>
+      {/* the bridge to the Unaccounted screen — the two are the two halves of one figure */}
+      <div style={{ fontSize: 12, lineHeight: 1.55, background: "#F4F7FB", border: "1px solid #D8E1EE", borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>
+        Since {fmtD(d.openingDate || "2026-09-01")}, <b>{$(d.total)}</b> of expected cash has not been sent up, banked or spent:
+        <b style={{ color: "#8A6516" }}> {$(d.declared)}</b> the sites have declared they still hold (this list) <b>+ {$(d.variance)}</b> unaccounted (the Unaccounted list).
       </div>
       {holders.map((s) => {
         const held = s.days.filter((r) => r.declared > 0);
@@ -4699,7 +4716,7 @@ function CarriedDrill() {
             <div onClick={() => setOpen(open === s.siteId ? null : s.siteId)}
               style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 12px", cursor: "pointer", background: open === s.siteId ? "var(--surface-2,#F7F8F6)" : "#fff" }}>
               <span style={{ fontWeight: 700, color: "var(--navy)", flex: 1 }}>{s.site}</span>
-              <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{held.length} day{held.length === 1 ? "" : "s"}</span>
+              <span className="mono" style={{ fontSize: 11.5, color: ageOf(s.oldest) > 3 ? "var(--red)" : "var(--steel)", fontWeight: ageOf(s.oldest) > 3 ? 700 : 400 }}>{held.length} day{held.length === 1 ? "" : "s"}{s.oldest ? ` · oldest ${ageOf(s.oldest)}d` : ""}</span>
               <span className="mono" style={{ fontWeight: 800, color: "#B4801F" }}>{$(s.declared)}</span>
               <span style={{ color: "var(--steel)" }}>{open === s.siteId ? "▾" : "›"}</span>
             </div>
@@ -4736,7 +4753,11 @@ function UnaccountedDrill({ days, from, to }) {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 12 }}>
-        <KpiCard label="Unaccounted for" value={$(d.unaccounted)} sub={`${d.sites.length} site${d.sites.length === 1 ? "" : "s"} with a gap`} />
+        <KpiCard label="Unaccounted for" value={$(d.unaccounted)} sub={`${d.sites.filter((x) => x.unaccounted > 0).length} site${d.sites.filter((x) => x.unaccounted > 0).length === 1 ? "" : "s"} short`} />
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.55, background: "#F4F7FB", border: "1px solid #D8E1EE", borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>
+        <b>{$(d.unaccounted)}</b> is cash that was neither sent up, banked or spent <b>nor declared as held</b>. Cash the sites have declared they still hold{d.held != null ? <> (<b style={{ color: "#8A6516" }}>{$(d.held)}</b>)</> : null} is <b>not</b> in this figure — it is the Cash on hand list.{" "}
+        {d.over > 50 && <>Sites shown in brackets sent up <b>{$(d.over)}</b> more than the period&apos;s cash (earlier cash going up); they are listed for completeness and are not netted against the shorts.</>}
       </div>
       {d.openingDate && (
         <Note tone="ok" title={`Cash position starts ${fmtD(d.openingDate)}`}>
@@ -4945,7 +4966,10 @@ function CashWaterfall({ d, extra, onSite, onUnacc, onCarried }) {
         <Row label="Awaiting HQ confirmation" val={awaitingHQ} sub="sent to HQ + banked, not yet confirmed at the cash office" />
       </div>
       <div onClick={onCarried} style={{ marginTop: 12, padding: "9px 11px", background: "#FBF4E2", border: "1px solid #EBD9A6", borderRadius: 10, cursor: "pointer", fontSize: 12, color: "#8A6516" }}>
-        Cash still on hand at sites (cumulative, not yet sent to HQ): <b>{$(d.carriedDeclared || 0)}</b> <span style={{ color: "var(--steel)" }}>· tap for the ledger ›</span>
+        Cash still on hand at sites (declared, not yet sent to HQ): <b>{$(d.carriedDeclared || 0)}</b> <span style={{ color: "var(--steel)" }}>· tap for the ledger ›</span>
+        {d.carried != null && (
+          <div style={{ marginTop: 4, color: "var(--ink)" }}>Not yet placed since the opening date: <b>{$(d.carried)}</b> = on hand <b>{$(d.carriedDeclared || 0)}</b> + unaccounted <b>{$(d.carriedVariance || 0)}</b></div>
+        )}
       </div>
       <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Ties out: Sales = Expected cash + card + coupons · Expected cash = placed against today + unaccounted. The HQ-confirmation stage updates the day after, from the cash office day-close.</div>
     </Panel>
@@ -5033,12 +5057,12 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           {(() => {
             const rows = filtered.map((s) => {
               const notSub = s.subDays === 0;
-              const gap = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);
-              const held = Math.min(gap, Math.max(0, s.carriedDeclared || 0));   // the part of the gap the site has declared it holds
-              const short = Math.max(0, gap - held);
+              const short = s.unaccounted != null ? s.unaccounted : Math.max(0, s.expected - s.submitted);   // neither placed nor declared as held
+              const held = Math.max(0, s.onHand || 0);   // declared, still at the site (the held-cash ledger)
+              const gap = short + held;                  // everything not yet placed
               const extra = s.overRemit || Math.max(0, s.submitted - s.expected);
               const kind = notSub && s.expected > 0 ? "notsub" : short > 50 ? "short" : held > 50 ? "holding" : extra > 50 ? "over" : "ok";
-              return { s, notSub, gap, held, short, extra, kind, placed: Math.min(s.submitted || 0, s.expected || 0) };
+              return { s, notSub, gap, held, short, extra, kind, placed: Math.max(0, Math.min((s.submitted || 0) - held, s.expected || 0)) };
             });
             const count = (k) => rows.filter((r) => r.kind === k).length;
             const order = { notsub: 0, short: 1, holding: 2, over: 3, ok: 4 };
@@ -5065,8 +5089,8 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
                     const badge = KIND[kind] || (kind === "short" ? { t: `$${L(short)} short`, c: "#fff", bg: "#B23B3B" } : kind === "holding" ? { t: `holding $${L(held)}`, c: "#7A5410", bg: "#FBE7B8" } : { t: `+$${L(extra)} extra sent up`, c: "#2C5C8A", bg: "#E3EEF8" });
                     const base = Math.max(s.expected || 0, 1);
                     const seg = (v) => `${Math.max(0, Math.min(100, (v / base) * 100))}%`;
-                    const chans = [["HQ", s.hq, "#1F2E6B"], ["Bank", s.banked, "#3D6FB5"], ["Swipe", s.swipe, "#3E8E8A"], ["Mobile", s.mobile, "#6FB3A8"], ["Petty", s.petty, "#9AA6B8"], ["On till", s.onHand, "#C9A227"]].filter(([, v]) => v > 50);
-                    const scale = (s.submitted || 0) > 0 ? placed / s.submitted : 0;   // when the site sent up extra, the bar shows only the part that belongs to this period
+                    const chans = [["HQ", s.hq, "#1F2E6B"], ["Bank", s.banked, "#3D6FB5"], ["Swipe", s.swipe, "#3E8E8A"], ["Mobile", s.mobile, "#6FB3A8"], ["Petty", s.petty, "#9AA6B8"]].filter(([, v]) => v > 50);   // held cash is drawn as its own amber segment below
+                    const scale = ((s.submitted || 0) - held) > 0 ? placed / ((s.submitted || 0) - held) : 0;   // when the site sent up extra, the bar shows only the part that belongs to this period
                     const gd0 = gapDays && gapDays[String(s.siteId)];
                     const where = gd0 ? gd0.days.filter((x) => x.unaccounted > 1 && /^\d{4}-\d{2}-\d{2}$/.test(String(x.date))).sort((a, b) => b.unaccounted - a.unaccounted) : [];
                     return (
@@ -5112,7 +5136,7 @@ export function CashInflows({ embedded = false, from = null, to = null } = {}) {
           })()}
         </>
       )}
-      {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill /></DetailSheet>}
+      {carriedDrill && <DetailSheet title="Cash on hand at sites" sub="what each site confirmed it still holds · not yet sent to HQ" onClose={() => setCarriedDrill(false)}><CarriedDrill to={effTo || null} /></DetailSheet>}
       {unaccDrill && <DetailSheet title="Unaccounted for" sub={`expected − accounted · ${effFrom && effTo ? `${fmtD(effFrom)} – ${fmtD(effTo)}` : "current window"}`} onClose={() => setUnaccDrill(false)}><UnaccountedDrill days={w.days || 90} from={effFrom} to={effTo} /></DetailSheet>}
       {gd && <DetailSheet title={gd.title} sub={gd.sub} onClose={() => setGd(null)}>{gd.render()}</DetailSheet>}
     </Shell>
@@ -5716,6 +5740,31 @@ function ComplianceBoard({ rows }) {
 function pumpNo(label) { const m = String(label || "").match(/\d+/); return m ? +m[0] : 9999; }
 const PUMP_SORT = (a, b) => ((PROD_RANK[a.product] ?? 9) - (PROD_RANK[b.product] ?? 9)) || (pumpNo(a.label) - pumpNo(b.label)) || String(a.label).localeCompare(String(b.label), undefined, { numeric: true });
 
+// Pick ONE OR MORE tanks a pump draws from — toggle pills, tank order preserved.
+// `value` is an array of tank labels; `tanks` are the product's tanks [{label}].
+function TankMultiSelect({ tanks, value, onChange, busy }) {
+  const chosen = new Set(value || []);
+  const order = tanks.map((t) => t.label);
+  const toggle = (lbl) => {
+    const next = new Set(chosen);
+    if (next.has(lbl)) next.delete(lbl); else next.add(lbl);
+    // keep tank display order; append any label not in this product's tank list (legacy "other")
+    const inOrder = order.filter((l) => next.has(l));
+    const extra = [...next].filter((l) => !order.includes(l));
+    onChange([...inOrder, ...extra]);
+  };
+  // any selected label that isn't one of this product's tanks (e.g. product just changed) — show it so it's editable
+  const others = (value || []).filter((l) => !order.includes(l));
+  const pill = (on) => ({ padding: "4px 9px", borderRadius: 999, border: `1px solid ${on ? "var(--navy)" : "var(--line)"}`, background: on ? "var(--navy)" : "var(--card,#fff)", color: on ? "#fff" : "var(--ink,#333)", fontSize: 11.5, cursor: busy ? "default" : "pointer", fontWeight: on ? 600 : 400 });
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+      {tanks.length === 0 && others.length === 0 && <span style={{ fontSize: 11, color: "var(--steel)" }}>— no tank —</span>}
+      {tanks.map((t) => <button key={t.label} type="button" disabled={busy} style={pill(chosen.has(t.label))} onClick={() => toggle(t.label)}>{t.label}</button>)}
+      {others.map((l) => <button key={l} type="button" disabled={busy} style={pill(true)} onClick={() => toggle(l)}>{l} (other)</button>)}
+    </div>
+  );
+}
+
 export function PumpAdmin({ me }) {
   const [sites, setSites] = useState([]);
   const [site, setSite] = useState("");
@@ -5808,26 +5857,23 @@ export function PumpAdmin({ me }) {
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 420 }}>
                     <thead><tr style={{ textAlign: "left", color: "var(--steel)", fontSize: 11 }}>
-                      <th style={{ padding: "4px 6px" }}>NOZZLE</th><th style={{ padding: "4px 6px" }}>PRODUCT</th><th style={{ padding: "4px 6px" }}>TANK</th><th></th></tr></thead>
+                      <th style={{ padding: "4px 6px" }}>NOZZLE</th><th style={{ padding: "4px 6px" }}>PRODUCT</th><th style={{ padding: "4px 6px" }}>TANK(S)</th><th></th></tr></thead>
                     <tbody>
                       {active.map((p) => (
                         <tr key={p.label} style={{ borderTop: "1px solid var(--line)" }}>
                           <td style={{ padding: "6px", fontWeight: 600, whiteSpace: "nowrap" }}>{p.label}</td>
                           <td style={{ padding: "6px" }}>
-                            <select value={p.product} disabled={busy} style={sel} onChange={(e) => saveOne({ label: p.label, product: e.target.value, tank: tanksFor(e.target.value)[0]?.label || p.tank })}>
+                            <select value={p.product} disabled={busy} style={sel} onChange={(e) => saveOne({ label: p.label, product: e.target.value, tanks: (p.tanks && p.tanks.length ? p.tanks : (tanksFor(e.target.value)[0] ? [tanksFor(e.target.value)[0].label] : [])) })}>
                               {["Blend", "Diesel", "ULP", "Ethanol", "Petrol"].map((pr) => <option key={pr} value={pr}>{pr}</option>)}
                             </select>
                           </td>
-                          <td style={{ padding: "6px" }}>
-                            <select value={p.tank || ""} disabled={busy} style={sel} onChange={(e) => saveOne({ label: p.label, product: p.product, tank: e.target.value })}>
-                              <option value="">— no tank —</option>
-                              {tanksFor(p.product).map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
-                              {p.tank && !tanksFor(p.product).some((t) => t.label === p.tank) && <option value={p.tank}>{p.tank} (other)</option>}
-                            </select>
+                          <td style={{ padding: "6px", minWidth: 150 }}>
+                            <TankMultiSelect tanks={tanksFor(p.product)} value={p.tanks || []} busy={busy}
+                              onChange={(tks) => saveOne({ label: p.label, product: p.product, tanks: tks })} />
                           </td>
                           <td style={{ padding: "6px", textAlign: "right" }}>
                             <button type="button" className="pill-ghost" disabled={busy} style={{ padding: "5px 10px", fontSize: 11.5 }}
-                              onClick={() => saveOne({ label: p.label, product: p.product, tank: p.tank, status: "disabled" }, `${p.label} disabled`)}>Disable</button>
+                              onClick={() => saveOne({ label: p.label, product: p.product, tanks: p.tanks, status: "disabled" }, `${p.label} disabled`)}>Disable</button>
                           </td>
                         </tr>
                       ))}
@@ -5844,7 +5890,7 @@ export function PumpAdmin({ me }) {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                   {disabled.map((p) => (
                     <button key={p.label} type="button" className="pill-ghost" disabled={busy} style={{ padding: "5px 10px", fontSize: 11.5 }}
-                      onClick={() => saveOne({ label: p.label, product: p.product, tank: p.tank, status: "active" }, `${p.label} re-enabled`)}>+ {p.label} ({p.product})</button>
+                      onClick={() => saveOne({ label: p.label, product: p.product, tanks: p.tanks, status: "active" }, `${p.label} re-enabled`)}>+ {p.label} ({p.product})</button>
                   ))}
                 </div>
               </div>
@@ -5865,8 +5911,8 @@ function QuickAddNozzles({ products, tanksFor, onAdd, busy, existing }) {
   const [from, setFrom] = useState(1);
   const [to, setTo] = useState(6);
   const [pair, setPair] = useState(true);        // two nozzles (a+b) per pump
-  const [tank, setTank] = useState("");           // "" = auto-split across this product's tanks
-  useEffect(() => { setTank(""); }, [product]);
+  const [tankSel, setTankSel] = useState([]);     // [] = auto-split across this product's tanks; ≥1 = every pump draws from this set
+  useEffect(() => { setTankSel([]); }, [product]);
   const tanks = tanksFor(product);
   const sel = { padding: "7px 8px", borderRadius: 7, border: "1px solid var(--line)", fontSize: 12.5 };
   const build = () => {
@@ -5874,9 +5920,10 @@ function QuickAddNozzles({ products, tanksFor, onAdd, busy, existing }) {
     const out = [];
     let idx = 0;
     for (let n = f; n <= t; n++) {
-      const tk = tank || (tanks.length ? tanks[idx % tanks.length].label : "");
-      if (pair) { out.push({ label: `Pump ${n}a`, product, tank: tk, status: "active" }); out.push({ label: `Pump ${n}b`, product, tank: tk, status: "active" }); }
-      else out.push({ label: `Pump ${n}`, product, tank: tk, status: "active" });
+      // explicit selection → every pump draws from that set; otherwise auto-split one tank per pump
+      const tks = tankSel.length ? tankSel : (tanks.length ? [tanks[idx % tanks.length].label] : []);
+      if (pair) { out.push({ label: `Pump ${n}a`, product, tanks: tks, status: "active" }); out.push({ label: `Pump ${n}b`, product, tanks: tks, status: "active" }); }
+      else out.push({ label: `Pump ${n}`, product, tanks: tks, status: "active" });
       idx++;
     }
     return out;
@@ -5893,11 +5940,10 @@ function QuickAddNozzles({ products, tanksFor, onAdd, busy, existing }) {
         <label style={{ fontSize: 11, color: "var(--steel)" }}>to<br /><input type="number" min="1" value={to} style={{ ...sel, width: 66 }} onChange={(e) => setTo(e.target.value)} /></label>
         <label style={{ fontSize: 11, color: "var(--steel)" }}>Nozzles<br />
           <select value={pair ? "2" : "1"} style={sel} onChange={(e) => setPair(e.target.value === "2")}><option value="2">a + b (two)</option><option value="1">single</option></select></label>
-        <label style={{ fontSize: 11, color: "var(--steel)" }}>Tank<br />
-          <select value={tank} style={sel} onChange={(e) => setTank(e.target.value)}>
-            <option value="">auto-split{tanks.length > 1 ? ` (${tanks.length} tanks)` : ""}</option>
-            {tanks.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
-          </select></label>
+        <div style={{ fontSize: 11, color: "var(--steel)" }}>Tank(s)<br />
+          <div style={{ marginTop: 4 }}><TankMultiSelect tanks={tanks} value={tankSel} busy={busy} onChange={setTankSel} /></div>
+          <div style={{ fontSize: 10.5, marginTop: 3 }}>{tankSel.length ? `every pump draws from ${tankSel.join(" + ")}` : `auto-split one tank per pump${tanks.length > 1 ? ` (${tanks.length} tanks)` : ""}`}</div>
+        </div>
       </div>
       <div style={{ fontSize: 11.5, color: "var(--steel)", margin: "9px 0 8px" }}>
         Adds <b>{preview.length}</b> nozzle{preview.length !== 1 ? "s" : ""}: {preview.slice(0, 6).map((p) => p.label).join(", ")}{preview.length > 6 ? "…" : ""}
@@ -5913,7 +5959,7 @@ function QuickAddNozzles({ products, tanksFor, onAdd, busy, existing }) {
 function AddOneNozzle({ products, tanksFor, onAdd, busy }) {
   const [label, setLabel] = useState("");
   const [product, setProduct] = useState(products[0] || "Blend");
-  const [tank, setTank] = useState("");
+  const [tankSel, setTankSel] = useState([]);
   const tanks = tanksFor(product);
   const sel = { padding: "8px", borderRadius: 7, border: "1px solid var(--line)", fontSize: 12.5 };
   return (
@@ -5921,10 +5967,10 @@ function AddOneNozzle({ products, tanksFor, onAdd, busy }) {
       <span className="lbl">Add one nozzle</span>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 4 }}>
         <label style={{ fontSize: 11, color: "var(--steel)" }}>Label<br /><input value={label} placeholder="Pump 7a" style={{ ...sel, width: 110 }} onChange={(e) => setLabel(e.target.value)} /></label>
-        <label style={{ fontSize: 11, color: "var(--steel)" }}>Product<br /><select value={product} style={sel} onChange={(e) => { setProduct(e.target.value); setTank(""); }}>{products.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
-        <label style={{ fontSize: 11, color: "var(--steel)" }}>Tank<br /><select value={tank} style={sel} onChange={(e) => setTank(e.target.value)}><option value="">— tank —</option>{tanks.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}</select></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>Product<br /><select value={product} style={sel} onChange={(e) => { setProduct(e.target.value); setTankSel([]); }}>{products.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <div style={{ fontSize: 11, color: "var(--steel)" }}>Tank(s)<br /><div style={{ marginTop: 4 }}><TankMultiSelect tanks={tanks} value={tankSel} busy={busy} onChange={setTankSel} /></div></div>
         <button type="button" className="pill" disabled={busy || !label.trim()} style={{ padding: "8px 14px", fontSize: 13 }}
-          onClick={() => onAdd({ label: label.trim(), product, tank: tank || tanks[0]?.label }, `${label.trim()} added`).then?.(() => setLabel(""))}>Add</button>
+          onClick={() => onAdd({ label: label.trim(), product, tanks: tankSel.length ? tankSel : (tanks[0] ? [tanks[0].label] : []) }, `${label.trim()} added`).then?.(() => setLabel(""))}>Add</button>
       </div>
     </div>
   );
@@ -5946,7 +5992,7 @@ export function RetailDashboard() {
   // full day; range → its end), exactly as the Watchlist feeds this same board.
   const [period, setPeriod] = useState("yesterday");
   const [range, setRange] = useState(defaultRange);
-  const [which, setWhich] = useState("stock");
+  const [which, setWhich] = useState("tenders");
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [drill, setDrill] = useState(null);
@@ -5978,7 +6024,7 @@ export function RetailDashboard() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["tenders", "Sales by tender"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><Segmented options={[["tenders", "Sales by tender"], ["stock", "Stock"], ["price", "Price"], ["sales", "Sales"], ["compliance", "Compliance"]]} value={which} onChange={setWhich} /></div>
         {data && <ExportBtn onClick={() => exportRetail(which, data)} />}
       </div>
       <RefreshBar data={data} busy={!data && !err} onRefresh={load} />
@@ -6311,10 +6357,6 @@ function TendersBoard({ d, onSite }) {
         <CountPill n={$(grand)} label={useFinal ? "Total sales · day-end" : "Total sales · indicative"} tone="ok" />
         {cols.slice(0, 3).map(([k, lbl]) => <CountPill key={k} n={$(tot[k]) + pct(Number(tot[k]) || 0)} label={lbl} tone="ok" />)}
       </div>
-      {useFinal
-        ? <Note tone="ok" title="Final — from the day-end report">Each tender in US$ as the day-end report records it. Cash, DA card, Petrotrade and Redan (card and coupon), pump tests and lubes; "Other" is whatever the report's total holds beyond the named tenders.</Note>
-        : <Note tone="blue" title="Indicative so far">The day-end report for this day is not in yet. These are the sites' shift submissions (cash / DA card / Petrotrade), day and night added.</Note>}
-      {declCols.length > 0 && <Note tone="amber" title="Swipe and mobile money: the site's own figures">The day-end report has no swipe or mobile-money line, so those columns come from each site's cash-handling submission for the day, not from the report.</Note>}
       {t.missing && t.missing.length > 0 && <MissingList names={t.missing} />}
       <SiteSearch q={q} setQ={setQ} shown={shown.length} total={d.sites.length} />
       <Panel style={{ padding: 0, overflow: "hidden" }}>
