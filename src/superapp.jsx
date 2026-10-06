@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import {
   getSites, postPrice, postDelivery, postRecon, postRequest,
-  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
+  getRetail, getHaulage, getWetstock, getCash, postCash, getExpectedCash, getCashRecon, getCashShortfall, getRevenueRecon, postCashDeposit, getPendingDeposits, getHqPending, reviewDeposit, closeDay, depositSlipUrl, requestPhotoUrl, getCashflow, getSignals, postFeedback, getFeedback, getSiteDayend, addSiteManager, getExecutive, getInventory, getWarehouseConfig,
   getWatchSnoozes, postWatchSnooze, getStaff, assignSupervisorSite, assignDriverHorse, getCashInflows, getCashCarried, getCashUnaccounted,
   requestUnlock, getUnlockRequests, decideUnlock, getDeviceRequests, decideDeviceRequest, getSubmissionReview, getSubmissionExport,
   getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
@@ -4326,6 +4326,70 @@ export function SiteDeposit({ me }) {
 }
 
 // The cash office view: open days, deposits to confirm, cash unbanked/short.
+/* ============================================================ *
+ *  REVENUE RECONCILIATION — in-app tenders vs Sage invoices
+ *  Run in parallel so we can watch the gap close, then retire Sage.
+ * ============================================================ */
+export function RevenueRecon() {
+  const [period, setPeriod] = useState("month");
+  const [range, setRange] = useState(defaultRange);
+  const [d, setD] = useState(null), [err, setErr] = useState(null);
+  const pw = periodWindow(period, range);
+  const load = useCallback(() => {
+    setD(null); setErr(null);
+    getRevenueRecon(pw.from, pw.to).then(setD).catch((e) => setErr(e.message));
+  }, [pw.from, pw.to]);
+  useEffect(() => { load(); }, [load]);
+  const $ = (v) => "$" + full(Math.round(v || 0));
+  const toneFor = (g) => g == null ? "var(--steel)" : Math.abs(g) <= 5 ? "#2E7D33" : Math.abs(g) <= 20 ? "var(--amber)" : "var(--red)";
+  const s = d?.summary;
+  return (
+    <Wrap>
+      <SectionHead title="Revenue reconciliation" sub="In-app site-declared tenders vs the Sage fuel invoices — watching the gap before we retire the Sage export" />
+      <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
+      <RefreshBar data={d} busy={!d && !err} onRefresh={load} />
+      {err && <Note tone="red" title="Could not load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
+      {d && s && (
+        <>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <CountPill n={$(s.totalApp)} label="App revenue (tenders)" tone="ok" />
+            <CountPill n={$(s.totalSage)} label="Sage invoiced" tone="ok" />
+            <CountPill n={`${s.totalGapPct > 0 ? "+" : ""}${s.totalGapPct ?? "—"}%`} label="Overall gap" tone={Math.abs(s.totalGapPct || 0) <= 5 ? "ok" : Math.abs(s.totalGapPct || 0) <= 15 ? "amber" : "red"} />
+            <CountPill n={`${s.within10}/${s.scored}`} label="Sites within 10%" tone={s.within10 >= s.scored * 0.7 ? "ok" : "amber"} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 10 }}>
+            Within 5%: <b>{s.within5}</b> · within 10%: <b>{s.within10}</b> · within 20%: <b>{s.within20}</b> of {s.scored} scored sites.
+            {s.appOnly.length > 0 && <> · <b>App-only</b> (not in Sage): {s.appOnly.join(", ")}.</>}
+            {s.sageOnly.length > 0 && <> · <b>No in-app sales</b>: {s.sageOnly.slice(0, 8).join(", ")}{s.sageOnly.length > 8 ? ` +${s.sageOnly.length - 8}` : ""}.</>}
+          </div>
+          <Panel style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
+                  <Th>Site</Th><Th right>App $</Th><Th>Rule</Th><Th right>Sage $</Th><Th right>Gap</Th><Th right>Gap %</Th></tr></thead>
+                <tbody>{d.rows.map((r) => (
+                  <tr key={r.siteId} style={{ borderTop: "1px solid var(--line)" }}>
+                    <Td>{r.site}{!r.inApp && <span style={{ fontSize: 10, color: "var(--steel)" }}> · no app sales</span>}{!r.inSage && <span style={{ fontSize: 10, color: "#B26A00" }}> · app-only</span>}</Td>
+                    <Td right>{$(r.app)}</Td>
+                    <Td style={{ color: "var(--steel)", fontSize: 11 }}>{r.rule === "greatest" ? "cumul." : "additive"}</Td>
+                    <Td right>{r.inSage ? $(r.sage) : <span style={{ color: "var(--steel)" }}>—</span>}</Td>
+                    <Td right style={{ color: toneFor(r.gapPct) }}>{r.gapPct == null ? "—" : (r.gap > 0 ? "+" : "") + $(r.gap)}</Td>
+                    <Td right style={{ fontWeight: 700, color: toneFor(r.gapPct) }}>{r.gapPct == null ? "—" : (r.gapPct > 0 ? "+" : "") + r.gapPct + "%"}</Td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </Panel>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>
+            App revenue = the site's own in-app tenders (cash + Petrotrade + DA-card). "Rule" = whether day+night were taken as additive or cumulative (whichever matches Sage — the mismatched ones are the de-cumulation / data-entry fixes). Green ≤5%, amber ≤20%, red &gt;20%.
+          </div>
+        </>
+      )}
+    </Wrap>
+  );
+}
+
 export function CashOffice({ readOnly = false, extWindow = null } = {}) {
   const [period, setPeriod] = useState("month");
   const [range, setRange] = useState(defaultRange);

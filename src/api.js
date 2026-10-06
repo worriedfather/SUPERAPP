@@ -401,6 +401,7 @@ export const getDriverNotices = () => call('/api/driver/notices');
 export const ackNotice = (body) => call('/api/driver/notices/ack', { method: "POST", body });
 export const getCashRecon = (days = 30, from = null, to = null) => call(`/api/cash/recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashShortfall = () => call('/api/cash/shortfall');
+export const getRevenueRecon = (from = null, to = null, days = 30) => call(`/api/revenue-recon?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashInflows = (days = 30, from = null, to = null) => call(`/api/cash/inflows?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getCashCarried = (to = null) => call(`/api/cash/carried${to ? `?to=${to}` : ""}`);
 export const getCashUnaccounted = (days = 30, from = null, to = null) => call(`/api/cash/unaccounted?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
