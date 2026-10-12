@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { STATIONS } from "./stations";
 import { DRIVERS_SEED, HORSES_SEED, TRAILERS, RETAIL_VEH, FLEET_MEDIAN, HISTORY, DEST_NORM, EFF, ROUTE_PRIOR, LOCAL_KM, ZONES } from "./data";
-import { resumeTracking, startTracking } from "./tripTracker.js";
+import { resumeTracking, startTracking, trackingState } from "./tripTracker.js";
 import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS, openLocationSettings, gpsEnabled } from "./device";
 import { readOdometer } from "./ocr";
 import Login from "./Login";
@@ -1132,11 +1132,12 @@ function App() {
   if (mustUpdate) return <UpdateGate />;
   // Driver features need a handset (geo-lock, GPS evidence, the camera). The native
   // app is best (background GPS + device binding), but a driver struggling to install
-  // it can work on the PHONE web browser — geolocation and the camera both work there.
-  // Only a laptop/desktop browser is blocked (no GPS/camera for the pump controls).
-  const driverOnDesktop = me && me.kind === "driver" && !isNative()
-    && !/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || "");
-  if (driverOnDesktop) return <DriverMobileOnlyGate onSignOut={() => { signOut(true); setMe(null); }} />;
+  // Drivers must use the INSTALLED app, not a browser — even on the phone. A browser can take a
+  // fix while the page is open but can never run the background location service, so a
+  // delivery driven from the phone's browser records no route at all (owner, 2026-10-12: "GPS
+  // must remain on for the entire duration of a delivery"). Phone browsers were allowed before.
+  const driverOnWeb = me && me.kind === "driver" && !isNative();
+  if (driverOnWeb) return <DriverMobileOnlyGate onSignOut={() => { signOut(true); setMe(null); }} />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
 
@@ -1425,10 +1426,28 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
   // (declined) ones already have their own sections above, so don't repeat them here.
   const history = mine.filter((r) => r.status !== "pending" && r.status !== "approved" && r.status !== "declined");
   const first = (me.name || "").split(" ")[0];
+  // GPS recording status — the driver sees whether the route is actually being recorded, and
+  // can retry / open location settings. Re-read every 20 s while the screen is open.
+  const [trk, setTrk] = useState(() => (isNative() ? trackingState() : null));
+  useEffect(() => { if (!isNative()) return; const t = setInterval(() => setTrk(trackingState()), 20000); return () => clearInterval(t); }, []);
+  const retryTracking = async () => { if (trk && trk.active) { try { await startTracking(trk.active.tripNo); } catch { /* shown below */ } } setTrk(trackingState()); };
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
   return (
     <div>
+      {trk && trk.active && (
+        trk.watching
+          ? <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 12, background: "#E4F3E6", color: "#2F7D3B", fontSize: 12.5, fontWeight: 700, marginBottom: 12 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 5, background: "#3C9A52", boxShadow: "0 0 0 3px rgba(60,154,82,.25)" }} /> GPS is recording your route · {trk.active.tripNo}
+            </div>
+          : <div style={{ padding: "10px 12px", borderRadius: 12, background: "#FDF1F0", border: "1px solid #E8C4C0", color: "#8A2B26", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 }}>
+              <b>GPS is NOT recording</b> for {trk.active.tripNo}.{trk.lastError ? ` (${String(trk.lastError).slice(0, 80)})` : ""} Allow location for DA OPS and keep the app installed and signed in, then tap retry.
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button type="button" onClick={retryTracking} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#B23B3B", color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Retry GPS</button>
+                <button type="button" onClick={() => openLocationSettings()} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #E8C4C0", background: "#fff", color: "#8A2B26", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Location settings</button>
+              </div>
+            </div>
+      )}
       <h2 style={{ margin: "2px 0 16px", fontSize: "clamp(22px,6vw,28px)" }}>Hi {first} 👋</h2>
       <div style={{ marginBottom: 14 }}>
         <BalanceHero card={me.card} balance={c.balance} usdCash={c.usdCash} petrolL={c.petrolL} dieselL={c.dieselL}>
@@ -3047,9 +3066,9 @@ function DriverMobileOnlyGate({ onSignOut }) {
           <div style={{ width: 58, height: 58, borderRadius: 16, background: "#EAF0FA", display: "grid", placeItems: "center", margin: "0 auto 14px" }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.blue} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>
           </div>
-          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Use the mobile app</div>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Use the installed DA OPS app</div>
           <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
-            Driver features — fuel requests, collection, the geo-lock and trip GPS — only work on the DA OPS phone app. Sign in on your Android phone to continue.
+            A browser cannot record your route while you drive. Fuel requests, collection and delivery notes must be done in the DA OPS app installed from Google Play — open it and sign in there.
           </div>
           <a href={PLAY_URL} target="_blank" rel="noreferrer" style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, cursor: "pointer",
             fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em", textDecoration: "none",

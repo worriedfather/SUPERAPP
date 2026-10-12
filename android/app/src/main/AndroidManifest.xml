@@ -45,11 +45,15 @@
          tracking runs under a foreground service with a persistent notification. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- GPS is FOREGROUND-ONLY now (no persistent service / wake lock) so the app can
-         deep-sleep when closed and stops draining/crashing the phone. Background-location
-         + foreground-service + wake-lock permissions removed with it. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" tools:node="remove" />
+    <!-- 2026-10-12: the FOREGROUND SERVICE permissions are back. They were stripped on 24 Aug
+         (build 105) to stop drain/crashes, but the crash was R8 stripping the plugin (minify is
+         off now) and without them the location service can never start: from 24 Aug to 12 Oct
+         every trip recorded pings only while the driver had the app open (speed 0, a handful per
+         trip). A location foreground service started while the app is in front keeps recording
+         with only the "while using the app" permission, so ACCESS_BACKGROUND_LOCATION stays
+         removed (no Play background-location declaration needed). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:node="remove" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" tools:replace="android:required" />
     <uses-feature android:name="android.hardware.location" android:required="false" tools:replace="android:required" />

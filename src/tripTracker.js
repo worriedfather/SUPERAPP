@@ -14,6 +14,10 @@ const native = () => { try { return Capacitor.isNativePlatform(); } catch { retu
 let watching = false;
 let buffer = [];
 let flushTimer = null;
+let lastError = null;   // why the last start failed (permission / service), for the driver's home screen
+
+// What the driver's home shows: is a trip marked active, and is the location service actually running?
+export function trackingState() { return { active: activeTrip(), watching, lastError }; }
 
 export function activeTrip() {
   try { return JSON.parse(localStorage.getItem(ACTIVE_KEY) || "null"); } catch { return null; }
@@ -59,10 +63,10 @@ export async function startTracking(tripNo) {
         if (buffer.length >= 5) flush(tripNo);
       }
     );
-    watching = true;
+    watching = true; lastError = null;
     if (flushTimer) clearInterval(flushTimer);
     flushTimer = setInterval(() => flush(tripNo), 60000);   // also flush every minute
-  } catch { /* permission denied / unavailable — the flag stays set, retry on next open */ }
+  } catch (e) { lastError = (e && e.message) || String(e); /* permission denied / unavailable — the flag stays set, retry on next open */ }
 }
 
 export async function stopTracking() {
