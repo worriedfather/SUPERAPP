@@ -645,7 +645,7 @@ export function SiteSubmit({ me }) {
 // a mistake (a re-submit writes a correction; the latest reading wins).
 // canEdit gates the Edit button: once a SITE submits it's LOCKED — only a manager
 // can reopen and correct it (managers pass canEdit=true). Supervisors see a note.
-function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next, unlock = null }) {
+function SubmittedCard({ title, body, warning = null, onEdit, tone = "ok", canEdit = true, next, unlock = null }) {
   const c = tone === "amber"
     ? { bg: "#FEF7E6", fg: "#8A6D1E", ic: "!" }
     : { bg: "#EAF7EC", fg: "#2E7D33", ic: "✓" };
@@ -656,6 +656,7 @@ function SubmittedCard({ title, body, onEdit, tone = "ok", canEdit = true, next,
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)" }}>{title}</div>
           {body && <div style={{ fontSize: 13, color: "var(--steel)", marginTop: 3 }}>{body}</div>}
+          {warning && <div style={{ fontSize: 12.5, color: "#8A6D1E", background: "#FEF7E6", border: "1px solid #F0E0B0", borderRadius: 8, padding: "8px 10px", marginTop: 8 }}>⚠ {warning} <span style={{ color: "var(--steel)" }}>Submitted — but tap Edit if that's not right.</span></div>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
             {next && next.onNext && <button type="button" className="pill" style={{ padding: "8px 16px" }} onClick={next.onNext}>{next.label || "Next"} ›</button>}
             {canEdit
@@ -801,14 +802,14 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
         deviceTime: new Date().toISOString(),
       });
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ title: `Stock & sales submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}` });
+      setDone({ title: `Stock & sales submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}`, warning: r.warning || null });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
   const lk = useSubmissionLock(lock, done);
   if (lk.isLocked) return <LockedCard lock={lock} what="Stock & sales" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "readings", choice, site, date, shift }} />;
-  if (done) return <SubmittedCard title={done.title} body={done.body} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "readings", choice, site, date, shift }} />;
+  if (done) return <SubmittedCard title={done.title} body={done.body} warning={done.warning} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "readings", choice, site, date, shift }} />;
   return (
     <Panel>
       <form onSubmit={send}>
@@ -886,12 +887,19 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 
         {/* Split the sales by tender — the CASH portion is what the Cash tab reconciles */}
         <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 12 }}>
-          <span className="lbl">Split sales by tender (US$)</span>
+          <span className="lbl">Split sales by tender (US$) — <b>this shift's takings only</b>, not a running day+night total</span>
           <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
             <div style={{ flex: 1 }}><Field label="Cash"><Num value={sales.cashSales} onChange={(v) => setS("cashSales", v)} placeholder="$" /></Field></div>
             <div style={{ flex: 1 }}><Field label="Petrotrade"><Num value={sales.petroSales} onChange={(v) => setS("petroSales", v)} placeholder="$" /></Field></div>
             <div style={{ flex: 1 }}><Field label="DA card"><Num value={sales.daCardSales} onChange={(v) => setS("daCardSales", v)} placeholder="$" /></Field></div>
           </div>
+          {(() => {
+            const litres = n(sales.blendSales) + n(sales.dieselSales) + n(sales.ulpSales);
+            if (!(hasSplit && litres > 50)) return null;
+            const implied = split / litres;
+            if (implied <= 2.8 && implied >= 1.2) return null;
+            return <div style={{ fontSize: 11.5, color: "#8A6D1E", background: "#FEF7E6", border: "1px solid #F0E0B0", borderRadius: 8, padding: "6px 9px", marginTop: 4 }}>⚠ {dollars(split)} over {L(litres)} is ${implied.toFixed(2)}/litre — {implied > 2.8 ? "above pump price. If that's a running day+night total, enter just this shift." : "below pump price. A tender or a shift may be missing."}</div>;
+          })()}
           {hasSplit && (
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 2px 0" }}>
               <span style={{ color: "var(--steel)" }}>Split total{salesValue > 0 ? ` vs ${dollars(salesValue)} sales` : ""}</span>
@@ -7602,7 +7610,7 @@ export function TripMap({ points, poly, height = 240 }) {
       };
       // order comes from the server (/api/maps/config), which demotes a provider once enough
       // users have reported it failing; default order until that has loaded
-      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["carto", "esri"]).filter((id) => TILE_PROVIDERS[id]);
+      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["esri", "carto"]).filter((id) => TILE_PROVIDERS[id]);   // Esri first (CARTO now watermarks without a key)
       let tileIdx = 0, tileErrs = 0;
       const addTiles = () => {
         const id = order[tileIdx], p = TILE_PROVIDERS[id];
@@ -9461,11 +9469,13 @@ export function DeviceRequests() {
   );
 }
 
-export function JourneyTracking() {
+export function JourneyTracking({ initialTrip = null } = {}) {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
-  const [sel, setSel] = useState(null);
+  const [sel, setSel] = useState(initialTrip || null);
   const [replay, setReplay] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // A tapped "unplanned stop / no offload" alert deep-links here with its trip — open THAT trip.
+  useEffect(() => { if (initialTrip) setSel(initialTrip); }, [initialTrip]);
   useEffect(() => { setErr(null); getDeliveriesInProgress().then((r) => { setD(r); if (r.trips && r.trips.length && !sel) setSel(r.trips.find((t) => t.stage === "in_transit")?.tripNo || r.trips[0].tripNo); }).catch((e) => setErr(e.message)); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
   if (err) return <Wrap><SectionHead title="Journey tracking" /><Note tone="red" title="Couldn't load">{err}</Note></Wrap>;
@@ -9705,7 +9715,7 @@ function ReplayMap({ t, pos }) {
       map = Leaflet.map(ref.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
       const TILES = { carto: ["https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" }],
         esri: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 18, attribution: "Tiles &copy; Esri" }] };
-      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["carto", "esri"]).filter((id) => TILES[id]);
+      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["esri", "carto"]).filter((id) => TILES[id]);
       let idx = 0, errs = 0;
       const addTiles = () => { const [u, o] = TILES[order[idx]]; const layer = Leaflet.tileLayer(u, o).addTo(map); layer.on("tileerror", () => { if (++errs < 4) return; errs = 0; if (idx < order.length - 1) { idx++; map.removeLayer(layer); addTiles(); } }); };
       addTiles();
