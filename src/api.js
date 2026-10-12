@@ -351,6 +351,7 @@ export const postTripLeg = (tripNo, site, event) => call(`/api/trip/${encodeURIC
 // with a short timeout and are allowed to queue offline through the outbox.
 export const postTripPing = (tripNo, pings) => call(`/api/trip/${encodeURIComponent(tripNo)}/ping`, { method: "POST", body: { pings }, timeoutMs: 8000 });
 export const getTripTrack = (tripNo) => call(`/api/trip/${encodeURIComponent(tripNo)}/track`);
+export const getTripScorecards = (from = null, to = null, days = 14) => call(`/api/trips/scorecards?${from && to ? `from=${from}&to=${to}` : `days=${days}`}`);
 export const getDriverPerformance = (from, to, driver) => call(`/api/driver/performance?from=${from}&to=${to}${driver ? `&driver=${encodeURIComponent(driver)}` : ""}`);
 export const getDriverLeague = (from, to) => call(`/api/drivers/league?from=${from}&to=${to}`);
 export const routeGoogle = (points) => call("/api/route/google", { method: "POST", body: { points } });

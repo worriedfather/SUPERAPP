@@ -12,6 +12,7 @@ import {
   getActivitySummary, getUserActivity, getTripsRegister, reopenTrip, grantDropException, getMapsConfig,
   postWarehouseImport, voidWarehouseImport, editWarehouseImport, getWarehouseBalances, setBlendRatio, postTrip, editTrip, cancelTrip, closeTrip, getTrips, getMyTrips,
   postAppDelivery, getPendingDeliveries, approveDelivery, getAppDelivery, getApprovedDeliveries, getAwaitingNotes, getDeliveryFlow, getDriverRecovery,
+  getTripScorecards,
   getSiteConfig, postSiteSubmit, postSiteDip, addSiteTank, getSitePumps, saveSitePump, saveSitePumpsBulk, addSiteCompetitor, getShiftReport, getDeliveriesInProgress, getDeliveriesDue, collectTrip, postTripLeg, getTripTrack, getDriverPerformance, getDriverLeague, getSiteAnalytics, getFleetAllocation, routeGoogle, getStationCoords, getSubmissionStatus,
   getDayendComments, computeDayend, closeDayend,
   getYard, getYardVehicles, yardOpen, yardUpdate, yardClose,
@@ -4362,7 +4363,7 @@ export function RevenueRecon() {
   const s = d?.summary;
   return (
     <Wrap>
-      <SectionHead title="Revenue reconciliation" sub="In-app site-declared tenders vs the Sage fuel invoices — watching the gap before we retire the Sage export" />
+      <SectionHead title="Revenue reconciliation" sub="DA revenue (own channels at pump + Petrotrade at commission) vs the Sage fuel invoices — watching the gap before we retire the Sage export" />
       <PeriodBar period={period} range={range} onPeriod={setPeriod} onRange={setRange} />
       <RefreshBar data={d} busy={!d && !err} onRefresh={load} />
       {err && <Note tone="red" title="Could not load">{err}</Note>}
@@ -4370,13 +4371,14 @@ export function RevenueRecon() {
       {d && s && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <CountPill n={$(s.totalApp)} label="App revenue (tenders)" tone="ok" />
+            <CountPill n={$(s.totalApp)} label="DA revenue (app)" tone="ok" />
             <CountPill n={$(s.totalSage)} label="Sage invoiced" tone="ok" />
             <CountPill n={`${s.totalGapPct > 0 ? "+" : ""}${s.totalGapPct ?? "—"}%`} label="Overall gap" tone={Math.abs(s.totalGapPct || 0) <= 5 ? "ok" : Math.abs(s.totalGapPct || 0) <= 15 ? "amber" : "red"} />
             <CountPill n={`${s.within10}/${s.scored}`} label="Sites within 10%" tone={s.within10 >= s.scored * 0.7 ? "ok" : "amber"} />
           </div>
           <div style={{ fontSize: 11.5, color: "var(--steel)", marginBottom: 10 }}>
             Within 5%: <b>{s.within5}</b> · within 10%: <b>{s.within10}</b> · within 20%: <b>{s.within20}</b> of {s.scored} scored sites.
+            {s.petroPumpValue > 0 && <> · <b>Petrotrade</b> coupon fuel {$(s.petroPumpValue)} pump value booked at {$(s.petroCommission)} commission ({(s.commissionPct * 100).toFixed(1)}%).</>}
             {s.appOnly.length > 0 && <> · <b>App-only</b> (not in Sage): {s.appOnly.join(", ")}.</>}
             {s.sageOnly.length > 0 && <> · <b>No in-app sales</b>: {s.sageOnly.slice(0, 8).join(", ")}{s.sageOnly.length > 8 ? ` +${s.sageOnly.length - 8}` : ""}.</>}
           </div>
@@ -4384,12 +4386,11 @@ export function RevenueRecon() {
             <div style={{ overflowX: "auto" }}>
               <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-                  <Th>Site</Th><Th right>App $</Th><Th>Rule</Th><Th right>Sage $</Th><Th right>Gap</Th><Th right>Gap %</Th></tr></thead>
+                  <Th>Site</Th><Th right>DA rev $</Th><Th right>Sage $</Th><Th right>Gap</Th><Th right>Gap %</Th></tr></thead>
                 <tbody>{d.rows.map((r) => (
                   <tr key={r.siteId} style={{ borderTop: "1px solid var(--line)" }}>
-                    <Td>{r.site}{!r.inApp && <span style={{ fontSize: 10, color: "var(--steel)" }}> · no app sales</span>}{!r.inSage && <span style={{ fontSize: 10, color: "#B26A00" }}> · app-only</span>}</Td>
+                    <Td>{r.site}{!r.inApp && <span style={{ fontSize: 10, color: "var(--steel)" }}> · no app sales</span>}{!r.inSage && <span style={{ fontSize: 10, color: "#B26A00" }}> · app-only</span>}{r.petroCommission > 0 && <span style={{ fontSize: 10, color: "var(--steel)" }}> · petro {$(r.petroPump)}@comm</span>}</Td>
                     <Td right>{$(r.app)}</Td>
-                    <Td style={{ color: "var(--steel)", fontSize: 11 }}>{r.rule === "greatest" ? "cumul." : "additive"}</Td>
                     <Td right>{r.inSage ? $(r.sage) : <span style={{ color: "var(--steel)" }}>—</span>}</Td>
                     <Td right style={{ color: toneFor(r.gapPct) }}>{r.gapPct == null ? "—" : (r.gap > 0 ? "+" : "") + $(r.gap)}</Td>
                     <Td right style={{ fontWeight: 700, color: toneFor(r.gapPct) }}>{r.gapPct == null ? "—" : (r.gapPct > 0 ? "+" : "") + r.gapPct + "%"}</Td>
@@ -4399,7 +4400,7 @@ export function RevenueRecon() {
             </div>
           </Panel>
           <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>
-            App revenue = the site's own in-app tenders (cash + Petrotrade + DA-card). "Rule" = whether day+night were taken as additive or cumulative (whichever matches Sage — the mismatched ones are the de-cumulation / data-entry fixes). Green ≤5%, amber ≤20%, red &gt;20%.
+            DA revenue = own in-channel volume at <b>pump price</b> (cash + DA-card) + <b>Petrotrade coupon fuel at commission</b> (not pump value — that fuel is Petrotrade's). Day+night added. Litres reconcile to Sage within ~1%; the dollar gap is the real signal. Green ≤5%, amber ≤20%, red &gt;20%.
           </div>
         </>
       )}
@@ -7077,12 +7078,18 @@ export function TripTrack({ tripNo, compact = false }) {
         <S label="Stopped" value={t.stoppedLabel} />
         <S label="GPS gaps" value={t.gapCount} tone={t.gapCount > 0 ? "var(--red)" : undefined} />
       </div>
-      {/* stops list */}
+      {/* stops that need an explanation — a stop at a site with no offload, or away from every planned place */}
+      {(t.issueCount || 0) > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>{t.issueCount} stop{t.issueCount === 1 ? "" : "s"} to explain</div>
+        {t.issues.map((s, i) => <div key={i} style={{ fontSize: 12, padding: "4px 4px", color: "#8A2B26" }}><b>{s.label}</b> · {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–{new Date(s.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>)}
+      </div>}
+      {/* stops list — every stop, labelled by what it was */}
       {(t.stops || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8 }}>
-        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Stops</div>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Stops <span style={{ color: "var(--steel)", fontWeight: 400, textTransform: "none" }}>· grey = loading / offloading, red = needs an explanation</span></div>
         {t.stops.map((s, i, a) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none", fontSize: 12 }}>
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 4px", borderBottom: i < a.length - 1 ? "1px solid var(--line)" : "none", fontSize: 12, borderLeft: `3px solid ${s.issue ? "#B23B3B" : s.kind === "depot" || s.kind === "offload" ? "#9AA6B8" : "#D9A93A"}`, paddingLeft: 8 }}>
             <span style={{ minWidth: 0 }}>
+              {s.label && <div style={{ fontSize: 11, color: s.issue ? "#B23B3B" : "var(--steel)", fontWeight: s.issue ? 700 : 400 }}>{s.label}</div>}
               {s.place?.name
                 ? <><span style={{ fontWeight: 600, color: "var(--navy)" }}>📍 {s.place.name}</span> <a href={`https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}`} target="_blank" rel="noopener noreferrer" className="mono" style={{ color: "var(--steel)", fontSize: 10.5 }}>map ↗</a></>
                 : <span className="mono" style={{ color: "var(--steel)" }}>{s.lat.toFixed(4)}, {s.lon.toFixed(4)}</span>}
@@ -9457,6 +9464,7 @@ export function DeviceRequests() {
 export function JourneyTracking() {
   const [d, setD] = useState(null), [err, setErr] = useState(null);
   const [sel, setSel] = useState(null);
+  const [replay, setReplay] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => { setErr(null); getDeliveriesInProgress().then((r) => { setD(r); if (r.trips && r.trips.length && !sel) setSel(r.trips.find((t) => t.stage === "in_transit")?.tripNo || r.trips[0].tripNo); }).catch((e) => setErr(e.message)); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
@@ -9466,6 +9474,7 @@ export function JourneyTracking() {
   return (
     <Wrap>
       <SectionHead title="Journey tracking" sub="Live GPS trail per trip — route, stops, gaps, ETA to each drop" />
+      {replay && <DetailSheet title={`Replay · ${replay}`} sub="route, stops, timeline, speed" onClose={() => setReplay(null)}><TripReplay tripNo={replay} /></DetailSheet>}
       <RefreshBar data={d} onRefresh={() => setReloadKey((k) => k + 1)} />
       {trips.length === 0 && <Note tone="blue" title="No live trips">Nothing scheduled or on the road right now.</Note>}
       {trips.length > 0 && (
@@ -9475,7 +9484,7 @@ export function JourneyTracking() {
               <button key={t.tripNo} type="button" onClick={() => setSel(t.tripNo)}
                 style={{ border: `1.5px solid ${sel === t.tripNo ? "var(--navy)" : "var(--line)"}`, background: sel === t.tripNo ? "var(--navy)" : "#fff", color: sel === t.tripNo ? "#fff" : "var(--navy)", borderRadius: 12, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
                 {t.tripNo} · {t.truck}
-                <div style={{ fontWeight: 400, fontSize: 10.5, opacity: .8 }}>{t.stage === "in_transit" ? "🚚 in transit" : "📋 scheduled"} · {(t.drops || []).map((x) => x.site).join(", ") || t.warehouse}</div>
+                <div style={{ fontWeight: 400, fontSize: 10.5, opacity: .8 }}>{t.stage === "in_transit" ? (t.quietMin != null && t.quietMin > 30 ? `🔇 quiet ${fmtDurMin(t.quietMin)}` : "🚚 in transit") : "📋 scheduled"} · {(t.drops || []).map((x) => x.site).join(", ") || t.warehouse}</div>
               </button>
             ))}
           </div>
@@ -9488,6 +9497,7 @@ export function JourneyTracking() {
                   {t && <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{t.warehouse} {t.product} · {full(t.qty)} L{t.collectedAt ? ` · collected ${t.collectedAt}` : " · not collected yet"}</span>}
                 </div>
                 <TripTrack tripNo={sel} />
+                <button type="button" className="pill" style={{ marginTop: 10, padding: "9px 16px", fontSize: 12.5 }} onClick={() => setReplay(sel)}>▶ Replay this trip — route, stops, timeline</button>
               </Panel>
             );
           })()}
@@ -9645,6 +9655,7 @@ export function TripsRegister({ me }) {
             <CountPill n={open.coveragePct == null ? "—" : open.coveragePct + "%"} label="Delivered (posted notes)" tone={open.coveragePct >= 98 ? "ok" : "amber"} />
             <CountPill n={open.openDrops} label="Drops without a posted note" tone={open.openDrops ? "red" : "ok"} />
           </div>
+          <details style={{ marginBottom: 12 }}><summary style={{ cursor: "pointer", fontWeight: 700, color: "var(--navy)", fontSize: 13 }}>▶ Replay — route, stops, timeline, speed</summary><div style={{ marginTop: 8 }}><TripReplay tripNo={open.tripNo} /></div></details>
           <div className="lbl">Drops</div>
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -9674,6 +9685,198 @@ export function TripsRegister({ me }) {
           <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 10 }}>To change drops or quantities, open the trip in Schedule — editing is only possible while the trip is active.</div>
         </DetailSheet>
       )}
+    </Wrap>
+  );
+}
+
+
+// ═══════════════════════ TRIP REPLAY (owner 2026-10-12, "do 1 to 10") ═══════════════════════
+// The whole trip on one screen: the driven trail against the planned road, every stop labelled
+// by what it was, the timeline of what happened and how long each gap took, speeding, night
+// driving, deviations, GPS gaps — and a time slider that moves the truck along the trail.
+function ReplayMap({ t, pos }) {
+  const ref = useRef(null); const mapRef = useRef(null); const markerRef = useRef(null);
+  const pings = t.pings || [];
+  const key = pings.length + "|" + (t.planned && t.planned.poly ? t.planned.poly.length : 0) + "|" + (t.stops || []).length;
+  useEffect(() => {
+    if (!ref.current || pings.length < 1) return;
+    let map;
+    try {
+      map = Leaflet.map(ref.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+      const TILES = { carto: ["https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" }],
+        esri: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 18, attribution: "Tiles &copy; Esri" }] };
+      const order = (Array.isArray(mapsTileOrder) && mapsTileOrder.length ? mapsTileOrder : ["carto", "esri"]).filter((id) => TILES[id]);
+      let idx = 0, errs = 0;
+      const addTiles = () => { const [u, o] = TILES[order[idx]]; const layer = Leaflet.tileLayer(u, o).addTo(map); layer.on("tileerror", () => { if (++errs < 4) return; errs = 0; if (idx < order.length - 1) { idx++; map.removeLayer(layer); addTiles(); } }); };
+      addTiles();
+      const bounds = [];
+      if (t.planned && t.planned.poly) { const pl = decodePolyline(t.planned.poly); Leaflet.polyline(pl, { color: "#9AA6B8", weight: 4, opacity: 0.8, dashArray: "6 8" }).addTo(map); pl.forEach((p) => bounds.push(p)); }
+      const line = pings.map((p) => [p.lat, p.lon]);
+      Leaflet.polyline(line, { color: "#2B3990", weight: 4, opacity: 0.9 }).addTo(map); line.forEach((p) => bounds.push(p));
+      (t.planned && t.planned.points || []).forEach((p, i) => Leaflet.circleMarker([p.lat, p.lon], { radius: 7, color: "#14213D", fillColor: i === 0 ? "#14213D" : "#6BC048", fillOpacity: 1, weight: 2 }).addTo(map).bindTooltip(i === 0 ? "Depot" : (t.destinations && t.destinations[i - 1] ? t.destinations[i - 1].site : "Drop")));
+      (t.stops || []).forEach((st) => {
+        const col = st.issue ? "#B23B3B" : st.kind === "depot" || st.kind === "offload" ? "#6E7B91" : "#D9A93A";
+        Leaflet.circleMarker([st.lat, st.lon], { radius: st.issue ? 9 : 6, color: "#fff", fillColor: col, fillOpacity: 1, weight: 2 }).addTo(map).bindTooltip(`${st.label || "Stop"} · ${fmtDurMin(st.minutes)}`);
+      });
+      (t.speeding || []).forEach((e) => Leaflet.circleMarker([e.lat, e.lon], { radius: 6, color: "#fff", fillColor: "#C07A00", fillOpacity: 1, weight: 2 }).addTo(map).bindTooltip(`${e.maxKmh} km/h`));
+      const p0 = pings[0];
+      markerRef.current = Leaflet.marker([p0.lat, p0.lon], { icon: Leaflet.divIcon({ className: "", html: `<div style="background:#2B3990;color:#fff;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:700 13px system-ui;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35)">🚚</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(map);
+      if (bounds.length) map.fitBounds(Leaflet.latLngBounds(bounds).pad(0.12));
+      mapRef.current = map;
+      setTimeout(() => { try { map.invalidateSize(); } catch { /* removed */ } }, 120);
+    } catch { /* leaflet failed — the lists below still work */ }
+    return () => { if (map) map.remove(); mapRef.current = null; markerRef.current = null; };
+  }, [key]);   // eslint-disable-line
+  useEffect(() => { const p = pings[pos]; if (p && markerRef.current) { try { markerRef.current.setLatLng([p.lat, p.lon]); } catch { /* removed */ } } }, [pos, key]);   // eslint-disable-line
+  if (pings.length < 1) return null;
+  return <div ref={ref} style={{ width: "100%", height: 300, background: "#EAEEF5", borderRadius: 11, border: "1px solid var(--line)", zIndex: 0 }} />;
+}
+
+export function TripReplay({ tripNo }) {
+  const [t, setT] = useState(null), [err, setErr] = useState(null), [pos, setPos] = useState(0), [playing, setPlaying] = useState(false);
+  useEffect(() => { let live = true; setT(null); setErr(null); setPos(0); setPlaying(false); getTripTrack(tripNo).then((r) => { if (live) setT(r); }).catch((e) => { if (live) setErr(e.message); }); return () => { live = false; }; }, [tripNo]);
+  const n = t && t.pings ? t.pings.length : 0;
+  useEffect(() => { if (!playing || !n) return; const id = setInterval(() => setPos((p) => (p + 1 >= n ? (setPlaying(false), p) : p + 1)), 350); return () => clearInterval(id); }, [playing, n]);
+  if (err) return <Note tone="red" title="Couldn't load the trip">{err}</Note>;
+  if (!t) return <div style={{ color: "var(--steel)", padding: 12 }}>Loading the trip…</div>;
+  if (!t.hasTrack) return <Note tone="amber" title="No GPS trail for this trip">Nothing was recorded from the driver's phone on this trip. From app build 209 the route is recorded in the background for the whole delivery.</Note>;
+  const sc = t.scorecard || {};
+  const hhmm = (at) => (at ? String(at).slice(11, 16) : "—");
+  const cur = t.pings[pos] || t.pings[0];
+  const sparse = (sc.gapMin || 0) > 0.3 * Math.max(1, sc.durationMin || 0);
+  const tone = { collected: "#14213D", arrived: "#2B3990", offloaded: "#2F7D3B", note: "#2F7D3B", signed: "#3C9A52", rejected: "#B23B3B", stop_issue: "#B23B3B", stop: "#B4801F", gap: "#B23B3B", speeding: "#C07A00", completed: "#14213D" };
+  const S = ({ label, value, sub, bad }) => (
+    <div style={{ flex: "1 1 30%", minWidth: 96, padding: "8px 6px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10, textAlign: "center" }}>
+      <div className="mono" style={{ fontWeight: 800, fontSize: 15, color: bad ? "var(--red)" : "var(--navy)" }}>{value}</div>
+      <div className="lbl" style={{ marginTop: 2 }}>{label}</div>
+      {sub && <div style={{ fontSize: 10.5, color: "var(--steel)" }}>{sub}</div>}
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 8 }}>
+        <b style={{ color: "var(--navy)" }}>{t.driver || "—"}</b> · {t.truck || "—"} · {t.warehouse} → {(t.destinations || []).map((d) => d.site).join(" → ")} · {t.qty != null ? `${L(t.qty)} L ${t.product}` : t.product}
+        {t.planned && t.planned.km != null && <> · planned <b>{t.planned.km} km</b> <span style={{ fontSize: 10.5 }}>({t.planned.source})</span></>}
+      </div>
+      <ReplayMap t={t} pos={pos} />
+      {/* replay control */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 10px" }}>
+        <button type="button" className="pill" style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => { if (pos >= n - 1) setPos(0); setPlaying((p) => !p); }}>{playing ? "❚❚ Pause" : "▶ Replay"}</button>
+        <input type="range" min={0} max={Math.max(0, n - 1)} value={pos} onChange={(e) => { setPlaying(false); setPos(Number(e.target.value)); }} style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--navy)" }}>{cur ? hhmm(cur.at) : "—"} <span style={{ color: "var(--steel)" }}>{cur && cur.at ? String(cur.at).slice(0, 10) : ""}</span></span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 10 }}>Blue = driven · dashed grey = planned road · grey dots = loading / offloading · <span style={{ color: "#B23B3B", fontWeight: 700 }}>red = stop to explain</span> · <span style={{ color: "#C07A00", fontWeight: 700 }}>orange = speeding</span></div>
+      {sparse && <Note tone="amber" title="GPS trail is incomplete">{fmtDurMin(sc.gapMin)} of this {fmtDurMin(sc.durationMin)} trip has no GPS (the phone was not recording). Distance, speed and deviation below only cover what was recorded.</Note>}
+      {/* scorecard */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <S label="Planned" value={sc.plannedKm != null ? sc.plannedKm + " km" : "—"} sub={sc.plannedSource && sc.plannedSource !== "none" ? sc.plannedSource : undefined} />
+        <S label="Driven (recorded)" value={sc.drivenKm + " km"} sub={sc.extraKm != null && !sparse ? (sc.extraKm > 0 ? `+${sc.extraKm} km over plan` : `${sc.extraKm} km`) : undefined} bad={!sparse && sc.extraKm > 15} />
+        <S label="Duration" value={fmtDurMin(sc.durationMin)} sub={`moving ${fmtDurMin(sc.movingMin)} · stopped ${fmtDurMin(sc.stoppedMin)}`} />
+        <S label="Stops to explain" value={sc.issueStops} sub={sc.longestUnplannedMin ? `longest ${fmtDurMin(sc.longestUnplannedMin)}` : undefined} bad={sc.issueStops > 0} />
+        <S label="Max speed" value={sc.maxKmh ? sc.maxKmh + " km/h" : "—"} sub={sc.speedingCount ? `${sc.speedingCount} speeding run${sc.speedingCount === 1 ? "" : "s"} over ${t.speedLimitKmh}` : `limit ${t.speedLimitKmh}`} bad={sc.speedingCount > 0} />
+        <S label="GPS gaps" value={sc.gapCount} sub={sc.gapMin ? fmtDurMin(sc.gapMin) + " unrecorded" : undefined} bad={sc.gapCount > 0} />
+        <S label="Off planned road" value={sc.deviationCount} sub={sc.maxOffRouteKm ? `up to ${sc.maxOffRouteKm} km off` : undefined} bad={sc.deviationCount > 0} />
+        <S label="Night driving" value={sc.nightMin ? fmtDurMin(sc.nightMin) : "none"} sub="22:00 – 04:00" bad={sc.nightMin > 0} />
+      </div>
+      {/* stops to explain */}
+      {(t.issues || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>Stops to explain</div>
+        {t.issues.map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#8A2B26" }}><b>{x.label}</b> · {hhmm(x.start)}–{hhmm(x.end)} <a href={`https://www.google.com/maps/search/?api=1&query=${x.lat},${x.lon}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--steel)", fontSize: 11 }}>map ↗</a></div>)}
+      </div>}
+      {(t.deviations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>Off the planned road</div>
+        {t.deviations.map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#8A2B26" }}>{hhmm(x.start)}–{hhmm(x.end)} · up to <b>{x.maxOffKm} km</b> off the route{x.place && x.place.name ? ` near ${x.place.name}` : ""} · {x.km} km driven off-route</div>)}
+      </div>}
+      {(t.speeding || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F3D48A", background: "#FFF7E6" }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px", color: "#8A6516" }}>Speeding (over {t.speedLimitKmh} km/h)</div>
+        {t.speeding.map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#7A5410" }}>{hhmm(x.start)}–{hhmm(x.end)} · <b>{x.maxKmh} km/h</b>{x.place && x.place.name ? ` near ${x.place.name}` : ""}</div>)}
+      </div>}
+      {/* dwell per site */}
+      {(t.dwell || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8 }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Time at each site</div>
+        {t.dwell.map((d, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "4px" }}><span style={{ fontWeight: 600, color: "var(--navy)" }}>{d.site}</span><span className="mono" style={{ color: "var(--steel)" }}>arrive → offload done {d.waitMin != null ? fmtDurMin(d.waitMin) : "—"} · offload → note {d.settleMin != null ? fmtDurMin(d.settleMin) : "—"}</span></div>)}
+      </div>}
+      {/* timeline */}
+      <div className="card" style={{ padding: 8 }}>
+        <div className="lbl" style={{ padding: "2px 4px 6px" }}>Timeline</div>
+        {(t.timeline || []).map((e, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "44px 54px 1fr", gap: 8, alignItems: "baseline", padding: "5px 4px", borderTop: i ? "1px solid var(--line)" : "none", fontSize: 12.5 }}>
+            <span className="mono" style={{ color: "var(--steel)" }}>{hhmm(e.at)}</span>
+            <span className="mono" style={{ color: e.sincePrevMin >= 60 ? "#B4801F" : "var(--steel)", fontSize: 11 }}>{i ? "+" + fmtDurMin(e.sincePrevMin) : ""}</span>
+            <span style={{ color: tone[e.kind] || "var(--ink)", fontWeight: e.kind === "stop_issue" || e.kind === "gap" || e.kind === "speeding" ? 700 : 500 }}>{e.label}</span>
+          </div>))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════ TRIP SCORECARDS + COMPARE (items 6 and 10) ═══════════════════════
+export function TripScorecards() {
+  const [w, setW] = useState({ from: "", to: "" });
+  const [d, setD] = useState(null), [err, setErr] = useState(null), [open, setOpen] = useState(null), [view, setView] = useState("trips"), [route, setRoute] = useState(null);
+  const load = () => { setD(null); setErr(null); (w.from && w.to ? getTripScorecards(w.from, w.to) : getTripScorecards(null, null, 14)).then(setD).catch((e) => setErr(e.message)); };
+  useEffect(() => { load(); }, []);   // eslint-disable-line
+  const trips = (d && d.trips) || [];
+  const routes = (() => { const m = {}; for (const t of trips) { const g = (m[t.routeKey] = m[t.routeKey] || { key: t.routeKey, route: t.route, n: 0 }); g.n++; } return Object.values(m).filter((r) => r.n >= 2).sort((a, b) => b.n - a.n); })();
+  const shown = route ? trips.filter((t) => t.routeKey === route) : trips;
+  const km = (v) => (v == null ? "—" : v);
+  const minus = (v) => (v == null ? "—" : fmtDurMin(v));
+  return (
+    <Wrap>
+      <SectionHead title="Trip scorecards" sub="Every collected trip scored from its GPS trail, fuel and delivery notes — compare drivers, trucks and the same route" />
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>From<br /><input type="date" value={w.from} onChange={(e) => setW({ ...w, from: e.target.value })} style={{ padding: 7, border: "1px solid var(--line)", borderRadius: 8 }} /></label>
+        <label style={{ fontSize: 11, color: "var(--steel)" }}>To<br /><input type="date" value={w.to} onChange={(e) => setW({ ...w, to: e.target.value })} style={{ padding: 7, border: "1px solid var(--line)", borderRadius: 8 }} /></label>
+        <button type="button" className="pill" style={{ padding: "8px 14px", fontSize: 12 }} onClick={load}>Show</button>
+        <span style={{ fontSize: 11.5, color: "var(--steel)" }}>{d ? `${trips.length} trips · ${d.tracked} with a GPS trail` : w.from && w.to ? "" : "last 14 days"}</span>
+      </div>
+      <Segmented options={[["trips", "By trip"], ["driver", "By driver"], ["truck", "By truck"], ["compare", "Same route"]]} value={view} onChange={setView} />
+      {err && <Note tone="red" title="Couldn't load">{err}</Note>}
+      {!d && !err && <Panel><div style={{ color: "var(--steel)" }}>Scoring trips…</div></Panel>}
+      {d && (view === "driver" || view === "truck") && (
+        <Panel style={{ padding: 0, overflow: "hidden", marginTop: 10 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>{view === "driver" ? "Driver" : "Truck"}</Th><Th right>Trips</Th><Th right>Tracked</Th><Th right>Planned km</Th><Th right>Driven km</Th><Th right>Extra km</Th><Th right>Stops to explain</Th><Th right>Speeding</Th><Th right>GPS gaps</Th><Th right>Night</Th><Th right>Max km/h</Th><Th right>Fuel drawn L</Th><Th right>km/L</Th><Th right>Delivery loss</Th></tr></thead>
+              <tbody>{(view === "driver" ? d.byDriver : d.byTruck).map((g) => (
+                <tr key={g.name} style={{ borderTop: "1px solid var(--line)" }}>
+                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{g.name}</Td><Td right>{g.trips}</Td><Td right>{g.tracked}</Td><Td right>{g.plannedKm}</Td><Td right>{g.drivenKm}</Td>
+                  <Td right style={{ color: g.extraKm > 20 ? "var(--red)" : "var(--ink)" }}>{g.extraKm}</Td>
+                  <Td right style={{ fontWeight: 700, color: g.issueStops > 0 ? "var(--red)" : "var(--ink)" }}>{g.issueStops}</Td>
+                  <Td right style={{ color: g.speeding > 0 ? "#C07A00" : "var(--ink)" }}>{g.speeding}</Td><Td right>{g.gaps}</Td><Td right>{g.nightMin ? fmtDurMin(g.nightMin) : "—"}</Td><Td right>{g.maxKmh || "—"}</Td>
+                  <Td right>{L(g.drawnL)}</Td><Td right>{g.kmPerL ?? "—"}</Td><Td right>{L(g.lossL)} L{g.lossPct != null ? ` (${g.lossPct}%)` : ""}</Td>
+                </tr>))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {d && view === "compare" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "var(--steel)", marginBottom: 6 }}>Routes driven more than once in this window — pick one to see each run side by side.</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {routes.length === 0 && <span style={{ fontSize: 12, color: "var(--steel)" }}>No repeated routes yet.</span>}
+            {routes.map((r) => <button key={r.key} type="button" className="disp" onClick={() => setRoute(route === r.key ? null : r.key)} style={{ border: `1.5px solid ${route === r.key ? "var(--navy)" : "var(--line)"}`, background: route === r.key ? "var(--navy)" : "#fff", color: route === r.key ? "#fff" : "var(--navy)", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{r.route} · {r.n}</button>)}
+          </div>
+        </div>
+      )}
+      {d && (view === "trips" || (view === "compare" && route)) && (
+        <Panel style={{ padding: 0, overflow: "hidden", marginTop: 10 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trip</Th><Th>Date</Th><Th>Driver</Th><Th>Truck</Th><Th>Route</Th><Th right>Planned</Th><Th right>Driven</Th><Th right>Duration</Th><Th right>Stops to explain</Th><Th right>Max km/h</Th><Th right>Gaps</Th><Th right>Fuel appr/drawn</Th><Th right>Loaded</Th><Th right>Received</Th><Th right>Loss</Th></tr></thead>
+              <tbody>{shown.map((t) => (
+                <tr key={t.tripNo} onClick={() => setOpen(t)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: t.issueStops > 0 ? "#FFF7F5" : "#fff" }}>
+                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{t.tripNo}{!t.tracked && <span style={{ color: "var(--steel)", fontWeight: 400 }}> · no GPS</span>} ›</Td><Td>{fmtD(t.date)}</Td><Td>{t.driver || "—"}</Td><Td>{t.truck || "—"}</Td><Td>{t.route}</Td>
+                  <Td right>{km(t.plannedKm)}</Td><Td right>{km(t.drivenKm)}</Td><Td right>{minus(t.durationMin)}</Td>
+                  <Td right style={{ fontWeight: 700, color: t.issueStops > 0 ? "var(--red)" : "var(--ink)" }}>{t.issueStops ?? "—"}{t.longestUnplannedMin ? ` (${fmtDurMin(t.longestUnplannedMin)})` : ""}</Td>
+                  <Td right style={{ color: t.speedingCount > 0 ? "#C07A00" : "var(--ink)" }}>{t.maxKmh || "—"}</Td><Td right>{t.gapCount ?? "—"}</Td>
+                  <Td right>{t.fuelAllocatedL}/{t.fuelDrawnL}</Td><Td right>{L(t.loadedL)}</Td><Td right>{L(t.receivedL)}</Td><Td right style={{ color: t.lossL > 150 ? "var(--red)" : "var(--ink)" }}>{L(t.lossL)}</Td>
+                </tr>))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      {open && <DetailSheet title={`Replay · ${open.tripNo}`} sub={`${open.driver || "—"} · ${open.truck || "—"} · ${fmtD(open.date)}`} onClose={() => setOpen(null)}><TripReplay tripNo={open.tripNo} /></DetailSheet>}
     </Wrap>
   );
 }
