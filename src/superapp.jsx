@@ -589,6 +589,19 @@ export function SiteSubmit({ me }) {
                   style={{ width: "100%", padding: "9px 10px", border: "1px solid var(--line)", borderRadius: 10, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }} />
               </div>
             </div>
+            {/* Say exactly which hours this (shift, date) means. The recurring confusion (Masvingo,
+                Beitbridge, Marondera, Oct 2026): the NIGHT shift is dated by the MORNING it ends, and
+                morning readings are the night close, not a day shift. */}
+            <div className="mono" style={{ fontSize: 11.5, color: "var(--ink)", marginTop: 8, lineHeight: 1.45 }}>
+              {shift === "night"
+                ? <>Night shift: <b>18:00 on {fmtD(addDaysISO(date, -1))}</b> → <b>06:00 on {fmtD(date)}</b>. Readings taken this morning, {fmtD(date)}.</>
+                : <>Day shift: <b>06:00 → 18:00 on {fmtD(date)}</b>. Readings taken at 18:00 on {fmtD(date)}.</>}
+            </div>
+            {date === todayISO() && shift !== naturalShift() && (
+              <div style={{ fontSize: 11.5, color: "#B23B3B", marginTop: 5, lineHeight: 1.45 }}>
+                The shift that just ended is the <b>{naturalShift() === "night" ? "Night" : "Day"}</b> shift. Choose {naturalShift() === "night" ? "Night if these are this morning’s readings" : "Day if these are this evening’s readings"} — the previous reading shown below follows the shift you pick.
+              </div>
+            )}
             {which === "cash" && date === todayISO() && <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 8 }}>Cash is for the trading day that ended — this targets <b>{fmtD(cashDate)}</b>.</div>}
             {date !== todayISO() && <div style={{ fontSize: 11.5, color: "#B8860B", marginTop: 6, lineHeight: 1.45 }}>Correcting an earlier day — a locked submission only reopens if a manager has approved an unlock for it.</div>}
           </div>
@@ -690,7 +703,11 @@ const sortTanks = (tanks) => [...(tanks || [])].sort(byProduct);
 // are preloaded; the user changes only what moved.
 function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, onNext, nextLabel, lock }) {
   const lastByLabel = Object.fromEntries((config.lastStock || []).map((t) => [t.label, t.litres]));
-  const [tanks, setTanks] = useState(sortTanks(config.tanks).map((t) => ({ label: t.label, product: t.product, litres: lastByLabel[t.label] ?? "" })));
+  // Tank reading boxes start EMPTY (the attendant must dip and type the CURRENT level) — the prior
+  // reading shows only as the grey "was X" reference below, exactly like the pump meters. Pre-filling
+  // the box with the previous dip made attendants just tap submit, so stock sat frozen for days and
+  // looked like "yesterday's stock" (owner 2026-10-06 "the cell prefilling is confusing people, stop it").
+  const [tanks, setTanks] = useState(sortTanks(config.tanks).map((t) => ({ label: t.label, product: t.product, litres: "" })));
   // Pump meter readings (sites with configured pumps only). Enter once: each
   // pump's OPENING is seeded from its last submitted CLOSING — the attendant
   // types only the closing meter. Litres = closing − opening (shown live; the
