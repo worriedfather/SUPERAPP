@@ -2,54 +2,99 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DA OPS — Privacy Policy</title>
 <style>
-  :root { --navy:#14213D; --ink:#1B2A4A; --steel:#5B6B84; --line:#E3E8F2; --lime:#6BC048; }
-  body { margin:0; background:#F6F8FC; color:var(--ink); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  main { max-width:720px; margin:0 auto; padding:40px 22px 64px; }
-  h1 { font-size:28px; margin:0 0 4px; color:var(--navy); letter-spacing:.01em; }
-  .sub { color:var(--steel); margin:0 0 28px; font-size:14px; }
-  h2 { font-size:17px; margin:28px 0 8px; color:var(--navy); text-transform:uppercase; letter-spacing:.06em; }
-  p, li { max-width:65ch; }
-  ul { padding-left:20px; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:22px 24px; }
-  .tag { display:inline-block; background:#EEF7E8; color:#2F6B1C; border-radius:20px; padding:2px 10px; font-size:12px; font-weight:700; }
+body{font-family:system-ui,Arial,sans-serif;max-width:760px;margin:0 auto;padding:28px 16px;color:#1B2A4A;line-height:1.55;background:#fff}
+h1{font-size:24px}h2{font-size:17px;margin-top:26px}small{color:#5B6B84}code{background:#f2f1ec;padding:1px 5px;border-radius:4px}
+ul{padding-left:20px}li{margin:6px 0}
 </style>
 </head>
 <body>
-<main>
-  <h1>DA OPS — Privacy Policy</h1>
-  <p class="sub">Daniel Aguiar Motors (Zimbabwe) · Effective 11 September 2026</p>
+<h1>DA OPS — Privacy Policy</h1>
+<p><small>Last updated: 15 October 2026 · Controller: Daniel Aguiar Motors (DA Motors), Harare, Zimbabwe · App package: <code>zw.co.damotors.fuel</code></small></p>
 
-  <div class="card">
-    <p><span class="tag">Internal operations app</span></p>
-    <p>DA OPS is an operations app used by the staff, drivers and site teams of Daniel Aguiar Motors ("DA Motors", "we") to run fuel retail and haulage operations: fuel requests and approvals, deliveries, site submissions, cash handling and vehicle tracking. It is not a consumer product and is only available to people we have given a login to.</p>
+<p>DA OPS is a private operational tool for DA Motors staff: fuel-tanker drivers, service-station
+supervisors, logistics, finance and management. It is not intended for the general public. This policy
+explains what the app collects, why, and the choices you have.</p>
 
-    <h2>What the app collects</h2>
-    <ul>
-      <li><b>Identity and login.</b> Your name, staff role, site or vehicle assignment, and a login PIN (stored only as a one-way hash). Optionally a Google account email if you sign in with Google, and a device identifier that binds a driver login to one phone.</li>
-      <li><b>Location.</b> Only when you use a location-based feature: confirming you are at a fuelling station when raising a fuel request, and background trip tracking from a fuel request until the delivery is offloaded. Location is not collected outside those operations.</li>
-      <li><b>Photos.</b> Photographs you take in the app of an odometer, a fuel tank, a delivery note or a deposit slip. These are attached to the record they evidence.</li>
-      <li><b>Operational records you enter.</b> Fuel, delivery, dip, price, cash and shift data you submit as part of your job.</li>
-      <li><b>Notifications.</b> A push-notification token so the app can alert you to items needing your action.</li>
-    </ul>
+<h2>Who can use it</h2>
+<p>Access requires a username (or fuel-card number) and PIN issued by DA Motors. There is no
+self-registration. Driver accounts are bound to one handset; signing in from another phone requires a
+manager's approval.</p>
 
-    <h2>How it is used</h2>
-    <p>Solely to operate, evidence and audit DA Motors' fuel and logistics operations — approving fuel, reconciling deliveries and cash, tracking trips, and notifying you of work that needs your action. Records are kept in an append-only ledger so that history cannot be silently altered.</p>
+<h2>What we collect</h2>
+<ul>
+  <li><b>Account &amp; identity:</b> your name, staff/driver username or fuel-card number, role, your
+      assigned truck, and a one-way hashed PIN (we never store your PIN in readable form).</li>
+  <li><b>Location — station check:</b> when you raise a fuel request at a service station, your device
+      location is read once, at that moment, to confirm you are at the station you selected.</li>
+  <li><b>Location — delivery route recording (drivers only):</b> when you start a fuel delivery trip
+      (by raising the trip's fuel request or confirming collection at the depot), the app records your
+      position periodically, roughly every 30 seconds or 50 metres, until the last drop is offloaded and the
+      trip completes. Recording continues while the phone is in your pocket or the app is in the background.
+      While it runs, Android shows a persistent notification, "DA OPS — trip in progress", so you always
+      know. Recording stops automatically when the trip completes or is cancelled, and you can stop it by
+      ending the trip. No location is recorded outside an active delivery trip. The route is used to
+      confirm deliveries, estimate arrival times for the receiving station, review stops and detours, and
+      resolve disputes about fuel losses in transit.</li>
+  <li><b>Camera / photos:</b> photographs you take of an odometer, a delivery note or a tank reading, as
+      evidence for the transaction you are submitting.</li>
+  <li><b>Operational data you submit:</b> fuel requests, approvals, deliveries, warehouse and site stock,
+      pump readings, prices, sales, cash declarations and reconciliations, with timestamps.</li>
+  <li><b>Device &amp; usage basics:</b> device identifier (for the one-handset binding), app version,
+      push-notification token, screens opened and actions taken in the app, and standard technical logs
+      (request time, IP address) kept for security and audit.</li>
+</ul>
 
-    <h2>Sharing</h2>
-    <p>We do not sell or rent personal data, and we do not share it with advertisers. Data is processed on DA Motors' own systems and with the service providers needed to run the app (hosting, and Firebase Cloud Messaging for notifications). Location and map distances may be computed with Google Maps / OpenStreetMap routing services.</p>
+<h2>Why we collect it</h2>
+<p>Solely to operate DA Motors' fuel and site operations: authorising and recording fuel, verifying
+presence at a station, tracking deliveries from depot to station, managing stock, cash and pricing, and
+producing management reporting. Records are kept as a tamper-evident, append-only ledger for audit and
+accountability. We do not use your data for advertising or profiling, and we do not sell it.</p>
 
-    <h2>Retention</h2>
-    <p>Operational records are retained for as long as they are needed for accounting, audit and regulatory purposes. Location pings for a trip are kept with that trip's record.</p>
+<h2>How it is shared</h2>
+<p>Data stays within DA Motors' own systems and is processed on a DA Motors-controlled server. Delivery
+routes are visible to DA Motors logistics, operations and management staff, and to the receiving station
+as an estimated arrival time. Service providers that process limited data on our behalf:</p>
+<ul>
+  <li><b>Cloudflare</b> — routes traffic securely to our server.</li>
+  <li><b>Google / Firebase Cloud Messaging</b> — delivers push notifications using a device token.</li>
+  <li><b>Google Maps / OpenStreetMap</b> — route distance and map display; trip coordinates may be sent to
+      these services to compute a route.</li>
+</ul>
+<p>We may disclose records where the law requires it.</p>
 
-    <h2>Your choices</h2>
-    <p>You can decline location, camera or notification permissions in your phone's settings; the features that need them will then be unavailable. To correct your details or ask about your data, contact your DA OPS administrator at DA Motors.</p>
+<h2>Retention</h2>
+<p>Operational records, including delivery routes, are retained as business and audit records for as long
+as DA Motors requires them. Photographs are stored with their transaction. Usage logs are kept for security
+review. Your account is deactivated when you leave DA Motors; records you created remain in the ledger.</p>
 
-    <h2>Contact</h2>
-    <p>Daniel Aguiar Motors, Harare, Zimbabwe — via your DA OPS administrator or the support contact published on the app's store listing.</p>
-  </div>
-</main>
+<h2>Your choices</h2>
+<ul>
+  <li>You may decline the camera or location permission; some actions (a station fuel request, starting a
+      delivery trip) then cannot be completed.</li>
+  <li>Route recording runs only during a delivery trip you started, and ends when the trip ends.</li>
+  <li>You may request correction of master data (for example your name) via your administrator, and you
+      may ask what data we hold about you.</li>
+  <li>To deactivate an account or request deletion of personal data that is not part of the audit ledger,
+      contact us at the address below.</li>
+</ul>
+
+<h2>Security</h2>
+<p>Traffic is encrypted in transit (HTTPS). PINs are stored only as one-way hashes. Driver accounts are
+bound to a single handset. The record store is append-only and cryptographically chained so tampering is
+detectable. Access to the server is restricted to DA Motors systems staff.</p>
+
+<h2>Children</h2>
+<p>DA OPS is a workplace tool for DA Motors employees and contractors. It is not directed at, and must not
+be used by, anyone under 18.</p>
+
+<h2>Changes</h2>
+<p>We will update this page when the app's data handling changes and show the new date at the top.</p>
+
+<h2>Contact</h2>
+<p>Daniel Aguiar Motors — DA OPS administrator, Harare, Zimbabwe.<br>
+Email: <a href="mailto:tinashejsevera@gmail.com">tinashejsevera@gmail.com</a></p>
 </body>
 </html>
