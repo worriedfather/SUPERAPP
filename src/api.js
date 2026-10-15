@@ -34,6 +34,10 @@ let me = JSON.parse(localStorage.getItem("da_me") || "null");
 
 export const currentUser = () => me;
 export const signedIn = () => !!token;
+// The bearer token + app headers, for the ONE caller that must talk to the server
+// from outside this module: the native GPS service (tripTracker.js) posts pings
+// itself so the route keeps recording after the WebView is gone.
+export const nativeAuthHeaders = () => (token ? { Authorization: `Bearer ${token}`, ...APP_HEADERS } : null);
 
 /* ---------------- Offline support ----------------------------------------
    The forecourts and highway have patchy signal, and the server occasionally
