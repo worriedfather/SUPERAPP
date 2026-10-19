@@ -750,7 +750,8 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   };
   const pumpTest = (p) => { const t = Number(p.test); return p.test !== "" && Number.isFinite(t) && t >= 0 ? t : 0; };
   const pumpLitres = (p) => { const m = pumpMoved(p); if (m == null) return null; const s = +(m - pumpTest(p)).toFixed(2); return s < 0 ? null : s; };
-  const pumpTotals = pumps.reduce((acc, p) => {
+  const pumpsStale = !!(config && config.pumpsStale);   // previous meter reading is not the shift before this one
+  const pumpTotals = pumpsStale ? {} : pumps.reduce((acc, p) => {
     const l = pumpLitres(p);
     if (l == null) return acc;
     const k = p.product === "Diesel" ? "dieselSales" : (p.product === "ULP" || p.product === "Unleaded") ? "ulpSales" : "blendSales";
@@ -828,6 +829,11 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
             <Num style={{ maxWidth: 150 }} value={t.litres} onChange={(v) => setTank(i, v)} placeholder="litres" />
           </div>
         ))}
+        {hasPumps && pumpsStale && (
+          <Note tone="amber" title={`Previous meter readings are from ${config.lastPumpsFrom ? fmtD(config.lastPumpsFrom.date) + " " + config.lastPumpsFrom.shift : "an earlier shift"} — not the shift before this one`}>
+            The shifts in between were submitted without pump readings, so the difference on the meters covers more than one shift. Enter today's meters as they are (they stay correct from the next shift), and <b>type this shift's sales yourself</b> — they are not prefilled from the meters this time.
+          </Note>
+        )}
         {hasPumps && <>
           <div style={{ height: 8 }} />
           <span className="lbl">Pump readings (meter litres)</span>
