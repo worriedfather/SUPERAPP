@@ -8628,6 +8628,13 @@ export function DriverRecovery() {
                       Recovery period: {fmtD(x.date)} → {x.windowOpen ? "now (open until the next delivery)" : fmtD(x.windowTo)} · {x.recoveryDips} dip{x.recoveryDips === 1 ? "" : "s"}
                     </div>
                   )}
+                  {/* day by day — the same single-day figures the site quotes; the delivery day is shown but not netted */}
+                  {x.loss > 0 && Array.isArray(x.days) && x.days.length > 0 && (
+                    <div className="mono" style={{ marginTop: 4, fontSize: 10.5, color: "var(--steel)", lineHeight: 1.6 }}>
+                      Tank day by day: {x.days.map((d, i) => <span key={d.date} style={{ marginRight: 8, color: d.gainL > 0 ? "#2C6B3F" : d.gainL < 0 ? "#8A2B26" : "var(--steel)", fontWeight: d.deliveryDay ? 700 : 400 }}>{fmtD(d.date).replace(/ 20\d\d$/, "")} {d.gainL > 0 ? "+" : ""}{L(d.gainL)}{d.deliveryDay ? " (delivery day)" : ""}</span>)}
+                      <span>· net since the day after: <b>{x.recoveredL > 0 ? "+" : ""}{L(x.recoveredL)} L</b></span>
+                    </div>
+                  )}
                 </Panel>
               );
             })}
