@@ -4397,7 +4397,7 @@ export function RevenueRecon() {
                   <Th>Site</Th><Th right>DA rev $</Th><Th right>Sage $</Th><Th right>Gap</Th><Th right>Gap %</Th></tr></thead>
                 <tbody>{d.rows.map((r) => (
                   <tr key={r.siteId} style={{ borderTop: "1px solid var(--line)" }}>
-                    <Td>{r.site}{!r.inApp && <span style={{ fontSize: 10, color: "var(--steel)" }}> · no app sales</span>}{!r.inSage && <span style={{ fontSize: 10, color: "#B26A00" }}> · app-only</span>}{r.petroCommission > 0 && <span style={{ fontSize: 10, color: "var(--steel)" }}> · petro {$(r.petroPump)}@comm</span>}</Td>
+                    <Td>{r.site}{!r.inApp && <span style={{ fontSize: 10, color: "var(--steel)" }}> · no app sales</span>}{!r.inSage && <span style={{ fontSize: 10, color: "#B26A00" }}> · app-only</span>}{r.petroCommission > 0 && <span style={{ fontSize: 10, color: "var(--steel)" }}> · petro {$(r.petroPump)}@comm</span>}{r.valuedDays > 0 && <span title={`${r.valuedDays} of ${r.appDays} days valued from the filed litres at that day's pump price because the tender dollars were ${r.valuedHighDays > r.valuedLowDays ? "implausibly high (cumulative / double entry)" : "missing or partial"}: ${$(r.valuedUsd)}`} style={{ fontSize: 10, color: r.valuedDays >= r.appDays / 2 ? "#B26A00" : "var(--steel)" }}> · {r.valuedDays}d from litres</span>}</Td>
                     <Td right>{$(r.app)}</Td>
                     <Td right>{r.inSage ? $(r.sage) : <span style={{ color: "var(--steel)" }}>—</span>}</Td>
                     <Td right style={{ color: toneFor(r.gapPct) }}>{r.gapPct == null ? "—" : (r.gap > 0 ? "+" : "") + $(r.gap)}</Td>
