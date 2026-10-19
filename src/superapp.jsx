@@ -6716,6 +6716,7 @@ export function DeliverySubmit({ me, initial, onLeave }) {
       <Panel>
         <form onSubmit={send}>
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+          {me && me.kind === "driver" && !done && <Note tone="blue" title="Bulk-customer deliveries">As a driver you file the delivery note at a <b>bulk customer</b> (no site supervisor there). Pick the trip, record the delivered quantity and submit — it needs no site sign-off. At a normal DA station the site supervisor files the note; you just approve it.</Note>}
           {trips.length === 0
             ? <Note tone="amber" title="No scheduled trip to deliver against">{me && me.site ? <>No active delivery trip is scheduled to <b>{me.site}</b> right now, so there's nothing to file a note against. If a truck is here: ask <b>logistics</b> to schedule (or re-open) the trip to {me.site}. If you cover a different site, check your login is set to the right one.</> : <>A delivery must be planned first — logistics schedules the trip, then it appears here to deliver against. If a truck is here, ask logistics to schedule the trip.</>}</Note>
             : locked
@@ -6988,7 +6989,7 @@ export function ReconSubmit({ me }) {
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: 1 }}><Field label="Warehouse">
-              <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>{["Msasa", "Feruka", "Bulawayo", "Chisumbanje"].map((w) => <option key={w}>{w}</option>)}</select></Field></div>
+              <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>{["Msasa", "Feruka", "Bulawayo"].map((w) => <option key={w}>{w}</option>)}</select></Field></div>
             <div style={{ flex: 1 }}><Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field></div>
           </div>
           <LineGroup title="Opening (auto — yesterday's closing)" rows={opening} setRows={setOpening} cols={[["product", "Product", "product"], ["litres", "Litres", "num"]]} make={emptyLine} />
@@ -7827,8 +7828,8 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
           {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 150px" }}><Field label="From warehouse"><Picker value={f.warehouse}
-              onChange={(v) => setF((s) => ({ ...s, warehouse: v, product: v === "Chisumbanje" ? "Ethanol" : s.product }))}
-              options={["Msasa", "Feruka", "Chisumbanje"]} /></Field></div>
+              onChange={(v) => setF((s) => ({ ...s, warehouse: v }))}
+              options={["Msasa", "Feruka"]} /></Field></div>
             <div style={{ flex: "1 1 150px" }}><Field label="Product"><Picker value={f.product} onChange={set("product")} options={f.warehouse === "Chisumbanje" ? ["Ethanol"] : ["Blend", "Diesel", "ULP"]} /></Field></div>
           </div>
           {whStock != null && <div className="mono" style={{ fontSize: 11, color: overStock ? "var(--red)" : "var(--steel)", marginTop: -6, marginBottom: 10 }}>{isBlendLoad ? <>{f.warehouse} can load <b>{L(whStock)} L</b> of Blend · limited by {limitedBy === "Ethanol" ? "ethanol" : "ULP"}</> : <>{f.warehouse} {f.product} available: <b>{L(whStock)} L</b></>}{overStock ? " — drops exceed this" : ""}</div>}
@@ -7859,7 +7860,7 @@ export function ScheduleDelivery({ me, drivers = [], horses = [], readOnly = fal
                 ? <div style={{ flex: 2, minWidth: 0 }}><div style={{ padding: "9px 11px", borderRadius: 10, background: "#EEF3FF", border: "1px solid #C7D2F0", fontSize: 13, fontWeight: 700, color: "var(--navy)" }}>🛢️ {d.site} · pickup</div></div>
                 : <div style={{ flex: 2, minWidth: 0 }}><Picker value={d.site} onChange={(v) => setDrop(i, "site", v)} placeholder={f.product === "Ethanol" ? "Depot…" : "Site…"} title={f.product === "Ethanol" ? "Destination depot" : "Drop site"}
                   options={f.product === "Ethanol"
-                    ? ["Msasa", "Feruka", "Chisumbanje"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
+                    ? ["Msasa", "Feruka"].filter((w) => w !== f.warehouse).map((w) => ({ value: w, label: `${w} depot` }))
                     : sites.map((s) => ({ value: s.name, label: s.pool ? `${s.name} · staging pool` : s.bulk ? `${s.name} · bulk customer` : s.name }))} /></div>}
               <input style={{ flex: 1 }} inputMode="decimal" placeholder={d.collect ? "ethanol L (opt)" : "litres"} value={d.qty} onChange={(e) => setDrop(i, "qty", e.target.value.replace(/[^\d.]/g, ""))} />
               {(drops.length > 1 || d.collect) && <button type="button" className="pill-ghost" style={{ padding: "8px 11px" }} onClick={() => setDrops((ds) => ds.filter((_, j) => j !== i))}>✕</button>}
@@ -9513,6 +9514,21 @@ export function JourneyTracking({ initialTrip = null } = {}) {
           })()}
         </>
       )}
+      {(d.stale || []).length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "#8A6D1E", marginBottom: 4 }}>⚠ Stuck — not updating ({d.stale.length})</div>
+          <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 8 }}>Collected but the GPS has gone quiet — not a live journey. Tap to replay; close or chase these from <b>All trips</b>.</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {d.stale.map((t) => (
+              <button key={t.tripNo} type="button" onClick={() => setReplay(t.tripNo)}
+                style={{ border: "1px solid #F0E0B0", background: "#FEF7E6", color: "#6B5410", borderRadius: 10, padding: "7px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                {t.tripNo} · {t.truck}
+                <div style={{ fontWeight: 400, fontSize: 10, opacity: .85 }}>🔇 {t.quietMin != null ? `quiet ${fmtDurMin(t.quietMin)}` : "no GPS"} · {t.progress}% delivered · {(t.drops || []).map((x) => x.site).join(", ")}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </Wrap>
   );
 }
@@ -9754,7 +9770,8 @@ export function TripReplay({ tripNo }) {
   const hhmm = (at) => (at ? String(at).slice(11, 16) : "—");
   const cur = t.pings[pos] || t.pings[0];
   const sparse = (sc.gapMin || 0) > 0.3 * Math.max(1, sc.durationMin || 0);
-  const tone = { collected: "#14213D", arrived: "#2B3990", offloaded: "#2F7D3B", note: "#2F7D3B", signed: "#3C9A52", rejected: "#B23B3B", stop_issue: "#B23B3B", stop: "#B4801F", gap: "#B23B3B", speeding: "#C07A00", completed: "#14213D" };
+  const unrel = sc.reliable === false;   // GPS coverage below the scoring threshold — don't judge distance/stops/speed/route
+  const tone = { collected: "#14213D", arrived: "#2B3990", arrived_suspect: "#B4801F", offloaded: "#2F7D3B", note: "#2F7D3B", signed: "#3C9A52", rejected: "#B23B3B", stop_issue: "#B23B3B", stop: "#B4801F", fuel: "#2B6CB0", gap: "#B23B3B", speeding: "#C07A00", completed: "#14213D" };
   const S = ({ label, value, sub, bad }) => (
     <div style={{ flex: "1 1 30%", minWidth: 96, padding: "8px 6px", background: "#fff", border: "1px solid var(--line)", borderRadius: 10, textAlign: "center" }}>
       <div className="mono" style={{ fontWeight: 800, fontSize: 15, color: bad ? "var(--red)" : "var(--navy)" }}>{value}</div>
@@ -9776,26 +9793,28 @@ export function TripReplay({ tripNo }) {
         <span className="mono" style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--navy)" }}>{cur ? hhmm(cur.at) : "—"} <span style={{ color: "var(--steel)" }}>{cur && cur.at ? String(cur.at).slice(0, 10) : ""}</span></span>
       </div>
       <div style={{ fontSize: 11, color: "var(--steel)", marginBottom: 10 }}>Blue = driven · dashed grey = planned road · grey dots = loading / offloading · <span style={{ color: "#B23B3B", fontWeight: 700 }}>red = stop to explain</span> · <span style={{ color: "#C07A00", fontWeight: 700 }}>orange = speeding</span></div>
-      {sparse && <Note tone="amber" title="GPS trail is incomplete">{fmtDurMin(sc.gapMin)} of this {fmtDurMin(sc.durationMin)} trip has no GPS (the phone was not recording). Distance, speed and deviation below only cover what was recorded.</Note>}
+      {unrel
+        ? <Note tone="amber" title="GPS too sparse to score this trip">{sc.unreliableReason || "The phone barely recorded this trip, so distance, stops, speed and route deviation can't be judged."}</Note>
+        : sparse && <Note tone="amber" title="GPS trail is incomplete">{fmtDurMin(sc.gapMin)} of this {fmtDurMin(sc.durationMin)} trip has no GPS (the phone was not recording). Distance, speed and deviation below only cover what was recorded.</Note>}
       {/* scorecard */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <S label="Planned" value={sc.plannedKm != null ? sc.plannedKm + " km" : "—"} sub={sc.plannedSource && sc.plannedSource !== "none" ? sc.plannedSource : undefined} />
-        <S label="Driven (recorded)" value={sc.drivenKm + " km"} sub={sc.extraKm != null && !sparse ? (sc.extraKm > 0 ? `+${sc.extraKm} km over plan` : `${sc.extraKm} km`) : undefined} bad={!sparse && sc.extraKm > 15} />
+        <S label="Driven (recorded)" value={unrel ? "—" : sc.drivenKm + " km"} sub={unrel ? "not judged" : (sc.extraKm != null && !sparse ? (sc.extraKm > 0 ? `+${sc.extraKm} km over plan` : `${sc.extraKm} km`) : undefined)} bad={!unrel && !sparse && sc.extraKm > 15} />
         <S label="Duration" value={fmtDurMin(sc.durationMin)} sub={`moving ${fmtDurMin(sc.movingMin)} · stopped ${fmtDurMin(sc.stoppedMin)}`} />
-        <S label="Stops to explain" value={sc.issueStops} sub={sc.longestUnplannedMin ? `longest ${fmtDurMin(sc.longestUnplannedMin)}` : undefined} bad={sc.issueStops > 0} />
-        <S label="Max speed" value={sc.maxKmh ? sc.maxKmh + " km/h" : "—"} sub={sc.speedingCount ? `${sc.speedingCount} speeding run${sc.speedingCount === 1 ? "" : "s"} over ${t.speedLimitKmh}` : `limit ${t.speedLimitKmh}`} bad={sc.speedingCount > 0} />
-        <S label="GPS gaps" value={sc.gapCount} sub={sc.gapMin ? fmtDurMin(sc.gapMin) + " unrecorded" : undefined} bad={sc.gapCount > 0} />
-        <S label="Off planned road" value={sc.deviationCount} sub={sc.maxOffRouteKm ? `up to ${sc.maxOffRouteKm} km off` : undefined} bad={sc.deviationCount > 0} />
+        <S label="Stops to explain" value={unrel ? "—" : sc.issueStops} sub={unrel ? "not judged" : (sc.longestUnplannedMin ? `longest ${fmtDurMin(sc.longestUnplannedMin)}` : undefined)} bad={!unrel && sc.issueStops > 0} />
+        <S label="Max speed" value={unrel ? "—" : (sc.maxKmh ? sc.maxKmh + " km/h" : "—")} sub={unrel ? "not judged" : (sc.speedingCount ? `${sc.speedingCount} speeding run${sc.speedingCount === 1 ? "" : "s"} over ${t.speedLimitKmh}` : `limit ${t.speedLimitKmh}`)} bad={!unrel && sc.speedingCount > 0} />
+        <S label="GPS coverage" value={sc.coveragePct != null ? sc.coveragePct + "%" : (sc.gapCount || 0) + " gaps"} sub={sc.gapMin ? fmtDurMin(sc.gapMin) + " unrecorded" : (sc.gapCount ? `${sc.gapCount} gap${sc.gapCount === 1 ? "" : "s"}` : "full trail")} bad={unrel || (sc.coveragePct != null && sc.coveragePct < 70) || sc.gapCount > 0} />
+        <S label="Off planned road" value={unrel ? "—" : sc.deviationCount} sub={unrel ? "not judged" : (sc.maxOffRouteKm ? `up to ${sc.maxOffRouteKm} km off` : undefined)} bad={!unrel && sc.deviationCount > 0} />
         <S label="Night driving" value={sc.nightMin ? fmtDurMin(sc.nightMin) : "none"} sub="22:00 – 04:00" bad={sc.nightMin > 0} />
       </div>
-      {/* stops to explain */}
-      {(t.issues || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+      {/* stops to explain — suppressed when GPS is too sparse to judge */}
+      {!unrel && (t.issues || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
         <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>Stops to explain</div>
         {t.issues.map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#8A2B26" }}><b>{x.label}</b> · {hhmm(x.start)}–{hhmm(x.end)} <a href={`https://www.google.com/maps/search/?api=1&query=${x.lat},${x.lon}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--steel)", fontSize: 11 }}>map ↗</a></div>)}
       </div>}
-      {(t.deviations || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
+      {!unrel && (t.deviations || []).filter((x) => !x.fuel).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F0C9C0", background: "#FFF7F5" }}>
         <div className="lbl" style={{ padding: "2px 4px 6px", color: "var(--red)" }}>Off the planned road</div>
-        {t.deviations.map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#8A2B26" }}>{hhmm(x.start)}–{hhmm(x.end)} · up to <b>{x.maxOffKm} km</b> off the route{x.place && x.place.name ? ` near ${x.place.name}` : ""} · {x.km} km driven off-route</div>)}
+        {t.deviations.filter((x) => !x.fuel).map((x, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px", color: "#8A2B26" }}>{hhmm(x.start)}–{hhmm(x.end)} · up to <b>{x.maxOffKm} km</b> off the route{x.place && x.place.name ? ` near ${x.place.name}` : ""} · {x.km} km driven off-route</div>)}
       </div>}
       {(t.speeding || []).length > 0 && <div className="card" style={{ padding: 8, marginBottom: 8, border: "1px solid #F3D48A", background: "#FFF7E6" }}>
         <div className="lbl" style={{ padding: "2px 4px 6px", color: "#8A6516" }}>Speeding (over {t.speedLimitKmh} km/h)</div>
@@ -9813,7 +9832,7 @@ export function TripReplay({ tripNo }) {
           <div key={i} style={{ display: "grid", gridTemplateColumns: "44px 54px 1fr", gap: 8, alignItems: "baseline", padding: "5px 4px", borderTop: i ? "1px solid var(--line)" : "none", fontSize: 12.5 }}>
             <span className="mono" style={{ color: "var(--steel)" }}>{hhmm(e.at)}</span>
             <span className="mono" style={{ color: e.sincePrevMin >= 60 ? "#B4801F" : "var(--steel)", fontSize: 11 }}>{i ? "+" + fmtDurMin(e.sincePrevMin) : ""}</span>
-            <span style={{ color: tone[e.kind] || "var(--ink)", fontWeight: e.kind === "stop_issue" || e.kind === "gap" || e.kind === "speeding" ? 700 : 500 }}>{e.label}</span>
+            <span style={{ color: tone[e.kind] || "var(--ink)", fontWeight: e.kind === "stop_issue" || e.kind === "gap" || e.kind === "speeding" || e.kind === "arrived_suspect" ? 700 : 500 }}>{(e.kind === "fuel" || /^Fuelled at/.test(e.label || "")) ? "⛽ " : ""}{e.label}</span>
           </div>))}
       </div>
     </div>
@@ -9847,15 +9866,19 @@ export function TripScorecards() {
         <Panel style={{ padding: 0, overflow: "hidden", marginTop: 10 }}>
           <div style={{ overflowX: "auto" }}>
             <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>{view === "driver" ? "Driver" : "Truck"}</Th><Th right>Trips</Th><Th right>Tracked</Th><Th right>Planned km</Th><Th right>Driven km</Th><Th right>Extra km</Th><Th right>Stops to explain</Th><Th right>Speeding</Th><Th right>GPS gaps</Th><Th right>Night</Th><Th right>Max km/h</Th><Th right>Fuel drawn L</Th><Th right>km/L</Th><Th right>Delivery loss</Th></tr></thead>
-              <tbody>{(view === "driver" ? d.byDriver : d.byTruck).map((g) => (
+              <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>{view === "driver" ? "Driver" : "Truck"}</Th><Th right>Trips</Th><Th right>Tracked (usable)</Th><Th right>Planned km</Th><Th right>Driven km</Th><Th right>Extra km</Th><Th right>Stops to explain</Th><Th right>Speeding</Th><Th right>GPS gaps</Th><Th right>Night</Th><Th right>Max km/h</Th><Th right>Fuel drawn L</Th><Th right>km/L</Th><Th right>Delivery loss</Th></tr></thead>
+              <tbody>{(view === "driver" ? d.byDriver : d.byTruck).map((g) => {
+                const usable = trips.filter((t) => ((view === "driver" ? t.driver : t.truck) || "—") === g.name && t.reliable).length;
+                return (
                 <tr key={g.name} style={{ borderTop: "1px solid var(--line)" }}>
-                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{g.name}</Td><Td right>{g.trips}</Td><Td right>{g.tracked}</Td><Td right>{g.plannedKm}</Td><Td right>{g.drivenKm}</Td>
+                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{g.name}</Td><Td right>{g.trips}</Td>
+                  <Td right>{g.tracked}{g.tracked > 0 && <span style={{ color: usable > 0 ? "var(--steel)" : "var(--red)", fontWeight: usable > 0 ? 400 : 700 }}> ({usable})</span>}</Td>
+                  <Td right>{g.plannedKm}</Td><Td right>{g.drivenKm}</Td>
                   <Td right style={{ color: g.extraKm > 20 ? "var(--red)" : "var(--ink)" }}>{g.extraKm}</Td>
                   <Td right style={{ fontWeight: 700, color: g.issueStops > 0 ? "var(--red)" : "var(--ink)" }}>{g.issueStops}</Td>
                   <Td right style={{ color: g.speeding > 0 ? "#C07A00" : "var(--ink)" }}>{g.speeding}</Td><Td right>{g.gaps}</Td><Td right>{g.nightMin ? fmtDurMin(g.nightMin) : "—"}</Td><Td right>{g.maxKmh || "—"}</Td>
                   <Td right>{L(g.drawnL)}</Td><Td right>{g.kmPerL ?? "—"}</Td><Td right>{L(g.lossL)} L{g.lossPct != null ? ` (${g.lossPct}%)` : ""}</Td>
-                </tr>))}</tbody>
+                </tr>); })}</tbody>
             </table>
           </div>
         </Panel>
@@ -9876,10 +9899,14 @@ export function TripScorecards() {
               <thead><tr style={{ background: "var(--navy)", color: "#fff" }}><Th>Trip</Th><Th>Date</Th><Th>Driver</Th><Th>Truck</Th><Th>Route</Th><Th right>Planned</Th><Th right>Driven</Th><Th right>Duration</Th><Th right>Stops to explain</Th><Th right>Max km/h</Th><Th right>Gaps</Th><Th right>Fuel appr/drawn</Th><Th right>Loaded</Th><Th right>Received</Th><Th right>Loss</Th></tr></thead>
               <tbody>{shown.map((t) => (
                 <tr key={t.tripNo} onClick={() => setOpen(t)} style={{ borderTop: "1px solid var(--line)", cursor: "pointer", background: t.issueStops > 0 ? "#FFF7F5" : "#fff" }}>
-                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{t.tripNo}{!t.tracked && <span style={{ color: "var(--steel)", fontWeight: 400 }}> · no GPS</span>} ›</Td><Td>{fmtD(t.date)}</Td><Td>{t.driver || "—"}</Td><Td>{t.truck || "—"}</Td><Td>{t.route}</Td>
-                  <Td right>{km(t.plannedKm)}</Td><Td right>{km(t.drivenKm)}</Td><Td right>{minus(t.durationMin)}</Td>
-                  <Td right style={{ fontWeight: 700, color: t.issueStops > 0 ? "var(--red)" : "var(--ink)" }}>{t.issueStops ?? "—"}{t.longestUnplannedMin ? ` (${fmtDurMin(t.longestUnplannedMin)})` : ""}</Td>
-                  <Td right style={{ color: t.speedingCount > 0 ? "#C07A00" : "var(--ink)" }}>{t.maxKmh || "—"}</Td><Td right>{t.gapCount ?? "—"}</Td>
+                  <Td style={{ fontWeight: 700, color: "var(--navy)" }}>{t.tripNo}{
+                    t.coveragePct == null ? <span style={{ color: "var(--steel)", fontWeight: 400 }}> · no GPS</span>
+                      : t.reliable === false ? <span style={{ color: "var(--red)", fontWeight: 400 }}> · {t.coveragePct}% GPS</span>
+                        : <span style={{ color: "var(--steel)", fontWeight: 400 }}> · {t.coveragePct}%</span>
+                  } ›</Td><Td>{fmtD(t.date)}</Td><Td>{t.driver || "—"}</Td><Td>{t.truck || "—"}</Td><Td>{t.route}</Td>
+                  <Td right>{km(t.plannedKm)}</Td><Td right>{t.reliable === false ? "—" : km(t.drivenKm)}</Td><Td right>{minus(t.durationMin)}</Td>
+                  <Td right style={{ fontWeight: 700, color: t.reliable !== false && t.issueStops > 0 ? "var(--red)" : "var(--ink)" }}>{t.reliable === false ? "—" : (t.issueStops ?? "—")}{t.reliable !== false && t.longestUnplannedMin ? ` (${fmtDurMin(t.longestUnplannedMin)})` : ""}</Td>
+                  <Td right style={{ color: t.reliable !== false && t.speedingCount > 0 ? "#C07A00" : "var(--ink)" }}>{t.reliable === false ? "—" : (t.maxKmh || "—")}</Td><Td right>{t.gapCount ?? "—"}</Td>
                   <Td right>{t.fuelAllocatedL}/{t.fuelDrawnL}</Td><Td right>{L(t.loadedL)}</Td><Td right>{L(t.receivedL)}</Td><Td right style={{ color: t.lossL > 150 ? "var(--red)" : "var(--ink)" }}>{L(t.lossL)}</Td>
                 </tr>))}</tbody>
             </table>
