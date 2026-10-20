@@ -611,14 +611,19 @@ export function SiteSubmit({ me }) {
               day (night) / Prices (day). A step unlocks only when the one before it is in; the status comes
               from the server so a colleague's submission counts. Midday dip stays a separate entry. */}
           {(() => {
+            // The close is INSIDE the Stock & Sales return (certification tick + inline variance reason), so
+            // there is no separate step to skip. A return whose variance reason is still outstanding shows
+            // "reason outstanding" on step 1 until the site gives it (the form asks inline).
             const steps = [
-              { k: "readings", label: "1 · Stock & Sales", done: !!subStatus?.stockSales?.submitted },
-              { k: "dayend", label: "2 · Review & certify", done: !!subStatus?.dayend?.certified, auto: !!subStatus?.dayend?.auto, needs: !subStatus?.stockSales?.submitted },
+              { k: "readings", label: "1 · Stock & Sales + close", done: !!subStatus?.stockSales?.submitted && !subStatus?.dayend?.unexplained, auto: !!subStatus?.stockSales?.submitted && !!subStatus?.dayend?.unexplained },
               shift === "night"
-                ? { k: "cash", label: "3 · Cash (trading day)", done: !!subStatus?.cash?.submitted, needs: !subStatus?.dayend?.closed }
-                : { k: "prices", label: "3 · Prices", done: !!subStatus?.prices?.submitted, needs: !subStatus?.dayend?.closed },
+                ? { k: "cash", label: "2 · Cash (trading day)", done: !!subStatus?.cash?.submitted, needs: !subStatus?.stockSales?.submitted }
+                : { k: "prices", label: "2 · Prices", done: !!subStatus?.prices?.submitted, needs: !subStatus?.stockSales?.submitted },
             ];
-            const extra = shift === "night" ? [{ k: "prices", label: "Prices", done: !!subStatus?.prices?.submitted }] : [];
+            const extra = [
+              ...(shift === "night" ? [{ k: "prices", label: "Prices", done: !!subStatus?.prices?.submitted }] : []),
+              ...(isManager ? [{ k: "dayend", label: "Shift-End (manager re-close)", done: !!subStatus?.dayend?.certified }] : []),
+            ];
             const chip = (s, i) => {
               const locked = !!s.needs && !isManager;
               const bg = which === s.k ? "var(--navy)" : s.done ? "#E4F3E8" : locked ? "#F4F6FA" : "#FFF7E0";
@@ -626,7 +631,7 @@ export function SiteSubmit({ me }) {
               return (
                 <button key={s.k} type="button" disabled={locked} onClick={() => setWhich(s.k)} title={locked ? "Complete the previous step first" : undefined}
                   style={{ flex: "1 1 120px", border: "1px solid " + (which === s.k ? "var(--navy)" : "var(--line)"), background: bg, color: fg, borderRadius: 10, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.7 : 1, textAlign: "left" }}>
-                  {s.done ? "✓ " : locked ? "🔒 " : "● "}{s.label}{s.auto && !s.done ? <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, opacity: .85 }}>auto-closed — certify it</span> : null}
+                  {s.done ? "✓ " : locked ? "🔒 " : "● "}{s.label}{s.auto && !s.done ? <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, opacity: .85 }}>variance reason outstanding</span> : null}
                 </button>
               );
             };
@@ -652,7 +657,7 @@ export function SiteSubmit({ me }) {
               return l && l.submitted && l.unlock ? <Note tone="amber" title="Unlock granted — one correction">{l.ref} is unlocked. Submit the corrected figures once — it locks again immediately.</Note> : null; })()}
             <div style={{ display: which === "readings" ? "block" : "none" }}>
               <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={() => { loadCfg(); refreshStatus(); }} isManager={isManager} lock={subStatus?.stockSales}
-                onNext={() => setWhich("dayend")} nextLabel="Next: review & certify the shift" />
+                onNext={() => setWhich(shift === "night" ? "cash" : "prices")} nextLabel={shift === "night" ? "Next: cash for the trading day" : "Next: prices"} />
             </div>
             <div style={{ display: which === "dip" ? "block" : "none" }}>
               <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} lock={subStatus?.midday} />
@@ -774,6 +779,26 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
   // overwrites a hand-typed figure (validate-and-advise: we flag, not force)
   const [salesTouched, setSalesTouched] = useState({});
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
+  // COMBINED RETURN (owner 2026-10-20: "it's still a separate form that they will skip — combine"):
+  // the supervisor certifies ON this form (required to submit); the server closes the shift in the
+  // same request. If the variance is outside tolerance the reason is asked INLINE right here —
+  // one more tap on the same screen — never a separate Shift-End step.
+  const [certified, setCertified] = useState(false);
+  const [tankCodes, setTankCodes] = useState([]);
+  const [tankReason, setTankReason] = useState("");
+  const [closeNote, setCloseNote] = useState("");
+  const [closing, setClosing] = useState(false);
+  useEffect(() => { if (done && done.needsReason && !tankCodes.length) getDayendComments().then((c) => setTankCodes(c.tank || [])).catch(() => {}); }, [done, tankCodes.length]);
+  const saveReason = async () => {
+    if (!tankReason) return;
+    setClosing(true); setMsg(null);
+    try {
+      const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date, shift, tankComment: tankReason, note: closeNote.trim() || null, certified: true, deviceTime: new Date().toISOString() });
+      setDone((d) => ({ ...d, needsReason: false, title: `${d.title.replace(/ · shift closed.*$/, "")} · shift closed ${r.ref}`, body: `${d.body} · variance explained (${tankReason})` }));
+      if (onSaved) onSaved();
+    } catch (err) { setMsg({ tone: "red", title: "Reason not saved", body: err.message }); }
+    finally { setClosing(false); }
+  };
   const hasULP = (config.tanks || []).some((t) => t.product === "ULP") || (config.pumps || []).some((p) => p.product === "ULP");
   const setTank = (i, v) => setTanks((ts) => ts.map((t, j) => (j === i ? { ...t, litres: v } : t)));
   const setS = (k, v) => { setSalesTouched((t) => ({ ...t, [k]: true })); setSales((s) => ({ ...s, [k]: v })); };
@@ -838,16 +863,40 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
         pumps: pumps.map((p) => ({ label: p.label, product: p.product, opening: p.opening, closing: p.closing, test: p.test })),
         blendSales: sales.blendSales, dieselSales: sales.dieselSales, ulpSales: sales.ulpSales || null,
         cashSales: sales.cashSales || null, petroSales: sales.petroSales || null, daCardSales: sales.daCardSales || null,
+        certified,   // the supervisor's certification, carried on the return itself (closes the shift server-side)
         deviceTime: new Date().toISOString(),
       });
       if (r && r.__queued) { setDone({ title: "Saved offline ✓", body: "You're offline — this will submit automatically when you're back online." }); return; }
-      setDone({ title: `Stock & sales submitted${r.ref ? ` · ${r.ref}` : ""}`, body: `${r.site || site} · Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}`, warning: r.warning || null });
+      const cl = r.close || null;
+      setDone({ needsReason: !!(cl && cl.closed && cl.needsReason), products: (cl && cl.products) || [], closeRef: cl && cl.ref,
+        title: `Stock & sales submitted${r.ref ? ` · ${r.ref}` : ""}${cl && cl.closed && !cl.needsReason ? ` · shift closed ${cl.ref}` : ""}`, body: `${r.site || site} · Stock ${L(r.blend)} blend · ${L(r.diesel)} diesel${hasSplit ? ` · cash sales ${dollars(n(sales.cashSales))}` : ""}`, warning: r.warning || null });
     } catch (err) { setMsg({ tone: "red", title: "Not submitted", body: err.message }); }
     finally { setBusy(false); }
   };
 
   const lk = useSubmissionLock(lock, done);
   if (lk.isLocked) return <LockedCard lock={lock} what="Stock & sales" isManager={isManager} onReopen={lk.reopen} unlock={{ kind: "readings", choice, site, date, shift }} />;
+  if (done && done.needsReason) {
+    const bad = (done.products || []).filter((p) => p.band && p.band !== "ok");
+    return (
+      <Panel>
+        <SubmittedCard title={done.title} body={done.body} warning={done.warning} canEdit={false} onEdit={() => {}} />
+        {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
+        <div style={{ marginTop: 12, padding: "12px 14px", border: "1px solid #F0D28A", background: "#FFF9EA", borderRadius: 12 }}>
+          <div style={{ fontWeight: 700, color: "#8A6D1E", fontSize: 14 }}>One more thing — explain the tank variance</div>
+          <div style={{ fontSize: 12.5, color: "var(--ink)", marginTop: 4, lineHeight: 1.45 }}>
+            The shift is closed, but the pump sales and the tank dips disagree by more than 0.5 % on {bad.map((p) => `${p.product} (${p.variance > 0 ? "+" : ""}${Math.round(p.variance)} L, ${p.variancePct}%)`).join(" and ")}. Pick the reason so the close is complete.
+          </div>
+          <select value={tankReason} onChange={(e) => setTankReason(e.target.value)} style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+            <option value="">Tank variance reason (leak / theft / temperature / meter / calibration)…</option>
+            {tankCodes.map((c) => <option key={c.code || c} value={c.label || c}>{c.label || c}</option>)}
+          </select>
+          <textarea value={closeNote} onChange={(e) => setCloseNote(e.target.value)} rows={2} placeholder="Add detail (optional)" style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 8, border: "1px solid var(--line)", fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" }} />
+          <button type="button" className="pill" disabled={closing || !tankReason} style={{ width: "100%", marginTop: 10, opacity: !tankReason ? 0.5 : 1 }} onClick={saveReason}>{closing ? "Saving…" : !tankReason ? "Pick the reason to finish" : "Save reason & finish the shift"}</button>
+        </div>
+      </Panel>
+    );
+  }
   if (done) return <SubmittedCard title={done.title} body={done.body} warning={done.warning} onEdit={() => { setDone(null); setMsg(null); }} canEdit={isManager} next={onNext ? { onNext, label: nextLabel } : undefined} unlock={{ kind: "readings", choice, site, date, shift }} />;
   return (
     <Panel>
@@ -952,7 +1001,12 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
           )}
         </div>
 
-        <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 14 }}>{busy ? "Sending…" : "Submit stock & sales"}</button>
+        {/* Certification lives ON the return — it is what closes the shift. Required to submit. */}
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, padding: "11px 12px", border: "1px solid var(--line)", borderRadius: 10, background: certified ? "#E4F3E8" : "#FBFBFD", fontSize: 12.5, cursor: "pointer" }}>
+          <input type="checkbox" checked={certified} onChange={(e) => setCertified(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }} />
+          <span>I certify that I have <b>reviewed the stock, pump and sales figures</b> above for this shift and confirm they are <b>true, complete and accurate</b>. Submitting closes the shift.</span>
+        </label>
+        <button className="pill" disabled={busy || !certified} style={{ width: "100%", marginTop: 10, opacity: certified ? 1 : 0.5 }}>{busy ? "Sending…" : certified ? "Submit & close the shift" : "Tick the certification to submit"}</button>
       </form>
     </Panel>
   );
