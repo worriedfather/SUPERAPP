@@ -606,7 +606,43 @@ export function SiteSubmit({ me }) {
             {which === "cash" && date === todayISO() && <div className="mono" style={{ fontSize: 11.5, color: "var(--steel)", marginTop: 8 }}>Cash is for the trading day that ended — this targets <b>{fmtD(cashDate)}</b>.</div>}
             {date !== todayISO() && <div style={{ fontSize: 11.5, color: "#B8860B", marginTop: 6, lineHeight: 1.45 }}>Correcting an earlier day — a locked submission only reopens if a manager has approved an unlock for it.</div>}
           </div>
-          <Segmented options={[["readings", "Stock & Sales"], ["dip", "Midday dip"], ["prices", "Prices"], ["cash", "Cash"], ["dayend", "Shift-End"]]} value={which} onChange={setWhich} />
+          {/* ONE shift return, in steps (owner 2026-10-20: "join stock & sales and shift-end so that it's not
+              skippable"): 1 Stock & Sales → 2 Review & certify the shift (the close) → 3 Cash for the trading
+              day (night) / Prices (day). A step unlocks only when the one before it is in; the status comes
+              from the server so a colleague's submission counts. Midday dip stays a separate entry. */}
+          {(() => {
+            const steps = [
+              { k: "readings", label: "1 · Stock & Sales", done: !!subStatus?.stockSales?.submitted },
+              { k: "dayend", label: "2 · Review & certify", done: !!subStatus?.dayend?.certified, auto: !!subStatus?.dayend?.auto, needs: !subStatus?.stockSales?.submitted },
+              shift === "night"
+                ? { k: "cash", label: "3 · Cash (trading day)", done: !!subStatus?.cash?.submitted, needs: !subStatus?.dayend?.closed }
+                : { k: "prices", label: "3 · Prices", done: !!subStatus?.prices?.submitted, needs: !subStatus?.dayend?.closed },
+            ];
+            const extra = shift === "night" ? [{ k: "prices", label: "Prices", done: !!subStatus?.prices?.submitted }] : [];
+            const chip = (s, i) => {
+              const locked = !!s.needs && !isManager;
+              const bg = which === s.k ? "var(--navy)" : s.done ? "#E4F3E8" : locked ? "#F4F6FA" : "#FFF7E0";
+              const fg = which === s.k ? "#fff" : s.done ? "#2E7D33" : locked ? "var(--steel)" : "#8A6D1E";
+              return (
+                <button key={s.k} type="button" disabled={locked} onClick={() => setWhich(s.k)} title={locked ? "Complete the previous step first" : undefined}
+                  style={{ flex: "1 1 120px", border: "1px solid " + (which === s.k ? "var(--navy)" : "var(--line)"), background: bg, color: fg, borderRadius: 10, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.7 : 1, textAlign: "left" }}>
+                  {s.done ? "✓ " : locked ? "🔒 " : "● "}{s.label}{s.auto && !s.done ? <span style={{ display: "block", fontSize: 10.5, fontWeight: 600, opacity: .85 }}>auto-closed — certify it</span> : null}
+                </button>
+              );
+            };
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{steps.map(chip)}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  {extra.map(chip)}
+                  <button type="button" onClick={() => setWhich("dip")}
+                    style={{ flex: "0 1 auto", border: "1px solid " + (which === "dip" ? "var(--navy)" : "var(--line)"), background: which === "dip" ? "var(--navy)" : subStatus?.midday?.submitted ? "#E4F3E8" : "#fff", color: which === "dip" ? "#fff" : subStatus?.midday?.submitted ? "#2E7D33" : "var(--ink)", borderRadius: 10, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                    {subStatus?.midday?.submitted ? "✓ " : ""}Midday dip
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
           {loading && <Panel><div style={{ color: "var(--steel)" }}>Loading…</div></Panel>}
           {cfgErr && <Note tone="red" title="Couldn't load this site">{cfgErr} <button type="button" className="pill-ghost" style={{ marginTop: 8, padding: "6px 14px" }} onClick={loadCfg}>Retry</button></Note>}
           {/* All four forms stay MOUNTED and are shown/hidden with CSS, so switching
@@ -616,7 +652,7 @@ export function SiteSubmit({ me }) {
               return l && l.submitted && l.unlock ? <Note tone="amber" title="Unlock granted — one correction">{l.ref} is unlocked. Submit the corrected figures once — it locks again immediately.</Note> : null; })()}
             <div style={{ display: which === "readings" ? "block" : "none" }}>
               <ReadingsForm choice={choice} site={activeSite} config={config} date={date} shift={shift} onSaved={() => { loadCfg(); refreshStatus(); }} isManager={isManager} lock={subStatus?.stockSales}
-                onNext={() => setWhich(shift === "night" ? "cash" : "prices")} nextLabel={shift === "night" ? "Next: record cash" : "Next: prices"} />
+                onNext={() => setWhich("dayend")} nextLabel="Next: review & certify the shift" />
             </div>
             <div style={{ display: which === "dip" ? "block" : "none" }}>
               <DipForm choice={choice} site={activeSite} config={config} date={date} isManager={isManager} lock={subStatus?.midday} />
@@ -631,7 +667,9 @@ export function SiteSubmit({ me }) {
                 : <Note tone="amber" title="Cash is submitted on the night shift">Cash for the whole trading day (both shifts) is reconciled once, on the night-shift submission. Come back on the night shift to enter how the day's cash was handled.</Note>}
             </div>
             <div style={{ display: which === "dayend" ? "block" : "none" }}>
-              {which === "dayend" && <DayEndForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} />}
+              {which === "dayend" && <DayEndForm choice={choice} site={activeSite} date={date} shift={shift} isManager={isManager} embedded
+                onClosed={() => refreshStatus()}
+                onNext={() => setWhich(shift === "night" ? "cash" : "prices")} nextLabel={shift === "night" ? "Next: cash for the trading day" : "Next: prices"} />}
             </div>
           </>}
         </>
@@ -925,8 +963,14 @@ function ReadingsForm({ choice, site, config, date, shift, onSaved, isManager, o
 // closing dip, gain/loss, sales value) and cross-checked against the pump meters.
 // The manager reviews, explains any variance with a comment code, and closes.
 // Nothing here is re-keyed — it's a review-and-sign screen, not a data-entry one.
-function DayEndForm({ choice, site, date, shift, isManager }) {
+// embedded: rendered as STEP 2 of the shift return (after Stock & Sales) — the shift toggle is the
+// parent's, and a successful close offers the parent's Next step. onClosed lets the parent refresh
+// its step bar. The server already auto-closes from the return; this step is the site's own review,
+// variance reason and certification, which supersede the auto close (owner 2026-10-20: "join stock
+// & sales and shift end so that it's not skippable").
+function DayEndForm({ choice, site, date, shift, isManager, embedded = false, onNext, nextLabel, onClosed }) {
   const [deShift, setDeShift] = useState(shift === "day" ? "day" : "night");   // two day-ends per day
+  useEffect(() => { if (embedded) setDeShift(shift === "day" ? "day" : "night"); }, [embedded, shift]);
   const [de, setDe] = useState(null);
   const [codes, setCodes] = useState({ cash: [], tank: [] });
   const [tankComment, setTankComment] = useState("");
@@ -962,6 +1006,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
       const r = await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: date, shift: deShift,
         tankComment: tankComment || null, cashComment: cashComment || null, note: note.trim() || null, cashCount: cashCount || null, certified: true, deviceTime: new Date().toISOString() });
       setDone({ title: `${deShift === "day" ? "Day" : "Night"} shift-end closed · ${r.ref}`, body: r.reconciled ? "All products within wetstock tolerance ✓" : "Closed with a variance — flagged for review." });
+      if (onClosed) { try { onClosed(r); } catch { /* parent refresh is best-effort */ } }
     } catch (err) { setMsg({ tone: "red", title: "Not closed", body: err.message }); }
     finally { setBusy(false); }
   };
@@ -978,11 +1023,11 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
   let body;
   if (loading) body = <div style={{ color: "var(--steel)" }}>Assembling the {deShift === "day" ? "day" : "night"}-shift day-end…</div>;
   else if (msg && !de) body = <Note tone="red" title={msg.title}>{msg.body}</Note>;
-  else if (done) body = <SubmittedCard title={done.title} body={done.body} canEdit={false} onEdit={() => { load(); }} />;
+  else if (done) body = <SubmittedCard title={done.title} body={done.body} canEdit={false} onEdit={() => { load(); }} next={onNext ? { onNext, label: nextLabel } : undefined} />;
   else if (!de || !de.products.length) body = <Note tone="amber" title="Nothing to close for this shift yet">No {deShift === "day" ? "day" : "night"}-shift stock or pump readings are in for {fmtD(date)} yet. It assembles itself as the shift submissions land — or switch shifts above.</Note>;
   else body = (
     <>
-      {de.closed && <Note tone="ok" title={`Already closed · ${deShift === "day" ? "day" : "night"} shift`}>This shift&apos;s day-end is closed. A re-close by a manager supersedes it (the latest close wins; both are kept).</Note>}
+      {de.closed && <Note tone="ok" title={`Close on record · ${deShift === "day" ? "day" : "night"} shift`}>{embedded ? "The server closed this shift from your Stock & Sales return. Review the figures, give the reason for any variance, and certify — your certified close supersedes the automatic one." : "This shift's day-end is closed. A re-close by a manager supersedes it (the latest close wins; both are kept)."}</Note>}
       {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
       <div style={{ fontSize: 11.5, color: "var(--steel)", background: "#F4F6FA", borderRadius: 8, padding: "7px 10px", marginBottom: 12 }}>
         Wetstock reconciliation — <b>{deShift === "day" ? "day" : "night"} shift, {fmtD(date)}</b>. Opening is the previous shift&apos;s close. Sales come from the <b>{de.salesBasis === "pump" ? "pump meters" : "declared figures"}</b>; the tank dips are the physical check. <b>Variance = sales − tank used</b> per product.
@@ -1115,7 +1160,7 @@ function DayEndForm({ choice, site, date, shift, isManager }) {
       <button type="button" className="pill-ghost" style={{ width: "100%", marginTop: 8 }} onClick={load}>Refresh figures</button>
     </>
   );
-  return <Panel>{shiftTog}{body}</Panel>;
+  return <Panel>{embedded ? null : shiftTog}{body}</Panel>;
 }
 
 // Midday dip — a stock-only snapshot (litres in tank) between the day and night
