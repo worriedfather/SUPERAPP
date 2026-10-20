@@ -617,13 +617,12 @@ export function SiteSubmit({ me }) {
             const steps = [
               { k: "readings", label: "1 · Stock & Sales + close", done: !!subStatus?.stockSales?.submitted && !subStatus?.dayend?.unexplained, auto: !!subStatus?.stockSales?.submitted && !!subStatus?.dayend?.unexplained },
               shift === "night"
-                ? { k: "cash", label: "2 · Cash (trading day)", done: !!subStatus?.cash?.submitted, needs: !subStatus?.stockSales?.submitted }
+                ? { k: "cash", label: "2 · Trading-day close: cash & wetstock", done: !!subStatus?.cash?.submitted, needs: !subStatus?.stockSales?.submitted }
                 : { k: "prices", label: "2 · Prices", done: !!subStatus?.prices?.submitted, needs: !subStatus?.stockSales?.submitted },
             ];
-            const extra = [
-              ...(shift === "night" ? [{ k: "prices", label: "Prices", done: !!subStatus?.prices?.submitted }] : []),
-              ...(isManager ? [{ k: "dayend", label: "Shift-End (manager re-close)", done: !!subStatus?.dayend?.certified }] : []),
-            ];
+            // No separate Shift-End anything: the shift closes on the Stock & Sales return and the trading
+            // day closes with the cash. (Managers correct a close from Submission review / unlocks.)
+            const extra = shift === "night" ? [{ k: "prices", label: "Prices", done: !!subStatus?.prices?.submitted }] : [];
             const chip = (s, i) => {
               const locked = !!s.needs && !isManager;
               const bg = which === s.k ? "var(--navy)" : s.done ? "#E4F3E8" : locked ? "#F4F6FA" : "#FFF7E0";
@@ -1392,6 +1391,15 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   const [hqDenoms, setHqDenoms] = useState({});   // { "100": count, ... } for cash sent to HQ
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(null); const [done, setDone] = useState(null);
   const [exp, setExp] = useState(null); const [expLoading, setExpLoading] = useState(false);
+  // TRADING-DAY CLOSE = cash AND wetstock in ONE submission (owner 2026-10-20: "combine cash and
+  // wetstock — the trading-day close; I don't want people skipping this"). The day's two shifts
+  // (day shift of the cash day, night shift that ended this morning) are reconciled here: any
+  // shift outside tolerance needs its reason, and the supervisor certifies the day. Submit records
+  // the cash and files the certified close for each shift that still needs one.
+  const [ws, setWs] = useState(null);           // { shifts: [{ shift, date, de, outOfBand, explained }] }
+  const [wsReason, setWsReason] = useState({});  // per shift key → reason code
+  const [tankCodes, setTankCodes] = useState([]);
+  const [dayCertified, setDayCertified] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : 0; };
   const dollars = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -1409,6 +1417,36 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
   const cashDate = date === todayISO()
     ? addDaysISO(date, -1)
     : date;
+
+  // Wetstock for the trading day: the DAY shift of the cash day + the NIGHT shift that ended on the
+  // morning after it (dated by that morning). Reloaded with the site/date; reasons reset.
+  useEffect(() => {
+    let live = true;
+    if (!site) { setWs(null); return; }
+    const nightDate = addDaysISO(cashDate, 1);
+    const sel = choice.fixed ? undefined : site;
+    Promise.all([
+      computeDayend(sel, cashDate, "day").catch(() => null),
+      computeDayend(sel, nightDate, "night").catch(() => null),
+      getSubmissionStatus({ site: sel, date: cashDate, shift: "day" }).catch(() => null),
+      getSubmissionStatus({ site: sel, date: nightDate, shift: "night" }).catch(() => null),
+      getDayendComments().catch(() => ({ tank: [] })),
+    ]).then(([dayDe, nightDe, dayStatus, nightStatus, codes]) => {
+      if (!live) return;
+      setTankCodes((codes && codes.tank) || []);
+      const mk = (shift, d, de, st) => ({
+        key: shift, shift, date: d, de,
+        outOfBand: !!(de && de.products && de.products.some((p) => p.band && p.band !== "ok")),
+        explained: !!(st && st.dayend && st.dayend.closed && !st.dayend.unexplained),
+        hasData: !!(de && de.products && de.products.length && !de.closingMissing),
+      });
+      setWs({ shifts: [mk("day", cashDate, dayDe, dayStatus), mk("night", nightDate, nightDe, nightStatus)] });
+      setWsReason({}); setDayCertified(false);
+    });
+    return () => { live = false; };
+  }, [site, cashDate, choice.fixed]);
+  const wsNeeds = (ws ? ws.shifts : []).filter((s) => s.outOfBand && !s.explained);   // shifts still owing a reason
+  const wsReady = wsNeeds.every((s) => !!wsReason[s.key]);
 
   // Pull the expected cash the moment the site / date / shift settles.
   useEffect(() => {
@@ -1458,8 +1496,16 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
     // Bank name + deposit slip are NOT asked for here — the site just declares the amount
     // banked; the actual slip/bank is recorded on the deposit screen / confirmed by the cash
     // office (owner, 2026-09-01: don't ask for bank + reference on the cash-handling screen).
+    if (!dayCertified) { setMsg({ tone: "amber", title: "Certify the trading day", body: "Tick the certification at the bottom — it covers the cash AND the wetstock for this trading day." }); return; }
+    if (!wsReady) { setMsg({ tone: "amber", title: "Explain the tank variance first", body: `${wsNeeds.map((s) => s.shift + " shift").join(" and ")} ${wsNeeds.length > 1 ? "are" : "is"} outside wetstock tolerance — pick the reason above before submitting.` }); return; }
     setBusy(true);
     try {
+      // 1) the certified close for every shift that still owes a reason (the server already holds
+      //    an auto close for each; this one, with the reason, supersedes it)
+      for (const s of wsNeeds) {
+        await closeDayend({ site: choice.fixed ? undefined : site, tradingDate: s.date, shift: s.shift, tankComment: wsReason[s.key], note: null, certified: true, deviceTime: new Date().toISOString() });
+      }
+      // 2) the cash
       const r = await postCash({
         site: choice.fixed ? undefined : site, tradingDate: cashDate, shift,
         banked: n(f.banked), bankRef: f.bankRef || null, bank: f.bank || null, sentToHq: hqTotal,
@@ -1486,6 +1532,45 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
         {msg && <Note tone={msg.tone} title={msg.title}>{msg.body}</Note>}
         {msg && msg.tone === "red" && /locked/i.test(String(msg.body)) && <RequestUnlock kind="cash" choice={choice} site={site} date={cashDate} shift={shift} />}
         <HqPendingBanner site={choice.fixed ? undefined : site} />
+
+        {/* WETSTOCK for the trading day — both shifts, pump sales vs tank used. Part of this same
+            submission: a shift outside tolerance needs its reason here before the cash can go in. */}
+        <div style={{ border: "1px solid var(--line)", borderRadius: 14, padding: "12px 14px", marginBottom: 14, background: "#FBFBFD" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+            <span style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>Wetstock · trading day {fmtD(cashDate)}</span>
+            <span style={{ fontSize: 11, color: "var(--steel)" }}>day shift {fmtD(cashDate)} + night ending {fmtD(addDaysISO(cashDate, 1))}</span>
+          </div>
+          {!ws && <div style={{ fontSize: 12.5, color: "var(--steel)", marginTop: 6 }}>Loading the day's reconciliation…</div>}
+          {ws && ws.shifts.map((s) => (
+            <div key={s.key} style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, fontSize: 12.5, textTransform: "capitalize" }}>{s.shift} shift</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: !s.hasData ? "var(--steel)" : s.outOfBand ? (s.explained ? "#3C9A52" : "#B23B3B") : "#3C9A52" }}>
+                  {!s.hasData ? (s.de && s.de.closingMissing ? "no closing dip yet" : "no readings yet") : s.outOfBand ? (s.explained ? "✓ variance explained" : "⚠ outside tolerance — reason needed") : "✓ within tolerance"}
+                </span>
+              </div>
+              {s.hasData && (
+                <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 6, fontSize: 12 }}>
+                  <thead><tr>{["Product", "Tank used", "Sales (pump)", "Variance"].map((h, i) => <th key={h} style={{ fontSize: 10.5, color: "var(--steel)", fontWeight: 600, textAlign: i ? "right" : "left", padding: "0 4px" }}>{h}</th>)}</tr></thead>
+                  <tbody>{(s.de.products || []).map((p) => (
+                    <tr key={p.product}>
+                      <td style={{ padding: "3px 4px" }}>{p.product}</td>
+                      <td className="mono" style={{ padding: "3px 4px", textAlign: "right" }}>{L(p.tankThroughput)}</td>
+                      <td className="mono" style={{ padding: "3px 4px", textAlign: "right" }}>{L(p.salesQty)}</td>
+                      <td className="mono" style={{ padding: "3px 4px", textAlign: "right", fontWeight: 700, color: p.band && p.band !== "ok" ? "#B23B3B" : "var(--ink)" }}>{p.variance > 0 ? "+" : ""}{L(p.variance)} {p.variancePct != null ? `(${p.variancePct}%)` : ""}</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+              {s.outOfBand && !s.explained && (
+                <select value={wsReason[s.key] || ""} onChange={(e) => setWsReason((m) => ({ ...m, [s.key]: e.target.value }))}
+                  style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 8, border: "1px solid " + (wsReason[s.key] ? "var(--line)" : "#E0A030"), fontSize: 13 }}>
+                  <option value="">Reason for the {s.shift}-shift variance (leak / theft / temperature / meter / calibration)…</option>
+                  {tankCodes.map((c) => <option key={c.code || c} value={c.label || c}>{c.label || c}</option>)}
+                </select>
+              )}
+            </div>
+          ))}
+        </div>
 
         {/* Expected cash — pulled from the sales submission, not editable here */}
         <div style={{ background: "var(--navy)", color: "#fff", borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
@@ -1578,7 +1663,14 @@ function CashForm({ choice, site, date, shift, isManager, lock }) {
           )}
         </div>
 
-        <button className="pill" disabled={busy} style={{ width: "100%", marginTop: 14 }}>{busy ? "Sending…" : "Submit cash handling"}</button>
+        {/* One certification for the trading day: cash AND wetstock. Required to submit. */}
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, padding: "11px 12px", border: "1px solid var(--line)", borderRadius: 10, background: dayCertified ? "#E4F3E8" : "#FBFBFD", fontSize: 12.5, cursor: "pointer" }}>
+          <input type="checkbox" checked={dayCertified} onChange={(e) => setDayCertified(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }} />
+          <span>I certify that the <b>cash handling and the wetstock reconciliation</b> above for trading day {fmtD(cashDate)} are <b>true, complete and accurate</b>, and that any tank variance has been explained.</span>
+        </label>
+        <button className="pill" disabled={busy || !dayCertified || !wsReady} style={{ width: "100%", marginTop: 10, opacity: (dayCertified && wsReady) ? 1 : 0.5 }}>
+          {busy ? "Sending…" : !wsReady ? "Explain the tank variance to submit" : !dayCertified ? "Tick the certification to submit" : "Submit the trading-day close"}
+        </button>
       </form>
     </Panel>
   );
