@@ -2898,7 +2898,15 @@ export function ExecutiveDashboard({ me } = {}) {
             {period === "today" && d.asOf?.isPartial &&
               <Note tone="amber" title={`${d.asOf.shiftLabel}`}>Figures are for {fmtD(d.asOf.date)} so far. The remaining shift has not been submitted yet.{d.kpis?.deltas?.shiftAware ? " Comparisons are like-for-like — this day shift vs the previous day shift." : ""}</Note>}
             {/* ── THE MONEY LINE — volume → revenue → margin → cash · each with its prior-period comparative ── */}
-            {(() => { const hc = d.heroCmp || {}; const lbl = hc.priorLabel || "prior period";
+            {(() => { const hc = d.heroCmp || {};
+              // name the exact days behind the comparative (same day-range of last month, calendar-aligned —
+              // the same window How-we-compare uses) so the two can never read as different "last months"
+              const dd = (s) => { const t = new Date(s + "T00:00:00"); return t.getDate() + " " + t.toLocaleString("en", { month: "short" }); };
+              const sameMonth = hc.priorFrom && hc.priorTo && hc.priorFrom.slice(0, 7) === hc.priorTo.slice(0, 7);
+              const lbl = hc.priorFrom && hc.priorTo
+                ? (hc.priorFrom === hc.priorTo ? dd(hc.priorFrom) : sameMonth ? `${new Date(hc.priorFrom + "T00:00:00").getDate()}–${dd(hc.priorTo)}` : `${dd(hc.priorFrom)}–${dd(hc.priorTo)}`)
+                  + (hc.priorTo.slice(0, 4) !== String(d.asOf?.date || "").slice(0, 4) ? " " + hc.priorTo.slice(0, 4) : "")
+                : (hc.priorLabel || "prior period");
               const cmpL = (o, money) => (o && o.pct != null ? { prev: (money ? "$" : "") + abbr(o.prev) + (money ? "" : " L"), pct: o.pct, label: lbl } : undefined);
               return (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(165px,1fr))", gap: 12, marginBottom: 14 }}>
