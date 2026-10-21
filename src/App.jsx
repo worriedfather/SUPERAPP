@@ -1137,7 +1137,12 @@ function App() {
   // fix while the page is open but can never run the background location service, so a
   // delivery driven from the phone's browser records no route at all (owner, 2026-10-12: "GPS
   // must remain on for the entire duration of a delivery"). Phone browsers were allowed before.
-  const driverOnWeb = me && me.kind === "driver" && !isNative();
+  // iPhone drivers are let through (2026-10-21): there is no Android app for them to install, the
+  // TestFlight build is the web shell, and the gate was sending them to the Google Play listing
+  // (cmadimu, locked out since the gate went in). They cannot record a background route — the
+  // driver home says so — but every other driver action works.
+  const onApplePhone = typeof navigator !== "undefined" && (/iphone|ipad|ipod/i.test(navigator.userAgent || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+  const driverOnWeb = me && me.kind === "driver" && !isNative() && !isMobileApp() && !onApplePhone;
   if (driverOnWeb) return <DriverMobileOnlyGate onSignOut={() => { signOut(true); setMe(null); }} />;
   if (me && me.kind === "driver" && !gpsOk) return <GpsGate />;
   if (!me) return <Login onSignedIn={setMe} />;
@@ -3081,6 +3086,7 @@ function DriverMobileOnlyGate({ onSignOut }) {
           <div style={{ fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", fontSize: 20, fontWeight: 800, letterSpacing: ".03em", color: C.navy }}>Use the installed DA OPS app</div>
           <div style={{ fontSize: 13.5, color: C.steel, margin: "9px 0 20px", lineHeight: 1.55 }}>
             A browser cannot record your route while you drive. Fuel requests, collection and delivery notes must be done in the DA OPS app installed from Google Play — open it and sign in there.
+            {/iphone|ipad|ipod/i.test(navigator.userAgent || "") && <><br /><br />On an iPhone, install DA OPS from TestFlight instead: <a href={IOS_TESTFLIGHT_JOIN} target="_blank" rel="noreferrer" style={{ color: C.blue, fontWeight: 700 }}>join the DA Testers group</a>, then open the app from TestFlight.</>}
           </div>
           <a href={PLAY_URL} target="_blank" rel="noreferrer" style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 15, fontSize: 15, fontWeight: 700, borderRadius: 12, cursor: "pointer",
             fontFamily: "'Barlow Condensed',sans-serif", textTransform: "uppercase", letterSpacing: ".05em", textDecoration: "none",
