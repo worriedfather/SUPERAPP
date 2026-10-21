@@ -6,7 +6,7 @@ import { getFix, primeLocation, takeOdometerPhoto, isNative, isMobileApp, isIOS,
 import { readOdometer } from "./ocr";
 import Login from "./Login";
 import ErrorBoundary from "./ErrorBoundary.jsx";
-import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice, requestPhotoUrl } from "./api";
+import { currentUser, signedIn, signOut, getState, postRequest, postDecision, addDriver as apiAddDriver, getEfficiency, askIntelligence, getMyTrips, routeGoogle, outboxCount, flushOutbox, getHealth, getTripFuelContext, getDriverNotices, ackNotice, requestPhotoUrl, getTripPingStatus } from "./api";
 import { TripsRegister, TripScorecards, SiteSubmit, SubmissionReview, PumpAdmin, RetailDashboard, DeliverySubmit, DeliveryApprovals, WarehouseImports, ScheduleDelivery, LogisticsDashboard, SiteManagerCreate, ExecutiveDashboard, InventoryView, RetailRequest, YardWorkshop, TruckStatus, DetailSheet, Cockpit, WetstockView, CashView, CashInflows, SiteDeposit, CashOffice, RevenueRecon, CashflowView, OwnerDigest, RadarView, ApprovalsHistory, CashOutflows, DeliveriesDue, DriverPerformance, DriverLeague, ManagerBirdsEye, DeliveriesInProgress, ApprovedDeliveries, DeliveryFlow, DriverRecovery, TripMap, StaffAssignment, UnlockRequests, DeviceRequests, JourneyTracking, FeedbackView, ReleaseNotesModal, fmtD } from "./superapp.jsx";
 import { syncReminders, checkAlerts, initLocalNotificationTaps, clearDeliveredNotifications } from "./notify.js";
 import { initPush } from "./push.js";
@@ -590,7 +590,7 @@ function TestBar() {
 const ROLE_TABS = {
   // Fleet driver: one home screen (balance, card, trips, pending status) with
   // buttons into the request wizard and the delivery-note form.
-  driver: [["dhome", "Home"], ["drequest", "Request"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // filing delivery notes is the SITE's job — the driver approves; Recovery = did the site's tank come back
+  driver: [["dhome", "Home"], ["drequest", "Request"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["recovery", "Recovery"]],   // at a RETAIL site the supervisor files the note and the driver approves; at a BULK customer there is no supervisor, so the DRIVER files it — the Delivery tab lets him reach the note form directly, not only via the "arrived" push. Recovery = did the site's tank come back
   // Retail supervisor (site-bound): loads their site's stock/price/sales + delivery
   // notes, and raises fuel requests for the site's cars.
   retail_supervisor: [["hub", "Home"], ["submit", "Site submit"], ["review", "Submissions"], ["incoming", "Deliveries"], ["deposit", "Deposit"], ["deliver", "Delivery"], ["dapprove", "Approve"], ["deliverynotes", "Delivery notes"], ["rrequest", "Fuel request"], ["cash", "Cash"], ["inflows", "Cash in"], ["wetstock", "Losses"]],
@@ -1248,7 +1248,7 @@ function App() {
         {tab === "staff" && <StaffAssignment />}
         {tab === "unlocks" && <UnlockRequests />}
         {tab === "devices" && <DeviceRequests />}
-        {tab === "tracking" && <JourneyTracking />}
+        {tab === "tracking" && <JourneyTracking initialTrip={focus && focus.trip ? focus.trip : null} />}
         {tab === "tripscore" && <TripScorecards />}
         {tab === "deposit" && <SiteDeposit me={me} />}
         {tab === "cashoffice" && <CashOffice />}
@@ -1432,6 +1432,13 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
   // can retry / open location settings. Re-read every 20 s while the screen is open.
   const [trk, setTrk] = useState(() => (isNative() ? trackingState() : null));
   useEffect(() => { if (!isNative()) return; const t = setInterval(() => setTrk(trackingState()), 20000); return () => clearInterval(t); }, []);
+  // What the SERVER has received — the phone can believe it is recording while nothing arrives.
+  const [rx, setRx] = useState(null);
+  useEffect(() => {
+    if (!isNative() || !trk || !trk.active) { setRx(null); return; }
+    let on = true; const probe = () => getTripPingStatus(trk.active.tripNo).then((r) => { if (on) setRx(r); }).catch(() => {});
+    probe(); const t = setInterval(probe, 60000); return () => { on = false; clearInterval(t); };
+  }, [trk && trk.active && trk.active.tripNo]);   // eslint-disable-line react-hooks/exhaustive-deps
   const retryTracking = async () => { if (trk && trk.active) { try { await startTracking(trk.active.tripNo); } catch { /* shown below */ } } setTrk(trackingState()); };
   const [myTrips, setMyTrips] = useState([]);
   useEffect(() => { getMyTrips().then((r) => setMyTrips(r.trips || [])).catch((e) => window.dispatchEvent(new CustomEvent("da-load-error", { detail: "Couldn't load your scheduled trips — " + (e.message || "pull to refresh.") }))); }, []);
@@ -1440,7 +1447,10 @@ function DriverHome({ me, cards, requests, onRequest, onEdit, onDelivery, onAppr
       {trk && trk.active && (
         trk.watching
           ? <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 12, background: "#E4F3E6", color: "#2F7D3B", fontSize: 12.5, fontWeight: 700, marginBottom: 12 }}>
-              <span style={{ width: 9, height: 9, borderRadius: 5, background: "#3C9A52", boxShadow: "0 0 0 3px rgba(60,154,82,.25)" }} /> GPS is recording your route · {trk.active.tripNo}
+              <span style={{ width: 9, height: 9, borderRadius: 5, background: rx && rx.quietMin != null && rx.quietMin > 10 ? "#D9822B" : "#3C9A52", boxShadow: "0 0 0 3px rgba(60,154,82,.25)" }} />
+              <span>GPS is recording your route · {trk.active.tripNo}
+                {rx && <div style={{ fontWeight: 500, fontSize: 11.5, opacity: .9 }}>{rx.pings === 0 ? "⚠ DA OPS has not received any position yet — check mobile data is on" : rx.quietMin > 10 ? `⚠ last position received ${rx.quietMin} min ago (${rx.lastAt}) — check mobile data / Location` : `position received ${rx.quietMin <= 1 ? "just now" : rx.quietMin + " min ago"} ✓`}</div>}
+              </span>
             </div>
           : <div style={{ padding: "10px 12px", borderRadius: 12, background: "#FDF1F0", border: "1px solid #E8C4C0", color: "#8A2B26", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 }}>
               <b>GPS is NOT recording</b> for {trk.active.tripNo}.{trk.lastError ? ` (${String(trk.lastError).slice(0, 80)})` : ""} Allow location for DA OPS and keep the app installed and signed in, then tap retry.

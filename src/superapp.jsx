@@ -6520,13 +6520,26 @@ function SalesBoard({ d, onSite }) {
     const delta = cur - prior;
     return { prior, cur, delta, pct: (delta / prior) * 100 };
   };
-  const CmpCell = ({ prior, delta, pct }) => {
+  // COMPARATIVE MOVEMENT on a summed window (owner, 2026-10-21: "show whether we are improving
+  // volume or not"): each site's window total vs the SAME number of days immediately before.
+  // prior here is a window TOTAL (not a per-day average), so the subtitle is labelled "prev".
+  const prevW = d.sales.prevWindow || null;
+  const hasPrevW = !!(prevW && prevW.bySite) && aggregated;
+  const winTotal = (id) => { const c = finalBy[id]; return c ? (Number(c.blendSales) || 0) + (Number(c.dieselSales) || 0) : null; };
+  const cmpWOf = (id) => {
+    const prior = hasPrevW ? (prevW.bySite[id] ?? null) : null;
+    const cur = winTotal(id);
+    if (prior == null || prior <= 0 || cur == null) return { prior, cur, delta: null, pct: null };
+    const delta = cur - prior;
+    return { prior, cur, delta, pct: (delta / prior) * 100 };
+  };
+  const CmpCell = ({ prior, delta, pct, priorLabel = "/d" }) => {
     if (pct == null) return <Td right><span style={{ color: "var(--steel)" }}>—</span></Td>;
     const up = delta >= 0, col = up ? "var(--ok)" : "var(--red)";
     return (
       <Td right>
         <div style={{ color: col, fontWeight: 700, whiteSpace: "nowrap" }}>{up ? "▲" : "▼"} {pct > 0 ? "+" : ""}{pct.toFixed(1)}%</div>
-        <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400, whiteSpace: "nowrap" }}>{delta > 0 ? "+" : ""}{L(Math.round(delta))} · {L(prior)}/d</div>
+        <div style={{ fontSize: 10, color: "var(--steel)", fontWeight: 400, whiteSpace: "nowrap" }}>{delta > 0 ? "+" : ""}{L(Math.round(delta))} · {L(Math.round(prior))}{priorLabel}</div>
       </Td>
     );
   };
@@ -6579,7 +6592,7 @@ function SalesBoard({ d, onSite }) {
       <Panel style={{ padding: 0, overflow: "hidden" }}>
         <table className="mono" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr style={{ background: "var(--navy)", color: "#fff" }}>
-            <Th>Site</Th><SortTh k="blend">Blend sold</SortTh><SortTh k="diesel">Diesel sold</SortTh><SortTh k="total">Total L</SortTh>{hasPrices && <SortTh k="value">Sales $</SortTh>}{hasPrev && <Th right>vs {prevM.label}</Th>}</tr></thead>
+            <Th>Site</Th><SortTh k="blend">Blend sold</SortTh><SortTh k="diesel">Diesel sold</SortTh><SortTh k="total">Total L</SortTh>{hasPrices && <SortTh k="value">Sales $</SortTh>}{hasPrev && <Th right>vs {prevM.label}</Th>}{hasPrevW && <Th right>vs prev {prevW.days}d</Th>}</tr></thead>
           <tbody>{shownSites.map((site) => { const v = s[site.id]; const val = valueOf(site.id, v); const rk = rankOf.get(site.id); return (
             <tr key={site.id} onClick={() => onSite && onSite(site)} style={{ borderTop: "1px solid var(--line)", background: v ? "#fff" : "#FBFAF6", cursor: onSite ? "pointer" : undefined }}>
               <Td>{rk ? <span style={{ color: "var(--steel)", marginRight: 6 }}>{rk}.</span> : null}{site.name}{onSite && <span style={{ color: "var(--steel)" }}> ›</span>}</Td>
@@ -6587,6 +6600,7 @@ function SalesBoard({ d, onSite }) {
               <Td right style={{ fontWeight: 700 }}>{v ? L((Number(v.blendSales) || 0) + (Number(v.dieselSales) || 0)) : "—"}</Td>
               {hasPrices && <Td right style={{ fontWeight: 700, color: "var(--navy)" }}>{val == null ? <span style={{ color: "var(--steel)", fontWeight: 400 }}>{v ? "no price" : "—"}</span> : "$" + L(Math.round(val))}</Td>}
               {hasPrev && <CmpCell {...cmpOf(site.id)} />}
+              {hasPrevW && <CmpCell {...cmpWOf(site.id)} priorLabel=" prev" />}
             </tr>
           ); })}
           <tr style={{ borderTop: "2px solid var(--navy)", background: "#F4F6FA" }}>
@@ -6602,10 +6616,17 @@ function SalesBoard({ d, onSite }) {
               const delta = curNet - priorNet;
               return <CmpCell prior={priorNet} delta={delta} pct={(delta / priorNet) * 100} />;
             })()}
+            {hasPrevW && (() => {
+              const curNet = d.sites.reduce((a, x) => { const tt = winTotal(x.id); return tt == null ? a : a + tt; }, 0);
+              const priorNet = prevW.networkTotal || 0;
+              if (!priorNet || !curNet) return <Td right>—</Td>;
+              const delta = curNet - priorNet;
+              return <CmpCell prior={priorNet} delta={delta} pct={(delta / priorNet) * 100} priorLabel=" prev" />;
+            })()}
           </tr></tbody>
         </table>
       </Panel>
-      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}{hasPrev ? ` · "vs ${prevM.label}" compares each site's full-day sales to its average trading day in ${prevM.label} (▲ green = sold more); "/d" is that average.` : ""}</div>
+      <div style={{ fontSize: 11, color: "var(--steel)", marginTop: 8 }}>Sorted by {sortKey === "value" ? "sales value" : sortKey === "blend" ? "blend litres" : sortKey === "diesel" ? "diesel litres" : "total litres"}, {sortDir === "desc" ? "largest first" : "smallest first"} · tap a column heading to change.{hasPrices ? " Sales $ = litres × that site's own DA pump price from the price survey; blank where the price is not in." : ""}{hasPrev ? ` · "vs ${prevM.label}" compares each site's full-day sales to its average trading day in ${prevM.label} (▲ green = sold more); "/d" is that average.` : ""}{hasPrevW ? ` · "vs prev ${prevW.days}d" compares this ${prevW.days}-day total to the ${prevW.days} days immediately before it (${prevW.from} → ${prevW.to}); ▲ green = volume up, so you can see whether sales are improving. "prev" is the prior period's total.` : ""}</div>
     </>
   );
 }
@@ -9707,7 +9728,7 @@ export function JourneyTracking({ initialTrip = null } = {}) {
               <button key={t.tripNo} type="button" onClick={() => setSel(t.tripNo)}
                 style={{ border: `1.5px solid ${sel === t.tripNo ? "var(--navy)" : "var(--line)"}`, background: sel === t.tripNo ? "var(--navy)" : "#fff", color: sel === t.tripNo ? "#fff" : "var(--navy)", borderRadius: 12, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
                 {t.tripNo} · {t.truck}
-                <div style={{ fontWeight: 400, fontSize: 10.5, opacity: .8 }}>{t.stage === "in_transit" ? (t.quietMin != null && t.quietMin > 30 ? `🔇 quiet ${fmtDurMin(t.quietMin)}` : "🚚 in transit") : "📋 scheduled"} · {(t.drops || []).map((x) => x.site).join(", ") || t.warehouse}</div>
+                <div style={{ fontWeight: 400, fontSize: 10.5, opacity: .8 }}>{t.stage === "in_transit" ? silenceLabel(t) : "📋 scheduled"} · {(t.drops || []).map((x) => x.site).join(", ") || t.warehouse}</div>
               </button>
             ))}
           </div>
@@ -9719,6 +9740,15 @@ export function JourneyTracking({ initialTrip = null } = {}) {
                   <span style={{ fontWeight: 700, color: "var(--navy)" }}>{sel}{t ? ` · ${t.truck}${t.driver ? ` · ${t.driver}` : ""}` : ""}</span>
                   {t && <span className="mono" style={{ fontSize: 11.5, color: "var(--steel)" }}>{t.warehouse} {t.product} · {full(t.qty)} L{t.collectedAt ? ` · collected ${t.collectedAt}` : " · not collected yet"}</span>}
                 </div>
+                {t && t.silence && (t.silence.kind === "road" || t.silence.kind === "none") && (
+                  <Note tone="red" title={t.silence.kind === "none" ? `No GPS at all since collection — ${fmtDurMin(t.silence.minutes)}` : `SILENT on the road for ${fmtDurMin(t.silence.minutes)}`}>
+                    {t.silence.kind === "none" ? "The phone has never reported on this trip. " : `Last position ${t.silence.at} at ${t.silence.since}. `}
+                    {t.silence.driverTold ? "The driver has been pushed to open the app" : "Driver not yet pushed"}{t.silence.nudges ? ` · logistics told ${t.silence.nudges}×` : ""}. Call the driver — a loaded truck must report.
+                  </Note>
+                )}
+                {t && t.silence && (t.silence.kind === "site" || t.silence.kind === "depot") && (
+                  <Note tone="blue" title={`Parked at ${t.silence.at} for ${fmtDurMin(t.silence.minutes)}`}>The phone reports on movement; a truck standing on a forecourt or in a depot queue is quiet by design and this is its position.</Note>
+                )}
                 <TripTrack tripNo={sel} />
                 <button type="button" className="pill" style={{ marginTop: 10, padding: "9px 16px", fontSize: 12.5 }} onClick={() => setReplay(sel)}>▶ Replay this trip — route, stops, timeline</button>
               </Panel>
@@ -9743,6 +9773,17 @@ export function JourneyTracking({ initialTrip = null } = {}) {
       )}
     </Wrap>
   );
+}
+
+// Journey row status: a quiet truck is named by WHERE it is quiet (gps-silence sweep) — parked at a
+// site or depot is fine; silent on the road, or never reported, is the alarm (owner, 2026-10-21).
+function silenceLabel(t) {
+  const s = t.silence;
+  if (s && s.kind === "road") return `🚨 SILENT ${fmtDurMin(s.minutes)} · last ${s.at}`;
+  if (s && s.kind === "none") return `🚨 NO GPS ${fmtDurMin(s.minutes)}`;
+  if (s && (s.kind === "site" || s.kind === "depot")) return `🅿 at ${s.at} ${fmtDurMin(s.minutes)}`;
+  if (t.quietMin != null && t.quietMin > 30) return `🔇 quiet ${fmtDurMin(t.quietMin)}`;
+  return "🚚 in transit";
 }
 
 // Tile-provider order for the route maps — fetched once per app load; the server demotes a

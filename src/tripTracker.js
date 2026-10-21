@@ -59,8 +59,13 @@ export async function startTracking(tripNo) {
         backgroundMessage: "Recording this delivery's route",
         backgroundTitle: "DA OPS — trip in progress",
         requestPermissions: true,
-        distanceFilter: 50,        // a breadcrumb roughly every 50 m of movement…
-        minIntervalMs: 30000,      // …and at most one every 30 s (lighter on battery)
+        // HEARTBEAT, not movement-only (build 212, owner 2026-10-21 "we can't have silence"): with a
+        // distance filter the plugin suppresses fixes while the vehicle is parked, so a truck
+        // offloading or queuing at the gantry looked exactly like a dead phone. distanceFilter 0 +
+        // a 60 s interval = a position every minute whether moving or not; silence now means
+        // the phone really stopped. The service already holds the GPS, so the extra cost is small.
+        distanceFilter: 0,
+        minIntervalMs: 60000,
         // NATIVE delivery (see header): the service itself POSTs every fix here, with
         // the driver's bearer token + app headers (X-DA-App passes the bot filter).
         // The 30-day token outlives any trip; a sign-in refreshes it on the next start.
